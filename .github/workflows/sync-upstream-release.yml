@@ -1,0 +1,62 @@
+name: Sync upstream release
+
+on:
+  schedule:
+    - cron: "47 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-release
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge latest stable release
+    if: github.repository == 'As-tsaqib/picoclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout customized branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Merge latest stable upstream release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          upstream_tag="$(gh api repos/sipeed/picoclaw/releases/latest --jq '.tag_name')"
+          if [[ ! $upstream_tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag upstream tidak valid: $upstream_tag"
+            exit 1
+          fi
+
+          git remote add canonical https://github.com/sipeed/picoclaw.git
+          git fetch --no-tags canonical "refs/tags/$upstream_tag:refs/tags/$upstream_tag"
+          upstream_commit="$(git rev-parse "${upstream_tag}^{commit}")"
+
+          if git merge-base --is-ancestor "$upstream_commit" HEAD; then
+            echo "Fork sudah memuat release upstream $upstream_tag ($upstream_commit)."
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git merge --no-edit --no-ff "$upstream_commit" \
+            -m "chore: merge upstream release $upstream_tag"
+          git push origin HEAD:main
+
+          {
+            echo "### Upstream synchronized"
+            echo
+            echo "- Release: \`$upstream_tag\`"
+            echo "- Commit: \`$upstream_commit\`"
+          } >> "$GITHUB_STEP_SUMMARY"
