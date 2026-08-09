@@ -151,6 +151,11 @@ func NewPromptRegistry() *PromptRegistry {
 			})
 		}
 	}
+	if err := r.RegisterContributor(telegramOutputPromptContributor{}); err != nil {
+		logger.WarnCF("agent", "Failed to register Telegram output prompt", map[string]any{
+			"error": err.Error(),
+		})
+	}
 	return r
 }
 

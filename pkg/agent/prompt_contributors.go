@@ -8,6 +8,47 @@ import (
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
+const telegramOutputPromptSourceID PromptSourceID = "channel:telegram:output"
+
+const telegramOutputFormattingPrompt = "# Telegram response formatting\n\n" +
+	"This response will be delivered through Telegram's rich-message renderer.\n\n" +
+	"- Use standard GitHub-Flavored Markdown for headings, emphasis, links, lists, and code.\n" +
+	"- Prefer a compact Markdown table for comparisons, data lists with repeated fields, status or metric summaries, and other genuinely tabular structured output.\n" +
+	"- Every table must have a header row and delimiter row, for example `| Name | Value |` followed by `|---|---|`.\n" +
+	"- Do not wrap an actual table in a code fence and do not simulate tables with ASCII art. Keep tables compact and use no more than 20 columns.\n" +
+	"- Use fenced code blocks only for source code or literal preformatted text."
+
+type telegramOutputPromptContributor struct{}
+
+func (telegramOutputPromptContributor) PromptSource() PromptSourceDescriptor {
+	return PromptSourceDescriptor{
+		ID:              telegramOutputPromptSourceID,
+		Owner:           "agent",
+		Description:     "Telegram rich-message output formatting policy",
+		Allowed:         []PromptPlacement{{Layer: PromptLayerContext, Slot: PromptSlotOutput}},
+		StableByDefault: false,
+	}
+}
+
+func (telegramOutputPromptContributor) ContributePrompt(
+	_ context.Context,
+	req PromptBuildRequest,
+) ([]PromptPart, error) {
+	if !strings.EqualFold(strings.TrimSpace(req.Channel), "telegram") {
+		return nil, nil
+	}
+	return []PromptPart{{
+		ID:      "context.output_policy.telegram_rich_messages",
+		Layer:   PromptLayerContext,
+		Slot:    PromptSlotOutput,
+		Source:  PromptSource{ID: telegramOutputPromptSourceID, Name: "telegram_rich_messages"},
+		Title:   "Telegram rich-message output policy",
+		Content: telegramOutputFormattingPrompt,
+		Stable:  false,
+		Cache:   PromptCacheNone,
+	}}, nil
+}
+
 type toolDiscoveryPromptContributor struct {
 	useBM25  bool
 	useRegex bool

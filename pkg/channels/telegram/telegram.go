@@ -265,7 +265,10 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]
 		chunk := queue[0]
 		queue = queue[1:]
 
-		content := parseContent(chunk, useMarkdownV2)
+		content := chunk
+		if !hasTelegramRichTable(chunk) {
+			content = parseContent(chunk, useMarkdownV2)
+		}
 
 		if len([]rune(content)) > 4096 {
 			if isToolFeedback {
@@ -359,12 +362,42 @@ type sendChunkParams struct {
 	useMarkdownV2 bool
 }
 
-// sendChunk sends a single HTML/MarkdownV2 message, falling back to the original
-// markdown as plain text on parse failure so users never see raw HTML/MarkdownV2 tags.
+// sendChunk sends a native rich message when the chunk contains a table.
+// Unsupported rich-message servers fall back to a monospaced table sent through
+// the existing HTML/MarkdownV2 path, then finally to aligned plain text.
 func (c *TelegramChannel) sendChunk(
 	ctx context.Context,
 	params sendChunkParams,
 ) (string, error) {
+	var replyParameters *telego.ReplyParameters
+	if params.replyToID != "" {
+		if mid, parseErr := strconv.Atoi(params.replyToID); parseErr == nil {
+			replyParameters = &telego.ReplyParameters{MessageID: mid}
+		}
+	}
+
+	if hasTelegramRichTable(params.mdFallback) {
+		pMsg, richErr := c.bot.SendRichMessage(ctx, &telego.SendRichMessageParams{
+			ChatID:          tu.ID(params.chatID),
+			MessageThreadID: params.threadID,
+			RichMessage: telego.InputRichMessage{
+				Markdown: params.mdFallback,
+			},
+			ReplyParameters: replyParameters,
+		})
+		if richErr == nil {
+			return strconv.Itoa(pMsg.MessageID), nil
+		}
+
+		logger.WarnCF("telegram", "Native rich table send failed, using preformatted fallback", map[string]any{
+			"chat_id": params.chatID,
+			"error":   richErr.Error(),
+		})
+		fallbackMarkdown := telegramTableFallbackMarkdown(params.mdFallback)
+		params.content = parseContent(fallbackMarkdown, params.useMarkdownV2)
+		params.mdFallback = telegramTableFallbackPlainText(params.mdFallback)
+	}
+
 	tgMsg := tu.Message(tu.ID(params.chatID), params.content)
 	tgMsg.MessageThreadID = params.threadID
 	if params.useMarkdownV2 {
@@ -373,13 +406,7 @@ func (c *TelegramChannel) sendChunk(
 		tgMsg.WithParseMode(telego.ModeHTML)
 	}
 
-	if params.replyToID != "" {
-		if mid, parseErr := strconv.Atoi(params.replyToID); parseErr == nil {
-			tgMsg.ReplyParameters = &telego.ReplyParameters{
-				MessageID: mid,
-			}
-		}
-	}
+	tgMsg.ReplyParameters = replyParameters
 
 	pMsg, err := c.bot.SendMessage(ctx, tgMsg)
 	if err != nil {
@@ -452,6 +479,35 @@ func (c *TelegramChannel) EditMessage(ctx context.Context, chatID string, messag
 	if err != nil {
 		return err
 	}
+	plainFallback := content
+	if hasTelegramRichTable(content) {
+		_, err = c.bot.EditMessageText(ctx, &telego.EditMessageTextParams{
+			ChatID:    tu.ID(cid),
+			MessageID: mid,
+			RichMessage: &telego.InputRichMessage{
+				Markdown: content,
+			},
+		})
+		if err == nil || strings.Contains(err.Error(), "message is not modified") {
+			return nil
+		}
+		if isPostConnectError(err) {
+			logUnknownTelegramEditResult(chatID, mid, err)
+			return nil
+		}
+		if !isTelegramFormattingRejection(err) {
+			return err
+		}
+
+		logger.WarnCF("telegram", "Native rich table edit failed, using preformatted fallback", map[string]any{
+			"chat_id": chatID,
+			"mid":     mid,
+			"error":   err.Error(),
+		})
+		content = telegramTableFallbackMarkdown(content)
+		plainFallback = telegramTableFallbackPlainText(plainFallback)
+	}
+
 	parsedContent := parseContent(content, useMarkdownV2)
 	editMsg := tu.EditMessageText(tu.ID(cid), mid, parsedContent)
 	if useMarkdownV2 {
@@ -472,7 +528,7 @@ func (c *TelegramChannel) EditMessage(ctx context.Context, chatID string, messag
 		// Network errors or timeouts should NOT trigger a retry with different content.
 		if strings.Contains(err.Error(), "Bad Request") {
 			logParseFailed(err, useMarkdownV2)
-			_, err = c.bot.EditMessageText(ctx, tu.EditMessageText(tu.ID(cid), mid, content))
+			_, err = c.bot.EditMessageText(ctx, tu.EditMessageText(tu.ID(cid), mid, plainFallback))
 		}
 	}
 
@@ -482,20 +538,24 @@ func (c *TelegramChannel) EditMessage(ctx context.Context, chatID string, messag
 		}
 
 		if isPostConnectError(err) {
-			logger.WarnCF(
-				"telegram",
-				"EditMessage likely landed but result is unknown; swallowing error to prevent duplicate",
-				map[string]any{
-					"chat_id": chatID,
-					"mid":     mid,
-					"error":   err.Error(),
-				},
-			)
+			logUnknownTelegramEditResult(chatID, mid, err)
 			return nil // Swallow to prevent Manager fallback to a new SendMessage
 		}
 	}
 
 	return err
+}
+
+func logUnknownTelegramEditResult(chatID string, messageID int, err error) {
+	logger.WarnCF(
+		"telegram",
+		"EditMessage likely landed but result is unknown; swallowing error to prevent duplicate",
+		map[string]any{
+			"chat_id": chatID,
+			"mid":     messageID,
+			"error":   err.Error(),
+		},
+	)
 }
 
 // DeleteMessage implements channels.MessageDeleter.
@@ -1557,6 +1617,18 @@ func logParseFailed(err error, useMarkdownV2 bool) {
 	)
 }
 
+func isTelegramFormattingRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "bad request") ||
+		strings.Contains(message, "not found") ||
+		strings.Contains(message, "unsupported") ||
+		strings.Contains(message, "can't parse") ||
+		strings.Contains(message, "cannot parse")
+}
+
 // isBotMentioned checks if the bot is mentioned in the message via entities.
 func (c *TelegramChannel) isBotMentioned(message *telego.Message) bool {
 	text, entities := telegramEntityTextAndList(message)
@@ -1724,6 +1796,27 @@ func (s *telegramStreamer) Update(ctx context.Context, content string) error {
 }
 
 func (s *telegramStreamer) Finalize(ctx context.Context, content string) error {
+	plainFallback := content
+	if hasTelegramRichTable(content) {
+		if _, err := s.bot.SendRichMessage(ctx, &telego.SendRichMessageParams{
+			ChatID:          tu.ID(s.chatID),
+			MessageThreadID: s.threadID,
+			RichMessage: telego.InputRichMessage{
+				Markdown: content,
+			},
+		}); err == nil {
+			s.Cancel(ctx)
+			return nil
+		} else {
+			logger.WarnCF("telegram", "Native rich table finalize failed, using preformatted fallback", map[string]any{
+				"chat_id": s.chatID,
+				"error":   err.Error(),
+			})
+		}
+		content = telegramTableFallbackMarkdown(content)
+		plainFallback = telegramTableFallbackPlainText(plainFallback)
+	}
+
 	htmlContent := markdownToTelegramHTML(content)
 	tgMsg := tu.Message(tu.ID(s.chatID), htmlContent)
 	tgMsg.MessageThreadID = s.threadID
@@ -1731,6 +1824,7 @@ func (s *telegramStreamer) Finalize(ctx context.Context, content string) error {
 
 	if _, err := s.bot.SendMessage(ctx, tgMsg); err != nil {
 		// Fallback to plain text
+		tgMsg.Text = plainFallback
 		tgMsg.ParseMode = ""
 		if _, err = s.bot.SendMessage(ctx, tgMsg); err != nil {
 			logger.ErrorCF("telegram", "Finalize failed after HTML and plain-text attempts", map[string]any{
