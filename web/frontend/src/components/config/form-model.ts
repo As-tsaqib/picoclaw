@@ -40,11 +40,51 @@ export interface CoreConfigForm {
   evolutionMinSuccessRatio: string
   evolutionColdPathTrigger: string
   evolutionColdPathTimesText: string
+  memoryEnabled: boolean
+  memoryBackgroundReviewEnabled: boolean
+  memoryReviewInterval: string
+  memoryReviewProvider: string
+  memoryReviewModel: string
+  memoryReviewTimeoutSeconds: string
+  memoryReviewMaxIterations: string
+  memoryWriteApproval: boolean
+  memoryNotifications: MemoryNotificationMode
+  memoryWorkspaceCharLimit: string
+  memoryPerUserCharLimit: string
+  memoryRecallMode: MemoryRecallMode
+  memoryRecallMaxResults: string
+  memoryRecallMaxChars: string
+  memoryCheckpointsEnabled: boolean
+  memoryCheckpointMaxCount: string
+  memoryCheckpointMaxContextChars: string
+  memoryCheckpointCompletedRetentionDays: string
 }
 
 export type MCPServerType = "http" | "sse" | "stdio"
 
 export type TurnProfileMode = "default" | "off" | "custom"
+
+export type MemoryNotificationMode = "off" | "on" | "verbose"
+
+export type MemoryRecallMode = "isolated" | "user_recall" | "group_recall"
+
+export interface MemoryReviewModelOption {
+  provider: string
+  value: string
+  label: string
+}
+
+export const MEMORY_NOTIFICATION_OPTIONS: readonly MemoryNotificationMode[] = [
+  "off",
+  "on",
+  "verbose",
+]
+
+export const MEMORY_RECALL_OPTIONS: readonly MemoryRecallMode[] = [
+  "isolated",
+  "user_recall",
+  "group_recall",
+]
 
 export interface TurnProfileForm {
   enabled: boolean
@@ -159,6 +199,24 @@ export const EMPTY_FORM: CoreConfigForm = {
   evolutionMinSuccessRatio: "0.7",
   evolutionColdPathTrigger: "after_turn",
   evolutionColdPathTimesText: "",
+  memoryEnabled: true,
+  memoryBackgroundReviewEnabled: true,
+  memoryReviewInterval: "10",
+  memoryReviewProvider: "",
+  memoryReviewModel: "",
+  memoryReviewTimeoutSeconds: "30",
+  memoryReviewMaxIterations: "2",
+  memoryWriteApproval: false,
+  memoryNotifications: "off",
+  memoryWorkspaceCharLimit: "12000",
+  memoryPerUserCharLimit: "8000",
+  memoryRecallMode: "isolated",
+  memoryRecallMaxResults: "5",
+  memoryRecallMaxChars: "4000",
+  memoryCheckpointsEnabled: false,
+  memoryCheckpointMaxCount: "100",
+  memoryCheckpointMaxContextChars: "2000",
+  memoryCheckpointCompletedRetentionDays: "90",
 }
 
 export const EMPTY_LAUNCHER_FORM: LauncherForm = {
@@ -261,6 +319,20 @@ function toBasicTurnProfileMode(
   return value === "off" ? "off" : "default"
 }
 
+function toMemoryNotificationMode(value: unknown): MemoryNotificationMode {
+  if (value === "on" || value === "verbose") {
+    return value
+  }
+  return "off"
+}
+
+function toMemoryRecallMode(value: unknown): MemoryRecallMode {
+  if (value === "user_recall" || value === "group_recall") {
+    return value
+  }
+  return "isolated"
+}
+
 function allowListText(value: unknown): string {
   if (!Array.isArray(value)) {
     return ""
@@ -296,6 +368,10 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const heartbeat = asRecord(root.heartbeat)
   const devices = asRecord(root.devices)
   const evolution = asRecord(root.evolution)
+  const memory = asRecord(root.memory)
+  const memoryBackgroundReview = asRecord(memory.background_review)
+  const memoryRecall = asRecord(memory.recall)
+  const memoryCheckpoints = asRecord(memory.checkpoints)
   const tools = asRecord(root.tools)
   const mcp = asRecord(tools.mcp)
   const mcpDiscovery = asRecord(mcp.discovery)
@@ -440,6 +516,184 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
           .filter((value): value is string => typeof value === "string")
           .join("\n")
       : EMPTY_FORM.evolutionColdPathTimesText,
+    memoryEnabled:
+      memory.enabled === undefined
+        ? EMPTY_FORM.memoryEnabled
+        : asBool(memory.enabled),
+    memoryBackgroundReviewEnabled:
+      memoryBackgroundReview.enabled === undefined
+        ? EMPTY_FORM.memoryBackgroundReviewEnabled
+        : asBool(memoryBackgroundReview.enabled),
+    memoryReviewInterval: asNumberString(
+      memoryBackgroundReview.interval,
+      EMPTY_FORM.memoryReviewInterval,
+    ),
+    memoryReviewProvider: asString(memoryBackgroundReview.provider),
+    memoryReviewModel: asString(memoryBackgroundReview.model),
+    memoryReviewTimeoutSeconds: asNumberString(
+      memoryBackgroundReview.timeout_seconds,
+      EMPTY_FORM.memoryReviewTimeoutSeconds,
+    ),
+    memoryReviewMaxIterations: asNumberString(
+      memoryBackgroundReview.max_iterations,
+      EMPTY_FORM.memoryReviewMaxIterations,
+    ),
+    memoryWriteApproval:
+      memory.write_approval === undefined
+        ? EMPTY_FORM.memoryWriteApproval
+        : asBool(memory.write_approval),
+    memoryNotifications: toMemoryNotificationMode(memory.notifications),
+    memoryWorkspaceCharLimit: asNumberString(
+      memory.workspace_char_limit,
+      EMPTY_FORM.memoryWorkspaceCharLimit,
+    ),
+    memoryPerUserCharLimit: asNumberString(
+      memory.per_user_char_limit,
+      EMPTY_FORM.memoryPerUserCharLimit,
+    ),
+    memoryRecallMode: toMemoryRecallMode(memoryRecall.mode),
+    memoryRecallMaxResults: asNumberString(
+      memoryRecall.max_results,
+      EMPTY_FORM.memoryRecallMaxResults,
+    ),
+    memoryRecallMaxChars: asNumberString(
+      memoryRecall.max_chars,
+      EMPTY_FORM.memoryRecallMaxChars,
+    ),
+    memoryCheckpointsEnabled:
+      memoryCheckpoints.enabled === undefined
+        ? EMPTY_FORM.memoryCheckpointsEnabled
+        : asBool(memoryCheckpoints.enabled),
+    memoryCheckpointMaxCount: asNumberString(
+      memoryCheckpoints.max_count,
+      EMPTY_FORM.memoryCheckpointMaxCount,
+    ),
+    memoryCheckpointMaxContextChars: asNumberString(
+      memoryCheckpoints.max_context_chars,
+      EMPTY_FORM.memoryCheckpointMaxContextChars,
+    ),
+    memoryCheckpointCompletedRetentionDays: asNumberString(
+      memoryCheckpoints.completed_retention_days,
+      EMPTY_FORM.memoryCheckpointCompletedRetentionDays,
+    ),
+  }
+}
+
+export function buildMemoryReviewOptions(config: unknown): {
+  providers: string[]
+  models: MemoryReviewModelOption[]
+} {
+  const root = asRecord(config)
+  const rawModels = Array.isArray(root.model_list) ? root.model_list : []
+  const providers = new Set<string>()
+  const models = new Map<string, MemoryReviewModelOption>()
+
+  for (const rawModel of rawModels) {
+    const model = asRecord(rawModel)
+    const modelName = asString(model.model_name).trim()
+    const modelID = asString(model.model).trim()
+    let provider = asString(model.provider).trim().toLowerCase()
+    if (!provider && modelID.includes("/")) {
+      provider = modelID.slice(0, modelID.indexOf("/")).toLowerCase()
+    }
+    if (provider) {
+      providers.add(provider)
+    }
+    const value = modelName || modelID
+    if (!value || models.has(`${provider}\u0000${value}`)) {
+      continue
+    }
+    const detail = modelID && modelID !== value ? ` (${modelID})` : ""
+    models.set(`${provider}\u0000${value}`, {
+      provider,
+      value,
+      label: `${value}${detail}`,
+    })
+  }
+
+  return {
+    providers: Array.from(providers).sort((a, b) => a.localeCompare(b)),
+    models: Array.from(models.values()).sort((a, b) =>
+      a.label.localeCompare(b.label),
+    ),
+  }
+}
+
+export function buildMemoryConfigPatch(
+  form: CoreConfigForm,
+): Record<string, unknown> {
+  if (!MEMORY_NOTIFICATION_OPTIONS.includes(form.memoryNotifications)) {
+    throw new Error("Notification mode is invalid.")
+  }
+  if (!MEMORY_RECALL_OPTIONS.includes(form.memoryRecallMode)) {
+    throw new Error("Cross-topic recall mode is invalid.")
+  }
+
+  const provider = form.memoryReviewProvider.trim()
+  const model = form.memoryReviewModel.trim()
+  return {
+    enabled: form.memoryEnabled,
+    workspace_char_limit: parseIntField(
+      form.memoryWorkspaceCharLimit,
+      "Workspace memory character limit",
+      { min: 1 },
+    ),
+    per_user_char_limit: parseIntField(
+      form.memoryPerUserCharLimit,
+      "Per-user memory character limit",
+      { min: 1 },
+    ),
+    write_approval: form.memoryWriteApproval,
+    notifications: form.memoryNotifications,
+    background_review: {
+      enabled: form.memoryBackgroundReviewEnabled,
+      interval: parseIntField(form.memoryReviewInterval, "Review interval", {
+        min: 1,
+      }),
+      provider: provider || null,
+      model: model || null,
+      timeout_seconds: parseIntField(
+        form.memoryReviewTimeoutSeconds,
+        "Review timeout",
+        { min: 1 },
+      ),
+      max_iterations: parseIntField(
+        form.memoryReviewMaxIterations,
+        "Maximum review iterations",
+        { min: 1, max: 4 },
+      ),
+    },
+    recall: {
+      mode: form.memoryRecallMode,
+      max_results: parseIntField(
+        form.memoryRecallMaxResults,
+        "Maximum recall results",
+        { min: 1, max: 20 },
+      ),
+      max_chars: parseIntField(
+        form.memoryRecallMaxChars,
+        "Maximum recall characters",
+        { min: 1, max: 20000 },
+      ),
+    },
+    checkpoints: {
+      enabled: form.memoryCheckpointsEnabled,
+      max_count: parseIntField(
+        form.memoryCheckpointMaxCount,
+        "Maximum checkpoint count",
+        { min: 1, max: 1000 },
+      ),
+      max_context_chars: parseIntField(
+        form.memoryCheckpointMaxContextChars,
+        "Checkpoint context limit",
+        { min: 1, max: 20000 },
+      ),
+      completed_retention_days: parseIntField(
+        form.memoryCheckpointCompletedRetentionDays,
+        "Completed checkpoint retention days",
+        { min: 1 },
+      ),
+    },
   }
 }
 

@@ -24,6 +24,7 @@ import {
   ExecSection,
   LauncherSection,
   MCPSection,
+  MemoryRecallSection,
   RuntimeSection,
 } from "@/components/config/config-sections"
 import {
@@ -34,6 +35,8 @@ import {
   type MCPServerForm,
   type TurnProfileForm,
   buildFormFromConfig,
+  buildMemoryConfigPatch,
+  buildMemoryReviewOptions,
   parseCIDRText,
   parseFloatField,
   parseIntField,
@@ -199,6 +202,7 @@ export function ConfigPage() {
   const isDirty = configDirty || launcherDirty || autoStartDirty
 
   const autoStartSupported = autoStartStatus?.supported !== false
+  const memoryReviewOptions = buildMemoryReviewOptions(data)
   const autoStartHint = autoStartError
     ? t("pages.config.autostart_load_error")
     : !autoStartSupported
@@ -358,6 +362,7 @@ export function ConfigPage() {
           { min: 1, max: 100 },
         )
         const turnProfile = buildTurnProfilePatch(form.turnProfile)
+        const memoryConfigPatch = buildMemoryConfigPatch(form)
         const heartbeatInterval = parseIntField(
           form.heartbeatInterval,
           "Heartbeat interval",
@@ -598,6 +603,7 @@ export function ConfigPage() {
           session: {
             dm_scope: dmScope,
           },
+          memory: memoryConfigPatch,
           evolution: {
             enabled: form.evolutionEnabled,
             mode: form.evolutionMode,
@@ -819,6 +825,13 @@ export function ConfigPage() {
               />
 
               <RuntimeSection form={form} onFieldChange={updateField} />
+
+              <MemoryRecallSection
+                form={form}
+                onFieldChange={updateField}
+                reviewProviders={memoryReviewOptions.providers}
+                reviewModels={memoryReviewOptions.models}
+              />
 
               <EvolutionSection form={form} onFieldChange={updateField} />
 
