@@ -407,10 +407,7 @@ export function MemoryRecallSection({
           max={20000}
           value={form.memoryCheckpointMaxContextChars}
           onChange={(event) =>
-            onFieldChange(
-              "memoryCheckpointMaxContextChars",
-              event.target.value,
-            )
+            onFieldChange("memoryCheckpointMaxContextChars", event.target.value)
           }
         />
       </Field>
