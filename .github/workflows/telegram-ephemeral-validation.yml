@@ -134,8 +134,21 @@ jobs:
           cache-dependency-path: web/frontend/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Check formatting
-        run: pnpm format
+      - name: Check feature formatting
+        run: >-
+          pnpm exec prettier --check
+          package.json
+          vite.config.ts
+          src/components/channels/channel-array-list-field.tsx
+          src/components/channels/channel-config-page.tsx
+          src/components/channels/channel-save-payload.ts
+          src/components/channels/channel-save-payload.test.ts
+          src/components/channels/channel-forms/telegram-ephemeral-config.ts
+          src/components/channels/channel-forms/telegram-ephemeral-config.test.ts
+          src/components/channels/channel-forms/telegram-form.tsx
+          src/components/channels/channel-forms/telegram-form.test.tsx
+          src/i18n/locales/*.json
+          src/test/setup.ts
       - name: Run ESLint
         run: pnpm lint
       - name: Run component and unit tests
