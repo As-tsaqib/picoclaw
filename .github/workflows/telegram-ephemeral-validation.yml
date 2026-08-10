@@ -193,7 +193,8 @@ jobs:
           grep -Fq "Pkg.Revision = $PICOCLAW_NDK_VERSION" "$ndk_root/source.properties"
           echo "PICOCLAW_ANDROID_CC=$compiler" >> "$GITHUB_ENV"
       - name: Validate module builder
-        run: ./module-builder/scripts/test.sh
+        working-directory: module-builder
+        run: ./scripts/test.sh
       - name: Compile and package Android ARM64 module
         env:
           PICOCLAW_SOURCE_REPOSITORY_URL: https://github.com/${{ github.repository }}
