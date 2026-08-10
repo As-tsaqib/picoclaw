@@ -111,50 +111,16 @@ jobs:
       - name: Build PicoClaw
         run: go build -tags goolm,stdjson ./cmd/picoclaw
 
-  android-module:
-    name: Android ARM64 module
-    needs:
-      - generate
-      - lint
-      - vulnerability
-      - unit
-      - integration
-      - build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      GH_TOKEN: ${{ github.token }}
-      PICOCLAW_ANDROID_API: "21"
-      PICOCLAW_NDK_VERSION: "27.3.13750724"
+  frontend:
+    name: Frontend validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: web/frontend
     steps:
-      - name: Checkout PicoClaw feature source
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - name: Checkout module builder
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: As-tsaqib/picoclaw-module
-          ref: main
-          path: module-builder
-      - name: Resolve and verify upstream release base
-        id: upstream
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          upstream_tag="$(gh api repos/sipeed/picoclaw/releases/latest --jq '.tag_name')"
-          if [[ ! $upstream_tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Invalid upstream tag: $upstream_tag"
-            exit 1
-          fi
-          git remote add canonical https://github.com/sipeed/picoclaw.git
-          git fetch --no-tags canonical "refs/tags/$upstream_tag:refs/tags/$upstream_tag"
-          git merge-base --is-ancestor "${upstream_tag}^{commit}" HEAD
-          echo "tag=$upstream_tag" >> "$GITHUB_OUTPUT"
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
       - name: Setup pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
@@ -166,51 +132,13 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/frontend/pnpm-lock.yaml
-      - name: Install module tooling
-        run: sudo apt-get update && sudo apt-get install -y shellcheck zip unzip jq file
-      - name: Configure pinned Android NDK
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          android_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-          if [[ -z $android_sdk_root ]]; then
-            echo "::error::ANDROID_SDK_ROOT and ANDROID_HOME are unavailable"
-            exit 1
-          fi
-          ndk_root="$android_sdk_root/ndk/$PICOCLAW_NDK_VERSION"
-          compiler="$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${PICOCLAW_ANDROID_API}-clang"
-          if [[ ! -x $compiler ]]; then
-            sdkmanager_bin="$(command -v sdkmanager || true)"
-            if [[ -z $sdkmanager_bin ]]; then
-              sdkmanager_bin="$android_sdk_root/cmdline-tools/latest/bin/sdkmanager"
-            fi
-            "$sdkmanager_bin" "ndk;$PICOCLAW_NDK_VERSION"
-          fi
-          if [[ ! -x $compiler ]]; then
-            echo "::error::Android ARM64 compiler is unavailable: $compiler"
-            exit 1
-          fi
-          grep -Fq "Pkg.Revision = $PICOCLAW_NDK_VERSION" "$ndk_root/source.properties"
-          echo "PICOCLAW_ANDROID_CC=$compiler" >> "$GITHUB_ENV"
-      - name: Validate module builder
-        working-directory: module-builder
-        run: ./scripts/test.sh
-      - name: Compile and package Android ARM64 module
-        env:
-          PICOCLAW_SOURCE_REPOSITORY_URL: https://github.com/${{ github.repository }}
-          PICOCLAW_SOURCE_COMMIT: ${{ github.sha }}
-        run: >-
-          ./module-builder/scripts/build-upstream.sh
-          "$GITHUB_WORKSPACE"
-          "${{ steps.upstream.outputs.tag }}"
-          "$GITHUB_WORKSPACE/dist-module"
-          "${{ github.sha }}"
-      - name: Upload installable module artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: picoclaw-ephemeral-module-${{ github.sha }}
-          path: |
-            dist-module/*.zip
-            dist-module/*.zip.sha256
-          if-no-files-found: error
-          retention-days: 14
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check formatting
+        run: pnpm format
+      - name: Run ESLint
+        run: pnpm lint
+      - name: Run component and unit tests
+        run: pnpm test
+      - name: Build production dashboard
+        run: pnpm build

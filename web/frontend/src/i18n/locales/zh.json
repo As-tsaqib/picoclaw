@@ -461,6 +461,43 @@
       "refresh": "刷新二维码",
       "errorGeneric": "发生错误，请重试。"
     },
+    "telegram": {
+      "ephemeral": {
+        "title": "群聊临时回复",
+        "description": "配置仅请求成员和机器人可见的群聊回复。",
+        "modeLabel": "模式",
+        "modeOption": {
+          "off": "关闭",
+          "commands": "选定命令",
+          "all": "所有群聊回复"
+        },
+        "modeDescription": {
+          "off": "所有 Telegram 回复保持正常行为。",
+          "commands": "仅选定的斜杠命令及其私密交互流程使用临时回复。",
+          "all": "所有符合条件的群聊回复仅请求用户可见。"
+        },
+        "commandsLabel": "临时命令",
+        "commandsDescription": "逐个添加斜杠命令名称，或粘贴多个以逗号分隔的名称。",
+        "commandsPlaceholder": "例如 help, clear, show",
+        "invalidCommand": "请使用 1–32 个小写字母、数字或下划线；开头的斜杠可省略。",
+        "emptyCommands": "留空表示所有已注册的 PicoClaw 命令都使用临时回复。",
+        "isolationLabel": "个人会话隔离",
+        "isolationDescription": "每位群成员都会获得独立的私密 PicoClaw 会话。",
+        "isolationLocked": "启用临时回复时，此项为必需且已锁定。",
+        "warning": {
+          "commandsSelected": "只有选定的斜杠命令会变为私密回复。",
+          "commandsPublic": "普通群消息和回复仍然公开。",
+          "commandsIsolated": "每位群成员的私密对话历史相互隔离。",
+          "allAdmin": "普通群聊回复可能要求机器人具有管理员权限。",
+          "allDelivery": "Telegram 不保证送达，尤其是在用户离线时。",
+          "allVisibility": "其他成员看不到私密回复，可能会认为机器人没有响应。",
+          "botApi": "临时回复需要兼容 Telegram Bot API 10.2。",
+          "streaming": "私密临时回复不使用流式输出；公开回复仍可正常流式输出。",
+          "richTables": "原生富文本表格会使用私密的预格式化回退。",
+          "failClosed": "私密发送失败时，PicoClaw 绝不会将同一内容作为公开群消息重试。"
+        }
+      }
+    },
     "field": {
       "token": "Bot Token",
       "tokenPlaceholder": "输入 Bot Token",

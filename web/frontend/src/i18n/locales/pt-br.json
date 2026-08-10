@@ -461,6 +461,43 @@
       "refresh": "Atualizar QR",
       "errorGeneric": "Ocorreu um erro. Tente novamente."
     },
+    "telegram": {
+      "ephemeral": {
+        "title": "Respostas Efêmeras em Grupos",
+        "description": "Configure respostas de grupo visíveis apenas para o membro solicitante e o bot.",
+        "modeLabel": "Modo",
+        "modeOption": {
+          "off": "Desativado",
+          "commands": "Comandos Selecionados",
+          "all": "Todas as Respostas do Grupo"
+        },
+        "modeDescription": {
+          "off": "Todas as respostas do Telegram usam o comportamento normal.",
+          "commands": "Apenas os comandos de barra selecionados e seu fluxo privado usam respostas efêmeras.",
+          "all": "Todas as respostas de grupo elegíveis ficam privadas para o usuário solicitante."
+        },
+        "commandsLabel": "Comandos Efêmeros",
+        "commandsDescription": "Adicione nomes de comandos de barra individualmente ou cole vários separados por vírgulas.",
+        "commandsPlaceholder": "ex.: help, clear, show",
+        "invalidCommand": "Use de 1 a 32 letras minúsculas, números ou sublinhados. A barra inicial é opcional.",
+        "emptyCommands": "Vazio significa que todos os comandos registrados do PicoClaw serão efêmeros.",
+        "isolationLabel": "Isolamento de Sessão Pessoal",
+        "isolationDescription": "Cada membro do grupo recebe uma sessão privada separada do PicoClaw.",
+        "isolationLocked": "Obrigatório e bloqueado enquanto as respostas efêmeras estiverem ativadas.",
+        "warning": {
+          "commandsSelected": "Apenas os comandos de barra selecionados se tornam privados.",
+          "commandsPublic": "Mensagens e respostas comuns do grupo continuam públicas.",
+          "commandsIsolated": "O histórico privado é isolado para cada membro do grupo.",
+          "allAdmin": "Respostas comuns do grupo podem exigir que o bot seja administrador.",
+          "allDelivery": "A entrega pelo Telegram não é garantida, especialmente quando o usuário está offline.",
+          "allVisibility": "Outros membros podem achar que o bot não responde porque não veem as respostas privadas.",
+          "botApi": "Respostas efêmeras exigem compatibilidade com a Telegram Bot API 10.2.",
+          "streaming": "Streaming não é usado em respostas efêmeras privadas; respostas públicas ainda podem usar streaming.",
+          "richTables": "Tabelas ricas nativas usam um fallback privado pré-formatado.",
+          "failClosed": "Se a entrega privada falhar, o PicoClaw nunca repete o conteúdo como mensagem pública no grupo."
+        }
+      }
+    },
     "field": {
       "token": "Token do Bot",
       "tokenPlaceholder": "Digite o token do bot",

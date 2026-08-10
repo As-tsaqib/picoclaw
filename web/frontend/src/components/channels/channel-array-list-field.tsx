@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
 type StringListParser = (raw: string) => string[]
+type StringListValidator = (raw: string) => string | null
 export type ArrayFieldFlusher = () => string[] | null
 
 type RegisterArrayFieldFlusher = (
@@ -39,7 +40,9 @@ interface ChannelArrayListFieldProps {
   value: string[]
   onChange: (value: string[]) => void
   placeholder?: string
+  inputAriaLabel?: string
   parser?: StringListParser
+  validateDraft?: StringListValidator
   fieldPath?: string
   registerFlusher?: RegisterArrayFieldFlusher
   resetVersion?: number
@@ -53,17 +56,21 @@ export function ChannelArrayListField({
   value,
   onChange,
   placeholder,
+  inputAriaLabel,
   parser = parseConservativeStringListInput,
+  validateDraft,
   fieldPath,
   registerFlusher,
   resetVersion,
 }: ChannelArrayListFieldProps) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState("")
+  const [draftError, setDraftError] = useState("")
   const draftRef = useRef("")
   const valueRef = useRef(value)
   const localValueRef = useRef(value)
   const parserRef = useRef(parser)
+  const validateDraftRef = useRef(validateDraft)
   const onChangeRef = useRef(onChange)
 
   useEffect(() => {
@@ -74,11 +81,16 @@ export function ChannelArrayListField({
   useEffect(() => {
     draftRef.current = ""
     setDraft("")
+    setDraftError("")
   }, [resetVersion])
 
   useEffect(() => {
     parserRef.current = parser
   }, [parser])
+
+  useEffect(() => {
+    validateDraftRef.current = validateDraft
+  }, [validateDraft])
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -92,10 +104,17 @@ export function ChannelArrayListField({
       }
       draftRef.current = ""
       setDraft("")
+      setDraftError("")
+      return null
+    }
+    const validationError = validateDraftRef.current?.(rawDraft) ?? null
+    if (validationError) {
+      setDraftError(validationError)
       return null
     }
     draftRef.current = ""
     setDraft("")
+    setDraftError("")
     const nextItems = parserRef.current(rawDraft)
     if (nextItems.length === 0) {
       return null
@@ -129,7 +148,12 @@ export function ChannelArrayListField({
   }
 
   return (
-    <Field label={label} hint={hint} error={error} required={required}>
+    <Field
+      label={label}
+      hint={hint}
+      error={draftError || error}
+      required={required}
+    >
       <div className="space-y-3">
         {value.length > 0 && (
           <div className="flex flex-wrap gap-2">
@@ -161,9 +185,14 @@ export function ChannelArrayListField({
               const nextDraft = event.target.value
               draftRef.current = nextDraft
               setDraft(nextDraft)
+              if (draftError) {
+                setDraftError("")
+              }
             }}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
+            aria-label={inputAriaLabel}
+            aria-invalid={draftError !== ""}
           />
           <Button
             type="button"

@@ -6,40 +6,59 @@ The Telegram channel uses long polling via the Telegram Bot API for bot-based co
 
 ## Configuration
 
+### Visual dashboard
+
+Open **Dashboard → Channels → Telegram** to configure the bot. The **Ephemeral Group Replies** card provides the mode, command list, and personal-session isolation controls without requiring Raw JSON edits.
+
+Start with **Selected Commands** so only intentional slash-command flows become private. **Off** keeps normal Telegram behavior, while **All Group Responses** attempts private delivery for every eligible group response and may require the bot to be a group administrator.
+
+Save the channel configuration after editing it. A gateway restart may be required before the change takes effect; the dashboard displays a restart-required notification when applicable.
+
+### Raw JSON
+
+Advanced or manual configurations remain supported. Channel-specific values, including `ephemeral`, belong under `settings`:
+
 ```json
 {
   "channel_list": {
     "telegram": {
       "enabled": true,
       "type": "telegram",
-      "token": "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
       "allow_from": ["123456789"],
-      "proxy": "",
-      "use_markdown_v2": false,
-      "media_group_delay_ms": 500
+      "settings": {
+        "token": "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
+        "proxy": "",
+        "use_markdown_v2": false,
+        "media_group_delay_ms": 500,
+        "ephemeral": {
+          "mode": "commands",
+          "commands": ["clear", "help"],
+          "personal_session_isolation": true
+        }
+      }
     }
   }
 }
 ```
 
-| Field            | Type   | Required | Description                                                        |
-| ---------------- | ------ | -------- | ------------------------------------------------------------------ |
-| enabled          | bool   | Yes      | Whether to enable the Telegram channel                             |
-| token            | string | Yes      | Telegram Bot API Token                                             |
-| allow_from       | array  | No       | Allowlist of user IDs; empty means all users are allowed           |
-| proxy            | string | No       | Proxy URL for connecting to the Telegram API (e.g. http://127.0.0.1:7890) |
-| use_markdown_v2 | bool   | No       | Enable Telegram MarkdownV2 formatting                              |
-| media_group_delay_ms | int | No       | Idle delay before processing Telegram media groups/albums. Defaults to 500 ms |
-| ephemeral.mode | string | No | Private group reply policy: `off` (default), `commands`, or `all` |
-| ephemeral.commands | array | No | Command names used by `commands` mode; empty means every registered command |
-| ephemeral.personal_session_isolation | bool | No | Must remain `true` while ephemeral mode is enabled; defaults to `true` |
+| Field                                         | Type   | Required | Description                                                                   |
+| --------------------------------------------- | ------ | -------- | ----------------------------------------------------------------------------- |
+| enabled                                       | bool   | Yes      | Whether to enable the Telegram channel                                        |
+| settings.token                                | string | Yes      | Telegram Bot API Token                                                        |
+| allow_from                                    | array  | No       | Allowlist of user IDs; empty means all users are allowed                      |
+| settings.proxy                                | string | No       | Proxy URL for connecting to the Telegram API (e.g. http://127.0.0.1:7890)     |
+| settings.use_markdown_v2                      | bool   | No       | Enable Telegram MarkdownV2 formatting                                         |
+| settings.media_group_delay_ms                 | int    | No       | Idle delay before processing Telegram media groups/albums. Defaults to 500 ms |
+| settings.ephemeral.mode                       | string | No       | Private group reply policy: `off` (default), `commands`, or `all`             |
+| settings.ephemeral.commands                   | array  | No       | Command names used by `commands` mode; empty means every registered command   |
+| settings.ephemeral.personal_session_isolation | bool   | No       | Must remain `true` while ephemeral mode is enabled; defaults to `true`        |
 
 ## Setup
 
 1. Search for `@BotFather` in Telegram
 2. Send the `/newbot` command and follow the prompts to create a new bot
 3. Obtain the HTTP API Token
-4. Fill in the Token in the configuration file
+4. Fill in the Token in the visual dashboard or Raw JSON configuration
 5. (Optional) Configure `allow_from` to restrict which user IDs can interact (you can get IDs via `@userinfobot`)
 
 ## Built-in Commands
@@ -70,12 +89,22 @@ explain how to squash the last 3 commits
 
 Ephemeral replies are disabled by default. They apply only to groups and supergroups; private chats keep their normal delivery behavior.
 
+In the visual dashboard, open **Dashboard → Channels → Telegram → Ephemeral Group Replies**. The command field accepts names with or without a leading `/`, normalizes them to lowercase, and leaves an empty list to mean every registered PicoClaw command. Personal session isolation is locked on whenever ephemeral replies are enabled.
+
 ```json
 {
-  "ephemeral": {
-    "mode": "commands",
-    "commands": ["clear", "help"],
-    "personal_session_isolation": true
+  "channel_list": {
+    "telegram": {
+      "enabled": true,
+      "type": "telegram",
+      "settings": {
+        "ephemeral": {
+          "mode": "commands",
+          "commands": ["clear", "help"],
+          "personal_session_isolation": true
+        }
+      }
+    }
   }
 }
 ```
@@ -87,7 +116,7 @@ Ephemeral replies are disabled by default. They apply only to groups and supergr
 - `/clear` clears only the requesting member's private session. PicoClaw does not register a built-in `/new` command; `/new` is handled as ordinary model input unless a separately installed command handles it. A routed agent gets a separate private session for the same group and user.
 - Private history is still stored by the configured PicoClaw session backend so the interaction can continue. It is separate from that user's public group history and from other users' private history. Workspace `memory/MEMORY.md` remains agent/workspace-wide; do not save secrets there from an ephemeral turn. Private turns are excluded from the optional evolution-learning sink.
 
-The receiver is always derived from the verified Telegram update; model output and arbitrary metadata cannot select it. If Telegram rejects private delivery, PicoClaw fails closed and does not resend the content publicly.
+The receiver is always derived from the verified Telegram update; model output and arbitrary metadata cannot select it. If Telegram rejects private delivery, PicoClaw fails closed and does not resend the content publicly. Configuration changes may require a gateway restart.
 
 Telegram permits non-admin bots to send an ephemeral reply for 15 seconds after an incoming ephemeral message or callback query. Administrators can send to a non-bot member without that short-lived authorization, but delivery is never guaranteed, especially while the user is offline. Replies to an existing ephemeral interaction remain private in `commands` mode even when the follow-up text is not itself a slash command.
 
@@ -105,9 +134,11 @@ You can set `use_markdown_v2: true` to enable enhanced formatting options. This 
     "telegram": {
       "enabled": true,
       "type": "telegram",
-      "token": "YOUR_BOT_TOKEN",
       "allow_from": ["YOUR_USER_ID"],
-      "use_markdown_v2": true
+      "settings": {
+        "token": "YOUR_BOT_TOKEN",
+        "use_markdown_v2": true
+      }
     }
   }
 }
