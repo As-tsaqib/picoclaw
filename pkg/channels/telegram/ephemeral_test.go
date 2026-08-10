@@ -780,10 +780,19 @@ func TestTelegramEphemeralMedia_UsesReceiverAwareIndividualMethod(t *testing.T) 
 }
 
 func TestTelegramEphemeralStreaming_IsExplicitlyDisabledPerSession(t *testing.T) {
-	channel := newTestChannel(t, &stubCaller{callFn: func(_ context.Context, _ string, _ *ta.RequestData) (*ta.Response, error) {
-		t.Fatal("streaming API must not be called")
-		return nil, nil
-	}})
+	channel := newTestChannel(
+		t,
+		&stubCaller{
+			callFn: func(
+				_ context.Context,
+				_ string,
+				_ *ta.RequestData,
+			) (*ta.Response, error) {
+				t.Fatal("streaming API must not be called")
+				return nil, nil
+			},
+		},
+	)
 	channel.tgCfg.Streaming.Enabled = true
 	target := mustRegisterEphemeralTarget(t, channel, -100555, 0, 48, 0, "")
 	inbound := privateOutboundContext(target)

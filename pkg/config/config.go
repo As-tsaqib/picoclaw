@@ -618,7 +618,7 @@ type TelegramSettings struct {
 	BaseURL           string                  `json:"base_url"             yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_BASE_URL"`
 	Proxy             string                  `json:"proxy"                yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_PROXY"`
 	Streaming         StreamingConfig         `json:"streaming,omitzero"   yaml:"-"`
-	Ephemeral         TelegramEphemeralConfig `json:"ephemeral,omitzero" yaml:"-"`
+	Ephemeral         TelegramEphemeralConfig `json:"ephemeral,omitzero"   yaml:"-"`
 	UseMarkdownV2     bool                    `json:"use_markdown_v2"      yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_USE_MARKDOWN_V2"`
 	MediaGroupDelayMS int                     `json:"media_group_delay_ms" yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_MEDIA_GROUP_DELAY_MS"`
 }
