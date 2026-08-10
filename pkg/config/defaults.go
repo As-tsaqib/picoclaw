@@ -47,6 +47,30 @@ func DefaultConfig() *Config {
 		Session: SessionConfig{
 			Dimensions: []string{"chat"},
 		},
+		Memory: MemoryConfig{
+			Enabled:            true,
+			WorkspaceCharLimit: DefaultWorkspaceMemoryCharLimit,
+			PerUserCharLimit:   DefaultPerUserMemoryCharLimit,
+			Notifications:      MemoryNotificationOff,
+			BackgroundReview: MemoryReviewConfig{
+				Enabled:        true,
+				Interval:       DefaultMemoryReviewInterval,
+				TimeoutSeconds: DefaultMemoryReviewTimeout,
+				MaxIterations:  DefaultMemoryReviewIterations,
+			},
+			Recall: MemoryRecallConfig{
+				Mode:       MemoryRecallIsolated,
+				MaxResults: DefaultMemoryRecallResults,
+				MaxChars:   DefaultMemoryRecallChars,
+				MaxRecords: DefaultMemoryRecallRecords,
+			},
+			Checkpoints: MemoryCheckpointConfig{
+				Enabled:                false,
+				MaxCount:               DefaultCheckpointCount,
+				MaxContextChars:        DefaultCheckpointContextChars,
+				CompletedRetentionDays: DefaultCheckpointRetentionDays,
+			},
+		},
 		Evolution: EvolutionConfig{
 			Enabled:         false,
 			Mode:            "observe",

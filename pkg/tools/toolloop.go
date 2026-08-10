@@ -178,7 +178,11 @@ func RunToolLoop(
 					}
 				}()
 
-				argsJSON, _ := json.Marshal(tc.Arguments)
+				logArguments := tc.Arguments
+				if config.Tools != nil {
+					logArguments = config.Tools.ArgumentsForLog(tc.Name, tc.Arguments)
+				}
+				argsJSON, _ := json.Marshal(logArguments)
 				argsPreview := utils.Truncate(string(argsJSON), 200)
 				logger.InfoCF("toolloop", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
 					map[string]any{

@@ -3,6 +3,7 @@ package toolshared
 import (
 	"context"
 
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/session"
 )
 
@@ -32,6 +33,13 @@ type PromptMetadataProvider interface {
 	PromptMetadata() PromptMetadata
 }
 
+// ArgumentLogSanitizer lets tools with private payloads expose a metadata-only
+// representation for logs and runtime events. Execution still receives the
+// original immutable argument map.
+type ArgumentLogSanitizer interface {
+	ArgumentsForLog(args map[string]any) map[string]any
+}
+
 // --- Request-scoped tool context (channel / chatID) ---
 //
 // Carried via context.Value so that concurrent tool calls each receive
@@ -50,6 +58,9 @@ var (
 	ctxKeyAgentID          = &toolCtxKey{"agentID"}
 	ctxKeySessionKey       = &toolCtxKey{"sessionKey"}
 	ctxKeySessionScope     = &toolCtxKey{"sessionScope"}
+	ctxKeyCallerScope      = &toolCtxKey{"callerScope"}
+	ctxKeyTurnID           = &toolCtxKey{"turnID"}
+	ctxKeyBackgroundReview = &toolCtxKey{"backgroundReview"}
 )
 
 // WithToolContext returns a child context carrying channel and chatID.
@@ -57,6 +68,20 @@ func WithToolContext(ctx context.Context, channel, chatID string) context.Contex
 	ctx = context.WithValue(ctx, ctxKeyChannel, channel)
 	ctx = context.WithValue(ctx, ctxKeyChatID, chatID)
 	return ctx
+}
+
+// WithToolCallerScope attaches the trusted memory/checkpoint caller scope.
+// Tool schemas deliberately provide no equivalent user/session arguments.
+func WithToolCallerScope(ctx context.Context, scope memory.CallerScope) context.Context {
+	return context.WithValue(ctx, ctxKeyCallerScope, scope)
+}
+
+func WithToolTurnID(ctx context.Context, turnID string) context.Context {
+	return context.WithValue(ctx, ctxKeyTurnID, turnID)
+}
+
+func WithBackgroundMemoryReview(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, ctxKeyBackgroundReview, enabled)
 }
 
 // WithToolMessageContext returns a child context carrying inbound message IDs.
@@ -149,6 +174,21 @@ func ToolSessionScope(ctx context.Context) *session.SessionScope {
 		return nil
 	}
 	return session.CloneScope(scope)
+}
+
+func ToolCallerScope(ctx context.Context) (memory.CallerScope, bool) {
+	scope, ok := ctx.Value(ctxKeyCallerScope).(memory.CallerScope)
+	return scope, ok
+}
+
+func ToolTurnID(ctx context.Context) string {
+	value, _ := ctx.Value(ctxKeyTurnID).(string)
+	return value
+}
+
+func IsBackgroundMemoryReview(ctx context.Context) bool {
+	value, _ := ctx.Value(ctxKeyBackgroundReview).(bool)
+	return value
 }
 
 // AsyncCallback is a function type that async tools use to notify completion.

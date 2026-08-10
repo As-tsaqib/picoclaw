@@ -64,4 +64,14 @@ type Runtime struct {
 	ClearHistory       func() error
 	ReloadConfig       func() error
 	StopActiveTurn     func() (StopResult, error)
+	MemoryStatus       func() string
+	MemoryList         func() (string, error)
+	MemoryForget       func(id string) (string, error)
+	MemoryPending      func() (string, error)
+	MemoryApprove      func(id string) (string, error)
+	MemoryReject       func(id string) (string, error)
+	MemoryReview       func(ctx context.Context) (string, error)
+	CheckpointList     func() (string, error)
+	CheckpointResume   func(id string) (string, error)
+	CheckpointForget   func(id string) (string, error)
 }

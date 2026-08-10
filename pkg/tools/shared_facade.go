@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/session"
 	toolshared "github.com/sipeed/picoclaw/pkg/tools/shared"
 )
@@ -24,6 +25,7 @@ type (
 	AsyncExecutor          = toolshared.AsyncExecutor
 	PromptMetadata         = toolshared.PromptMetadata
 	PromptMetadataProvider = toolshared.PromptMetadataProvider
+	ArgumentLogSanitizer   = toolshared.ArgumentLogSanitizer
 	ToolResult             = toolshared.ToolResult
 )
 
@@ -61,6 +63,18 @@ func WithToolSessionContext(
 	return toolshared.WithToolSessionContext(ctx, agentID, sessionKey, scope)
 }
 
+func WithToolCallerScope(ctx context.Context, scope memory.CallerScope) context.Context {
+	return toolshared.WithToolCallerScope(ctx, scope)
+}
+
+func WithToolTurnID(ctx context.Context, turnID string) context.Context {
+	return toolshared.WithToolTurnID(ctx, turnID)
+}
+
+func WithBackgroundMemoryReview(ctx context.Context, enabled bool) context.Context {
+	return toolshared.WithBackgroundMemoryReview(ctx, enabled)
+}
+
 func ToolChannel(ctx context.Context) string {
 	return toolshared.ToolChannel(ctx)
 }
@@ -87,6 +101,18 @@ func ToolSessionKey(ctx context.Context) string {
 
 func ToolSessionScope(ctx context.Context) *session.SessionScope {
 	return toolshared.ToolSessionScope(ctx)
+}
+
+func ToolCallerScope(ctx context.Context) (memory.CallerScope, bool) {
+	return toolshared.ToolCallerScope(ctx)
+}
+
+func ToolTurnID(ctx context.Context) string {
+	return toolshared.ToolTurnID(ctx)
+}
+
+func IsBackgroundMemoryReview(ctx context.Context) bool {
+	return toolshared.IsBackgroundMemoryReview(ctx)
 }
 
 func ToolToSchema(tool Tool) map[string]any {

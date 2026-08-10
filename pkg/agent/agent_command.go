@@ -342,7 +342,11 @@ func (al *AgentLoop) buildCommandsRuntime(
 				opts.Dispatch.SessionScope,
 				opts.Dispatch.SessionAliases,
 			)
-			return al.contextManager.Clear(ctx, opts.SessionKey)
+			if err := al.contextManager.Clear(ctx, opts.SessionKey); err != nil {
+				return err
+			}
+			caller := callerScopeForTurn(agent.ID, cfg, *opts)
+			return clearSessionMemoryState(agent, caller)
 		}
 
 		rt.AskSideQuestion = func(ctx context.Context, question string) (string, error) {
@@ -369,6 +373,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 			}
 		}
 	}
+	configureMemoryCommandRuntime(rt, agent, opts, al)
 	return rt
 }
 

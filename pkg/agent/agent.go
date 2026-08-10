@@ -47,20 +47,21 @@ type AgentLoop struct {
 	hooks              *HookManager
 
 	// Runtime state
-	running        atomic.Bool
-	contextManager ContextManager
-	fallback       *providers.FallbackChain
-	channelManager interfaces.ChannelManager
-	mediaStore     media.MediaStore
-	transcriber    asr.Transcriber
-	cmdRegistry    *commands.Registry
-	mcp            mcpRuntime
-	evolution      *evolutionBridge
-	hookRuntime    hookRuntime
-	steering       *steeringQueue
-	pendingSkills  sync.Map
-	pendingStops   sync.Map
-	mu             sync.RWMutex
+	running                 atomic.Bool
+	contextManager          ContextManager
+	fallback                *providers.FallbackChain
+	channelManager          interfaces.ChannelManager
+	mediaStore              media.MediaStore
+	transcriber             asr.Transcriber
+	cmdRegistry             *commands.Registry
+	mcp                     mcpRuntime
+	evolution               *evolutionBridge
+	hookRuntime             hookRuntime
+	steering                *steeringQueue
+	pendingSkills           sync.Map
+	pendingStops            sync.Map
+	pendingMemoryDeliveries sync.Map
+	mu                      sync.RWMutex
 
 	// workerSem limits concurrent turn processing workers.
 	workerSem chan struct{}
@@ -106,6 +107,7 @@ type processOptions struct {
 	AllowInterimPicoPublish bool                   // Whether pico tool-call interim text can be published when SendResponse is false
 	SuppressToolFeedback    bool                   // Whether to suppress inline tool feedback messages
 	NoHistory               bool                   // If true, don't load session history (for heartbeat)
+	SuppressMemoryReview    bool                   // If true, delivered output never advances the background-review counter
 	SkipInitialSteeringPoll bool                   // If true, skip the steering poll at loop start (used by Continue)
 	InboundContext          *bus.InboundContext    // Normalized inbound facts for events/hooks
 	RouteResult             *routing.ResolvedRoute // Route decision snapshot for events/hooks
@@ -557,6 +559,7 @@ func (al *AgentLoop) runAgentLoop(
 		opts.Dispatch.SessionScope,
 		opts.Dispatch.SessionAliases,
 	)
+	al.cancelMemoryReviewForLiveTurn(agent, opts)
 
 	turnScope := al.newTurnEventScope(
 		agent.ID,
@@ -567,9 +570,11 @@ func (al *AgentLoop) runAgentLoop(
 	pipeline := NewPipeline(al)
 	result, err := al.runTurn(ctx, ts, pipeline)
 	if err != nil {
+		al.discardTurnMemory(ts)
 		return "", err
 	}
 	if result.status == TurnEndStatusAborted {
+		al.discardTurnMemory(ts)
 		return "", nil
 	}
 
@@ -609,7 +614,15 @@ func (al *AgentLoop) runAgentLoop(
 			msg.Context.Raw["model_name"] = modelName
 		}
 		markFinalOutbound(&msg)
-		al.bus.PublishOutbound(ctx, msg)
+		publishErr := al.bus.PublishOutbound(ctx, msg)
+		al.finishTurnMemoryDelivery(ts, result.finalContent, publishErr == nil)
+		if publishErr != nil {
+			return "", publishErr
+		}
+	} else if result.finalContent != "" {
+		al.deferTurnMemoryDelivery(ts, result.finalContent)
+	} else {
+		al.discardTurnMemory(ts)
 	}
 
 	if result.finalContent != "" {

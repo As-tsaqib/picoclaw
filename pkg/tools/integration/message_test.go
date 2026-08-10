@@ -75,6 +75,35 @@ func TestMessageTool_Execute_Success(t *testing.T) {
 	}
 }
 
+func TestMessageTool_SentContentToTracksAuthoritativeDeliveredText(t *testing.T) {
+	tool := NewMessageTool()
+	tool.SetSendCallback(func(
+		context.Context,
+		string,
+		string,
+		string,
+		string,
+		[]bus.MediaPart,
+	) error {
+		return nil
+	})
+	ctx := WithToolContext(context.Background(), "telegram", "chat-1")
+	ctx = WithToolSessionContext(ctx, "main", "session-1", nil)
+	for _, content := range []string{"First delivered paragraph", "Second delivered paragraph"} {
+		result := tool.Execute(ctx, map[string]any{"content": content})
+		if result.IsError {
+			t.Fatalf("Execute() error = %v", result.Err)
+		}
+	}
+	delivered, ok := tool.SentContentTo("session-1", "telegram", "chat-1")
+	if !ok || delivered != "First delivered paragraph\n\nSecond delivered paragraph" {
+		t.Fatalf("SentContentTo() = %q, %t", delivered, ok)
+	}
+	if _, ok := tool.SentContentTo("session-1", "telegram", "another-chat"); ok {
+		t.Fatal("SentContentTo() reported an unrelated target")
+	}
+}
+
 func TestMessageTool_Execute_WithCustomChannel(t *testing.T) {
 	tool := NewMessageTool()
 

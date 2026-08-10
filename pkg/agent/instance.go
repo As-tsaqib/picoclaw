@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/isolation"
@@ -44,6 +45,10 @@ type AgentInstance struct {
 	MCPServerAllowlist        map[string]struct{}
 	Candidates                []providers.FallbackCandidate
 	ImageCandidates           []providers.FallbackCandidate
+	CuratedMemory             *memory.CuratedStore
+	RecallMemory              *memory.RecallStore
+	Checkpoints               *memory.CheckpointStore
+	MemoryReviewState         *memory.ReviewStateStore
 
 	// Router is non-nil when model routing is configured and the light model
 	// was successfully resolved. It scores each incoming message and decides
@@ -59,6 +64,9 @@ type AgentInstance struct {
 	// instances. This allows each fallback model to use its own api_base and api_key
 	// from model_list, instead of inheriting the primary model's provider config.
 	CandidateProviders map[string]providers.LLMProvider
+
+	memoryReviewMu     sync.Mutex
+	memoryReviewCancel context.CancelFunc
 }
 
 // NewAgentInstance creates an agent instance from config.
@@ -207,6 +215,26 @@ func NewAgentInstance(
 		summarizeTokenPercent = 75
 	}
 
+	curatedMemory, recallMemory, checkpoints, reviewState := initializeAgentMemoryStores(
+		workspace,
+		agentID,
+		cfg.Memory,
+	)
+	if curatedMemory != nil {
+		toolsRegistry.Register(tools.NewMemoryManageTool(curatedMemory, cfg.Memory.WriteApproval, nil))
+	}
+	if checkpoints != nil {
+		toolsRegistry.Register(tools.NewTaskCheckpointTool(checkpoints))
+	}
+	if recallMemory != nil {
+		toolsRegistry.Register(tools.NewSessionRecallTool(
+			recallMemory,
+			cfg.Memory.Recall.EffectiveMode(),
+			cfg.Memory.Recall.EffectiveMaxResults(),
+			cfg.Memory.Recall.EffectiveMaxChars(),
+		))
+	}
+
 	// Resolve fallback candidates
 	candidates := resolveModelCandidates(cfg, defaults.Provider, model, fallbacks)
 	imageCandidates := resolveModelCandidates(
@@ -287,6 +315,10 @@ func NewAgentInstance(
 		MCPServerAllowlist:        agentMCPServerAllowlist,
 		Candidates:                candidates,
 		ImageCandidates:           imageCandidates,
+		CuratedMemory:             curatedMemory,
+		RecallMemory:              recallMemory,
+		Checkpoints:               checkpoints,
+		MemoryReviewState:         reviewState,
 		Router:                    router,
 		LightCandidates:           lightCandidates,
 		LightProvider:             lightProvider,
@@ -470,6 +502,12 @@ func mediaTempDirPattern() string {
 
 // Close releases resources held by the agent's session store.
 func (a *AgentInstance) Close() error {
+	a.memoryReviewMu.Lock()
+	if a.memoryReviewCancel != nil {
+		a.memoryReviewCancel()
+		a.memoryReviewCancel = nil
+	}
+	a.memoryReviewMu.Unlock()
 	if a.Sessions != nil {
 		return a.Sessions.Close()
 	}

@@ -164,7 +164,7 @@ func (cb *ContextBuilder) getIdentity(includeToolUseRule bool) string {
 		rules = append(
 			rules,
 			fmt.Sprintf(
-				"**Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md",
+				"**Memory** - When `memory_manage` is available, use it for compact durable facts. Otherwise, update %s/memory/MEMORY.md only for non-private workspace facts. Never put private user details in workspace memory or USER.md.",
 				workspacePath,
 			),
 		)
@@ -985,11 +985,15 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 		})
 
 	// Log preview of system prompt (avoid logging huge content)
-	preview := utils.Truncate(fullSystemPrompt, 500)
-	logger.DebugCF("agent", "System prompt preview",
-		map[string]any{
-			"preview": preview,
-		})
+	if !req.PrivateContext {
+		preview := utils.Truncate(fullSystemPrompt, 500)
+		logger.DebugCF("agent", "System prompt preview",
+			map[string]any{
+				"preview": preview,
+			})
+	} else {
+		logger.DebugCF("agent", "System prompt preview omitted for private memory context", nil)
+	}
 
 	history := sanitizeHistoryForProvider(req.History)
 

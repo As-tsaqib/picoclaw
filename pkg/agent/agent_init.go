@@ -403,6 +403,12 @@ func registerSharedTools(
 			agent.Tools.Register(delegateTool)
 		}
 
+		if tool, ok := agent.Tools.Get(tools.MemoryManageToolName); ok {
+			if memoryTool, ok := tool.(*tools.MemoryManageTool); ok {
+				memoryTool.SetChangeCallback(al.memoryChangeNotification)
+			}
+		}
+
 		warnOnUnknownAgentToolDeclarations(agentID, agent.Workspace, agent.Definition, agent.Tools)
 	}
 }

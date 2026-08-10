@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -63,6 +64,9 @@ const (
 	PromptSourceSubTurnResult  PromptSourceID = "turn:subturn_result"
 	PromptSourceToolResult     PromptSourceID = "turn:tool_result"
 	PromptSourceInterrupt      PromptSourceID = "turn:interrupt"
+	PromptSourceCuratedMemory  PromptSourceID = "memory:curated"
+	PromptSourceCheckpoint     PromptSourceID = "memory:checkpoint"
+	PromptSourceMemoryPolicy   PromptSourceID = "memory:policy"
 )
 
 type PromptCachePolicy string
@@ -114,6 +118,8 @@ type PromptBuildRequest struct {
 	ChatID            string
 	SenderID          string
 	SenderDisplayName string
+	MemoryScope       memory.CallerScope
+	PrivateContext    bool
 
 	ActiveSkills []string
 	Overlays     []PromptPart
@@ -223,6 +229,27 @@ func builtinPromptSources() []PromptSourceDescriptor {
 			Description:     "Workspace memory context",
 			Allowed:         []PromptPlacement{{Layer: PromptLayerContext, Slot: PromptSlotMemory}},
 			StableByDefault: true,
+		},
+		{
+			ID:              PromptSourceCuratedMemory,
+			Owner:           "memory",
+			Description:     "Request-scoped structured curated memory data",
+			Allowed:         []PromptPlacement{{Layer: PromptLayerContext, Slot: PromptSlotMemory}},
+			StableByDefault: false,
+		},
+		{
+			ID:              PromptSourceCheckpoint,
+			Owner:           "memory",
+			Description:     "Current-session resumable task checkpoint data",
+			Allowed:         []PromptPlacement{{Layer: PromptLayerContext, Slot: PromptSlotMemory}},
+			StableByDefault: false,
+		},
+		{
+			ID:              PromptSourceMemoryPolicy,
+			Owner:           "memory",
+			Description:     "Curated-memory, recall, and checkpoint behavior",
+			Allowed:         []PromptPlacement{{Layer: PromptLayerCapability, Slot: PromptSlotTooling}},
+			StableByDefault: false,
 		},
 		{
 			ID:              PromptSourceRuntime,

@@ -255,10 +255,11 @@ func (r *ToolRegistry) ExecuteWithContext(
 	channel, chatID string,
 	asyncCallback AsyncCallback,
 ) *ToolResult {
+	logArgs := r.ArgumentsForLog(name, args)
 	logger.InfoCF("tool", "Tool execution started",
 		map[string]any{
 			"tool": name,
-			"args": args,
+			"args": logArgs,
 		})
 
 	tool, ok := r.Get(name)
@@ -271,11 +272,17 @@ func (r *ToolRegistry) ExecuteWithContext(
 			fmt.Sprintf("tool %q not found", name),
 		).WithError(fmt.Errorf("tool not found"))
 	}
+	_, redactPrivateLogs := tool.(ArgumentLogSanitizer)
 
 	// Validate arguments against the tool's declared schema.
 	if err := validateToolArgs(tool.Parameters(), args); err != nil {
-		logger.WarnCF("tool", "Tool argument validation failed",
-			map[string]any{"tool": name, "error": err.Error()})
+		fields := map[string]any{"tool": name}
+		if redactPrivateLogs {
+			fields["error_type"] = fmt.Sprintf("%T", err)
+		} else {
+			fields["error"] = err.Error()
+		}
+		logger.WarnCF("tool", "Tool argument validation failed", fields)
 		return ErrorResult(fmt.Sprintf("invalid arguments for tool %q: %s", name, err)).
 			WithError(fmt.Errorf("argument validation failed: %w", err))
 	}
@@ -294,12 +301,18 @@ func (r *ToolRegistry) ExecuteWithContext(
 	func() {
 		defer func() {
 			if re := recover(); re != nil {
-				logger.RecoverPanicNoExit(re)
 				errMsg := fmt.Sprintf("Tool '%s' crashed with panic: %v", name, re)
+				panicValue := fmt.Sprintf("%v", re)
+				if redactPrivateLogs {
+					errMsg = fmt.Sprintf("Tool '%s' crashed with a redacted panic", name)
+					panicValue = fmt.Sprintf("%T", re)
+				} else {
+					logger.RecoverPanicNoExit(re)
+				}
 				logger.ErrorCF("tool", "Tool execution panic recovered",
 					map[string]any{
 						"tool":  name,
-						"panic": fmt.Sprintf("%v", re),
+						"panic": panicValue,
 					})
 				result = &ToolResult{
 					ForLLM:  errMsg,
@@ -337,11 +350,16 @@ func (r *ToolRegistry) ExecuteWithContext(
 
 	// Log based on result type
 	if result.IsError {
+		errorDetail := result.ForLLM
+		if redactPrivateLogs {
+			errorDetail = "redacted private tool error"
+		}
 		logger.ErrorCF("tool", "Tool execution failed",
 			map[string]any{
-				"tool":     name,
-				"duration": duration.Milliseconds(),
-				"error":    result.ForLLM,
+				"tool":          name,
+				"duration":      duration.Milliseconds(),
+				"error":         errorDetail,
+				"result_length": len(result.ContentForLLM()),
 			})
 	} else if result.Async {
 		logger.InfoCF("tool", "Tool started (async)",
@@ -359,6 +377,21 @@ func (r *ToolRegistry) ExecuteWithContext(
 	}
 
 	return result
+}
+
+// ArgumentsForLog returns a safe representation of tool arguments. Private
+// memory and checkpoint tools implement ArgumentLogSanitizer so durable facts,
+// user details, and checkpoint context never enter diagnostic logs/events.
+func (r *ToolRegistry) ArgumentsForLog(name string, args map[string]any) map[string]any {
+	r.mu.RLock()
+	entry := r.tools[name]
+	r.mu.RUnlock()
+	if entry != nil {
+		if sanitizer, ok := entry.Tool.(ArgumentLogSanitizer); ok {
+			return sanitizer.ArgumentsForLog(args)
+		}
+	}
+	return args
 }
 
 // sortedToolNames returns tool names in sorted order for deterministic iteration.

@@ -40,16 +40,21 @@ func (al *AgentLoop) publishResponseOrError(
 }
 
 func (al *AgentLoop) PublishResponseIfNeeded(ctx context.Context, channel, chatID, sessionKey, response string) {
+	al.publishResponseIfNeeded(ctx, channel, chatID, sessionKey, response)
+}
+
+func (al *AgentLoop) publishResponseIfNeeded(ctx context.Context, channel, chatID, sessionKey, response string) bool {
 	if response == "" {
-		return
+		return false
 	}
 
 	alreadySentToSameChat := false
-	defaultAgent := al.GetRegistry().GetDefaultAgent()
-	if defaultAgent != nil {
-		if tool, ok := defaultAgent.Tools.Get("message"); ok {
+	deliveredToolContent := ""
+	agent := al.agentForSession(sessionKey)
+	if agent != nil {
+		if tool, ok := agent.Tools.Get("message"); ok {
 			if mt, ok := tool.(*tools.MessageTool); ok {
-				alreadySentToSameChat = mt.HasSentTo(sessionKey, channel, chatID)
+				deliveredToolContent, alreadySentToSameChat = mt.SentContentTo(sessionKey, channel, chatID)
 			}
 		}
 	}
@@ -70,7 +75,8 @@ func (al *AgentLoop) PublishResponseIfNeeded(ctx context.Context, channel, chatI
 			"Skipped outbound (message tool already sent to same chat)",
 			map[string]any{"channel": channel, "chat_id": chatID},
 		)
-		return
+		al.acknowledgeDeferredMemoryDelivery(sessionKey, deliveredToolContent, true)
+		return true
 	}
 
 	msg := bus.OutboundMessage{
@@ -82,13 +88,18 @@ func (al *AgentLoop) PublishResponseIfNeeded(ctx context.Context, channel, chatI
 		msg.ContextUsage = computeContextUsage(al.agentForSession(sessionKey), sessionKey)
 	}
 	markFinalOutbound(&msg)
-	al.bus.PublishOutbound(ctx, msg)
+	err := al.bus.PublishOutbound(ctx, msg)
+	al.acknowledgeDeferredMemoryDelivery(sessionKey, response, err == nil)
+	if err != nil {
+		return false
+	}
 	logger.InfoCF("agent", "Published outbound response",
 		map[string]any{
 			"channel":     channel,
 			"chat_id":     chatID,
 			"content_len": len(response),
 		})
+	return true
 }
 
 func (al *AgentLoop) targetReasoningChannelID(channelName string) (chatID string) {

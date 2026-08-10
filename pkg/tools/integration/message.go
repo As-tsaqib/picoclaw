@@ -34,6 +34,7 @@ type messageMediaArg struct {
 type sentTarget struct {
 	Channel string
 	ChatID  string
+	Content string
 }
 
 type MessageTool struct {
@@ -173,6 +174,27 @@ func (t *MessageTool) HasSentTo(sessionKey, channel, chatID string) bool {
 	return false
 }
 
+// SentContentTo returns the text that the message tool successfully delivered
+// to a target during the current round. The agent finalization path uses this
+// authoritative content for recall/checkpoint delivery acknowledgement instead
+// of persisting a final model response that was intentionally suppressed.
+func (t *MessageTool) SentContentTo(sessionKey, channel, chatID string) (string, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var delivered []string
+	found := false
+	for _, target := range t.sentTargets[sessionKey] {
+		if target.Channel != channel || target.ChatID != chatID {
+			continue
+		}
+		found = true
+		if content := strings.TrimSpace(target.Content); content != "" {
+			delivered = append(delivered, content)
+		}
+	}
+	return strings.Join(delivered, "\n\n"), found
+}
+
 func (t *MessageTool) SetSendCallback(callback SendCallbackWithContext) {
 	t.sendCallback = callback
 }
@@ -228,7 +250,11 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 
 	sessionKey := ToolSessionKey(ctx)
 	t.mu.Lock()
-	t.sentTargets[sessionKey] = append(t.sentTargets[sessionKey], sentTarget{Channel: channel, ChatID: chatID})
+	t.sentTargets[sessionKey] = append(t.sentTargets[sessionKey], sentTarget{
+		Channel: channel,
+		ChatID:  chatID,
+		Content: content,
+	})
 	t.mu.Unlock()
 
 	status := fmt.Sprintf("Message sent to %s:%s", channel, chatID)

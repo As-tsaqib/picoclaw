@@ -62,7 +62,13 @@ func (al *AgentLoop) ProcessDirectWithChannel(
 		SessionKey: sessionKey,
 	}
 
-	return al.processMessage(ctx, msg)
+	response, err := al.processMessage(ctx, msg)
+	if err == nil && response != "" {
+		if target, targetErr := al.buildContinuationTarget(msg); targetErr == nil && target != nil {
+			al.acknowledgeDeferredMemoryDelivery(target.SessionKey, response, true)
+		}
+	}
+	return response, err
 }
 
 func (al *AgentLoop) ProcessHeartbeat(
@@ -308,9 +314,10 @@ func (al *AgentLoop) processSystemMessage(
 	}
 
 	return al.runAgentLoop(ctx, agent, processOptions{
-		Dispatch:        dispatch,
-		DefaultResponse: "Background task completed.",
-		EnableSummary:   false,
-		SendResponse:    true,
+		Dispatch:             dispatch,
+		DefaultResponse:      "Background task completed.",
+		EnableSummary:        false,
+		SendResponse:         true,
+		SuppressMemoryReview: true,
 	})
 }

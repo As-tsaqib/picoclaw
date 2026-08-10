@@ -76,6 +76,10 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
 	}
+	if err = applyMemoryDefaults(normalizedBody, &cfg); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid memory config: %v", err), http.StatusBadRequest)
+		return
+	}
 	cfg.Session.ApplyDmScope()
 	cfg.Session.DeriveDmScope()
 	if execAllowRemoteOmitted(body) {
@@ -125,6 +129,24 @@ func execAllowRemoteOmitted(body []byte) bool {
 		return false
 	}
 	return raw.Tools == nil || raw.Tools.Exec == nil || raw.Tools.Exec.AllowRemote == nil
+}
+
+func applyMemoryDefaults(body []byte, cfg *config.Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return err
+	}
+	memoryCfg := config.DefaultConfig().Memory
+	if data, ok := raw["memory"]; ok && string(data) != "null" {
+		if err := json.Unmarshal(data, &memoryCfg); err != nil {
+			return err
+		}
+	}
+	cfg.Memory = memoryCfg
+	return nil
 }
 
 // handlePatchConfig partially updates the system configuration using JSON Merge Patch (RFC 7396).
@@ -331,6 +353,10 @@ func validateConfig(cfg *config.Config) []string {
 	}
 
 	if err := cfg.ValidateTurnProfile(); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	if err := cfg.Memory.Validate(); err != nil {
 		errs = append(errs, err.Error())
 	}
 

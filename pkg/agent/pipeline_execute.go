@@ -20,9 +20,13 @@ import (
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
-func toolErrorSummary(result *tools.ToolResult) string {
+func toolErrorSummary(toolName string, result *tools.ToolResult) string {
 	if result == nil || !result.IsError {
 		return ""
+	}
+	switch toolName {
+	case tools.MemoryManageToolName, tools.SessionRecallToolName, tools.TaskCheckpointToolName:
+		return "private memory tool error (details redacted)"
 	}
 	content := strings.TrimSpace(result.ContentForLLM())
 	if content == "" && result.Err != nil {
@@ -179,7 +183,8 @@ toolLoop:
 				if toolReq != nil && toolReq.HookResult != nil {
 					hookResult := toolReq.HookResult
 
-					argsJSON, _ := json.Marshal(toolArgs)
+					logArguments := ts.agent.Tools.ArgumentsForLog(toolName, toolArgs)
+					argsJSON, _ := json.Marshal(logArguments)
 					argsPreview := utils.Truncate(string(argsJSON), 200)
 					logger.InfoCF("agent", fmt.Sprintf("Tool call (hook respond): %s(%s)", toolName, argsPreview),
 						map[string]any{
@@ -193,7 +198,7 @@ toolLoop:
 						ts.eventMeta("runTurn", "turn.tool.start"),
 						ToolExecStartPayload{
 							Tool:      toolName,
-							Arguments: cloneEventArguments(toolArgs),
+							Arguments: cloneEventArguments(logArguments),
 						},
 					)
 
@@ -207,7 +212,7 @@ toolLoop:
 						feedbackMsg := utils.FormatToolFeedbackMessage(
 							toolName,
 							toolFeedbackExplanation,
-							toolFeedbackArgsPreview(toolArgs, toolFeedbackMaxLen),
+							toolFeedbackArgsPreview(logArguments, toolFeedbackMaxLen),
 						)
 						fbCtx, fbCancel := context.WithTimeout(turnCtx, 3*time.Second)
 						_ = al.bus.PublishOutbound(fbCtx, outboundMessageForTurnWithOptions(
@@ -321,7 +326,7 @@ toolLoop:
 					ts.recordToolExecution(
 						toolName,
 						!hookResult.IsError,
-						toolErrorSummary(hookResult),
+						toolErrorSummary(toolName, hookResult),
 						inferSkillNamesFromToolCall(ts, toolName, toolArgs),
 					)
 
@@ -472,7 +477,8 @@ toolLoop:
 			continue
 		}
 
-		argsJSON, _ := json.Marshal(toolArgs)
+		logArguments := ts.agent.Tools.ArgumentsForLog(toolName, toolArgs)
+		argsJSON, _ := json.Marshal(logArguments)
 		argsPreview := utils.Truncate(string(argsJSON), 200)
 		logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", toolName, argsPreview),
 			map[string]any{
@@ -485,7 +491,7 @@ toolLoop:
 			ts.eventMeta("runTurn", "turn.tool.start"),
 			ToolExecStartPayload{
 				Tool:      toolName,
-				Arguments: cloneEventArguments(toolArgs),
+				Arguments: cloneEventArguments(logArguments),
 			},
 		)
 
@@ -499,7 +505,7 @@ toolLoop:
 			feedbackMsg := utils.FormatToolFeedbackMessage(
 				toolName,
 				toolFeedbackExplanation,
-				toolFeedbackArgsPreview(toolArgs, toolFeedbackMaxLen),
+				toolFeedbackArgsPreview(logArguments, toolFeedbackMaxLen),
 			)
 			fbCtx, fbCancel := context.WithTimeout(turnCtx, 3*time.Second)
 			_ = al.bus.PublishOutbound(fbCtx, outboundMessageForTurnWithOptions(
@@ -567,6 +573,8 @@ toolLoop:
 			ts.sessionKey,
 			ts.opts.Dispatch.SessionScope,
 		)
+		execCtx = tools.WithToolCallerScope(execCtx, callerScopeForTurn(ts.agent.ID, p.Cfg, ts.opts))
+		execCtx = tools.WithToolTurnID(execCtx, ts.turnID)
 		toolResult := ts.agent.Tools.ExecuteWithContext(
 			execCtx,
 			toolName,
@@ -710,7 +718,7 @@ toolLoop:
 		ts.recordToolExecution(
 			toolName,
 			!toolResult.IsError,
-			toolErrorSummary(toolResult),
+			toolErrorSummary(toolName, toolResult),
 			inferSkillNamesFromToolCall(ts, toolName, toolArgs),
 		)
 		messages = append(messages, toolResultMsg)

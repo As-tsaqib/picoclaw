@@ -25,9 +25,13 @@ func promptBuildRequestForTurn(
 		ChatID:            ts.chatID,
 		SenderID:          ts.opts.Dispatch.SenderID(),
 		SenderDisplayName: ts.opts.SenderDisplayName,
+		MemoryScope:       callerScopeForTurn(ts.agent.ID, cfg, ts.opts),
 		ActiveSkills:      activeSkillNames(ts.agent, ts.opts),
 		Overlays:          promptOverlaysForOptions(ts.opts),
 	}
+	memoryParts, private := memoryPromptPartsForTurn(ts, cfg, req.MemoryScope)
+	req.Overlays = append(req.Overlays, memoryParts...)
+	req.PrivateContext = private
 	hasCallableTools := true
 	if ts.profile.Enabled {
 		hasCallableTools = turnProfileHasCallableTools(ts.profile, ts.agent.Tools.ToProviderDefs()) ||
