@@ -44,7 +44,7 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 		return msg, false
 	}
 
-	al.sendTranscriptionFeedback(ctx, msg.Channel, msg.ChatID, msg.MessageID, transcriptions)
+	al.sendTranscriptionFeedback(ctx, msg.Context, msg.MessageID, transcriptions)
 
 	// Replace audio annotations sequentially with transcriptions.
 	idx := 0
@@ -74,7 +74,8 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 
 func (al *AgentLoop) sendTranscriptionFeedback(
 	ctx context.Context,
-	channel, chatID, messageID string,
+	inbound bus.InboundContext,
+	messageID string,
 	validTexts []string,
 ) {
 	if !al.cfg.Voice.EchoTranscription {
@@ -98,8 +99,9 @@ func (al *AgentLoop) sendTranscriptionFeedback(
 		feedbackMsg = "No voice detected in the audio"
 	}
 
+	outboundCtx := outboundContextFromInbound(&inbound, inbound.Channel, inbound.ChatID, messageID)
 	err := al.channelManager.SendMessage(ctx, bus.OutboundMessage{
-		Context:          bus.NewOutboundContext(channel, chatID, messageID),
+		Context:          outboundCtx,
 		Content:          feedbackMsg,
 		ReplyToMessageID: messageID,
 	})

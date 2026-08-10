@@ -372,6 +372,15 @@ func (m *Manager) preSend(ctx context.Context, name string, msg bus.OutboundMess
 	key := name + ":" + chatID
 	streamKey := streamSuppressionKey(name, chatID, msg.SessionKey)
 
+	// A private turn must never consume or edit a public placeholder/stream
+	// marker keyed only by chat. The channel send path validates the private
+	// capability; this guard prevents public side effects before that check.
+	if msg.Context.PrivateResponse ||
+		(msg.Scope != nil && msg.Scope.PrivateResponse) ||
+		channelSessionIsPrivate(ch, msg.SessionKey) {
+		return nil, false
+	}
+
 	// 1. Stop typing
 	if v, loaded := m.typingStops.LoadAndDelete(key); loaded {
 		if entry, ok := v.(typingEntry); ok {
@@ -515,6 +524,11 @@ func (m *Manager) preSendMedia(ctx context.Context, name string, msg bus.Outboun
 	chatID := outboundMediaChatID(msg)
 	key := name + ":" + chatID
 	streamKey := streamSuppressionKey(name, chatID, msg.SessionKey)
+	if msg.Context.PrivateResponse ||
+		(msg.Scope != nil && msg.Scope.PrivateResponse) ||
+		channelSessionIsPrivate(ch, msg.SessionKey) {
+		return
+	}
 
 	// 1. Stop typing
 	if v, loaded := m.typingStops.LoadAndDelete(key); loaded {
@@ -546,6 +560,21 @@ func (m *Manager) preSendMedia(ctx context.Context, name string, msg bus.Outboun
 			}
 		}
 	}
+}
+
+func channelSessionIsPrivate(ch Channel, sessionKey string) bool {
+	privateSession, ok := ch.(PrivateSessionCapable)
+	return ok && privateSession.IsPrivateSession(sessionKey)
+}
+
+func ensurePrivateDeliverySupported(ch Channel, privateRequested bool) error {
+	if !privateRequested {
+		return nil
+	}
+	if _, ok := ch.(PrivateRouteBinder); !ok {
+		return fmt.Errorf("private delivery is unavailable for this channel: %w", ErrSendFailed)
+	}
+	return nil
 }
 
 func NewManager(
@@ -597,6 +626,26 @@ func (m *Manager) SetMediaStore(store media.MediaStore) {
 	}
 }
 
+// BindPrivateRoute associates a channel-verified private route with the
+// resolved session key. Channels that do not implement private delivery are
+// unaffected.
+func (m *Manager) BindPrivateRoute(
+	channelName, sessionKey string,
+	inbound bus.InboundContext,
+) error {
+	m.mu.RLock()
+	ch, exists := m.channels[channelName]
+	m.mu.RUnlock()
+	if !exists {
+		return fmt.Errorf("channel %q not found", channelName)
+	}
+	binder, ok := ch.(PrivateRouteBinder)
+	if !ok {
+		return fmt.Errorf("channel %q does not support private routes", channelName)
+	}
+	return binder.BindPrivateRoute(sessionKey, inbound)
+}
+
 // GetStreamer implements bus.StreamDelegate.
 // It checks if the named channel supports streaming and returns a Streamer.
 func (m *Manager) GetStreamer(ctx context.Context, channelName, chatID, sessionKey string) (bus.Streamer, bool) {
@@ -608,12 +657,22 @@ func (m *Manager) GetStreamer(ctx context.Context, channelName, chatID, sessionK
 		return nil, false
 	}
 
-	sc, ok := ch.(StreamingCapable)
-	if !ok {
-		return nil, false
+	beginStream := func(beginCtx context.Context) (bus.Streamer, error) {
+		if sessionCapable, ok := ch.(SessionStreamingCapable); ok {
+			return sessionCapable.BeginStreamForSession(beginCtx, chatID, sessionKey)
+		}
+		if streamingCapable, ok := ch.(StreamingCapable); ok {
+			return streamingCapable.BeginStream(beginCtx, chatID)
+		}
+		return nil, fmt.Errorf("channel %q does not support streaming", channelName)
+	}
+	if _, sessionAware := ch.(SessionStreamingCapable); !sessionAware {
+		if _, streamingCapable := ch.(StreamingCapable); !streamingCapable {
+			return nil, false
+		}
 	}
 
-	streamer, err := sc.BeginStream(ctx, chatID)
+	streamer, err := beginStream(ctx)
 	if err != nil {
 		logger.DebugCF("channels", "Streaming unavailable, falling back to placeholder", map[string]any{
 			"channel": channelName,
@@ -667,7 +726,7 @@ func (m *Manager) GetStreamer(ctx context.Context, channelName, chatID, sessionK
 		return &splitMarkerStreamer{
 			current:     streamer,
 			reasoning:   reasoningStreamerFrom(streamer),
-			begin:       func(beginCtx context.Context) (bus.Streamer, error) { return sc.BeginStream(beginCtx, chatID) },
+			begin:       beginStream,
 			onFinalize:  onFinalize,
 			clearMarker: clearMarker,
 		}, true
@@ -1551,19 +1610,31 @@ func (m *Manager) sendWithRetry(
 	w *channelWorker,
 	msg bus.OutboundMessage,
 ) ([]string, bool) {
+	if err := ensurePrivateDeliverySupported(w.ch, outboundMessageIsPrivate(msg)); err != nil {
+		logger.ErrorCF("channels", "Private send rejected", map[string]any{
+			"channel": name,
+		})
+		m.publishOutboundFailed(name, msg, err, false)
+		return nil, false
+	}
 	// Rate limit: wait for token
 	if err := w.limiter.Wait(ctx); err != nil {
 		// ctx canceled, shutting down
 		m.publishChannelEvent(
 			runtimeevents.KindChannelRateLimited,
 			name,
-			scopeFromOutboundContext(msg.Context),
+			scopeFromOutboundMessage(msg),
 			runtimeevents.SeverityWarn,
-			ChannelOutboundPayload{
-				ContentLen:       len([]rune(msg.Content)),
-				ReplyToMessageID: msg.ReplyToMessageID,
-				Error:            err.Error(),
-			},
+			func() ChannelOutboundPayload {
+				payload := ChannelOutboundPayload{ContentLen: len([]rune(msg.Content))}
+				if outboundMessageIsPrivate(msg) {
+					payload.Error = "private delivery rate limit wait failed"
+				} else {
+					payload.ReplyToMessageID = msg.ReplyToMessageID
+					payload.Error = err.Error()
+				}
+				return payload
+			}(),
 		)
 		return nil, false
 	}
@@ -1613,12 +1684,18 @@ func (m *Manager) sendWithRetry(
 	}
 
 	// All retries exhausted or permanent failure
-	logger.ErrorCF("channels", "Send failed", map[string]any{
+	logFields := map[string]any{
 		"channel": name,
-		"chat_id": outboundMessageChatID(msg),
 		"error":   lastErr.Error(),
 		"retries": maxRetries,
-	})
+	}
+	if !outboundMessageIsPrivate(msg) {
+		logFields["chat_id"] = outboundMessageChatID(msg)
+	} else {
+		logFields["error"] = "private delivery failed"
+		logFields["retries"] = 0
+	}
+	logger.ErrorCF("channels", "Send failed", logFields)
 	m.publishOutboundFailed(name, msg, lastErr, false)
 
 	return nil, false
@@ -1750,18 +1827,30 @@ func (m *Manager) sendMediaWithRetry(
 		})
 		return nil, err
 	}
+	if err := ensurePrivateDeliverySupported(w.ch, outboundMediaMessageIsPrivate(msg)); err != nil {
+		logger.ErrorCF("channels", "Private media send rejected", map[string]any{
+			"channel": name,
+		})
+		m.publishOutboundMediaFailed(name, msg, err)
+		return nil, err
+	}
 
 	// Rate limit: wait for token
 	if err := w.limiter.Wait(ctx); err != nil {
 		m.publishChannelEvent(
 			runtimeevents.KindChannelRateLimited,
 			name,
-			scopeFromOutboundContext(msg.Context),
+			scopeFromOutboundMediaMessage(msg),
 			runtimeevents.SeverityWarn,
-			ChannelOutboundPayload{
-				Media: true,
-				Error: err.Error(),
-			},
+			func() ChannelOutboundPayload {
+				payload := ChannelOutboundPayload{Media: true}
+				if outboundMediaMessageIsPrivate(msg) {
+					payload.Error = "private delivery rate limit wait failed"
+				} else {
+					payload.Error = err.Error()
+				}
+				return payload
+			}(),
 		)
 		return nil, err
 	}
@@ -1808,12 +1897,18 @@ func (m *Manager) sendMediaWithRetry(
 	}
 
 	// All retries exhausted or permanent failure
-	logger.ErrorCF("channels", "SendMedia failed", map[string]any{
+	logFields := map[string]any{
 		"channel": name,
-		"chat_id": outboundMediaChatID(msg),
 		"error":   lastErr.Error(),
 		"retries": maxRetries,
-	})
+	}
+	if !outboundMediaMessageIsPrivate(msg) {
+		logFields["chat_id"] = outboundMediaChatID(msg)
+	} else {
+		logFields["error"] = "private delivery failed"
+		logFields["retries"] = 0
+	}
+	logger.ErrorCF("channels", "SendMedia failed", logFields)
 	m.publishOutboundMediaFailed(name, msg, lastErr)
 	return nil, lastErr
 }
@@ -2043,7 +2138,7 @@ func (m *Manager) SendMessage(ctx context.Context, msg bus.OutboundMessage) erro
 	channelName := outboundMessageChannel(msg)
 
 	m.mu.RLock()
-	_, exists := m.channels[channelName]
+	ch, exists := m.channels[channelName]
 	w, wExists := m.workers[channelName]
 	m.mu.RUnlock()
 
@@ -2052,6 +2147,9 @@ func (m *Manager) SendMessage(ctx context.Context, msg bus.OutboundMessage) erro
 	}
 	if !wExists || w == nil {
 		return fmt.Errorf("channel %s has no active worker", channelName)
+	}
+	if err := ensurePrivateDeliverySupported(ch, outboundMessageIsPrivate(msg)); err != nil {
+		return err
 	}
 
 	maxLen := 0
@@ -2082,7 +2180,7 @@ func (m *Manager) SendMedia(ctx context.Context, msg bus.OutboundMediaMessage) e
 	channelName := outboundMediaChannel(msg)
 
 	m.mu.RLock()
-	_, exists := m.channels[channelName]
+	ch, exists := m.channels[channelName]
 	w, wExists := m.workers[channelName]
 	m.mu.RUnlock()
 
@@ -2091,6 +2189,9 @@ func (m *Manager) SendMedia(ctx context.Context, msg bus.OutboundMediaMessage) e
 	}
 	if !wExists || w == nil {
 		return fmt.Errorf("channel %s has no active worker", channelName)
+	}
+	if err := ensurePrivateDeliverySupported(ch, outboundMediaMessageIsPrivate(msg)); err != nil {
+		return err
 	}
 
 	_, err := m.sendMediaWithRetry(ctx, channelName, w, msg)

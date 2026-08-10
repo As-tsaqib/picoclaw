@@ -17,10 +17,26 @@ import (
 )
 
 func (al *AgentLoop) maybePublishError(ctx context.Context, channel, chatID, sessionKey string, err error) bool {
+	return al.maybePublishErrorForInbound(ctx, channel, chatID, sessionKey, nil, err)
+}
+
+func (al *AgentLoop) maybePublishErrorForInbound(
+	ctx context.Context,
+	channel, chatID, sessionKey string,
+	inbound *bus.InboundContext,
+	err error,
+) bool {
 	if errors.Is(err, context.Canceled) {
 		return false
 	}
-	al.PublishResponseIfNeeded(ctx, channel, chatID, sessionKey, formatProcessingError(err))
+	al.publishResponseIfNeededForInbound(
+		ctx,
+		channel,
+		chatID,
+		sessionKey,
+		inbound,
+		formatProcessingError(err),
+	)
 	return true
 }
 
@@ -30,18 +46,43 @@ func (al *AgentLoop) publishResponseOrError(
 	response string,
 	err error,
 ) {
+	al.publishResponseOrErrorForInbound(ctx, channel, chatID, sessionKey, nil, response, err)
+}
+
+func (al *AgentLoop) publishResponseOrErrorForInbound(
+	ctx context.Context,
+	channel, chatID, sessionKey string,
+	inbound *bus.InboundContext,
+	response string,
+	err error,
+) {
 	if err != nil {
-		if !al.maybePublishError(ctx, channel, chatID, sessionKey, err) {
+		if !al.maybePublishErrorForInbound(ctx, channel, chatID, sessionKey, inbound, err) {
 			return
 		}
 		response = ""
 	}
-	al.PublishResponseIfNeeded(ctx, channel, chatID, sessionKey, response)
+	al.publishResponseIfNeededForInbound(ctx, channel, chatID, sessionKey, inbound, response)
 }
 
 func (al *AgentLoop) PublishResponseIfNeeded(ctx context.Context, channel, chatID, sessionKey, response string) {
+	al.publishResponseIfNeededForInbound(ctx, channel, chatID, sessionKey, nil, response)
+}
+
+func (al *AgentLoop) publishResponseIfNeededForInbound(
+	ctx context.Context,
+	channel, chatID, sessionKey string,
+	inbound *bus.InboundContext,
+	response string,
+) {
 	if response == "" {
 		return
+	}
+	// Preserve the legacy minimal outbound context for every normal turn.
+	// Only private delivery needs the verified process-local capability to
+	// survive this final publication boundary.
+	if inbound != nil && !inbound.PrivateResponse {
+		inbound = nil
 	}
 
 	alreadySentToSameChat := false
@@ -61,20 +102,20 @@ func (al *AgentLoop) PublishResponseIfNeeded(ctx context.Context, channel, chatI
 				dismissCtx,
 				channel,
 				chatID,
-				nil,
+				inbound,
 			)
 			dismissCancel()
 		}
-		logger.DebugCF(
-			"agent",
-			"Skipped outbound (message tool already sent to same chat)",
-			map[string]any{"channel": channel, "chat_id": chatID},
-		)
+		logFields := map[string]any{"channel": channel}
+		if inbound == nil || !inbound.PrivateResponse {
+			logFields["chat_id"] = chatID
+		}
+		logger.DebugCF("agent", "Skipped outbound (message tool already sent to same chat)", logFields)
 		return
 	}
 
 	msg := bus.OutboundMessage{
-		Context:    bus.NewOutboundContext(channel, chatID, ""),
+		Context:    outboundContextFromInbound(inbound, channel, chatID, ""),
 		SessionKey: sessionKey,
 		Content:    response,
 	}
@@ -83,12 +124,18 @@ func (al *AgentLoop) PublishResponseIfNeeded(ctx context.Context, channel, chatI
 	}
 	markFinalOutbound(&msg)
 	al.bus.PublishOutbound(ctx, msg)
-	logger.InfoCF("agent", "Published outbound response",
-		map[string]any{
-			"channel":     channel,
-			"chat_id":     chatID,
-			"content_len": len(response),
-		})
+	logFields := map[string]any{
+		"channel":     channel,
+		"content_len": len(response),
+	}
+	if inbound == nil || !inbound.PrivateResponse {
+		logFields["chat_id"] = chatID
+	}
+	if inbound != nil && inbound.PrivateResponse {
+		logger.InfoCF("agent", "Published private outbound response", logFields)
+	} else {
+		logger.InfoCF("agent", "Published outbound response", logFields)
+	}
 }
 
 func (al *AgentLoop) targetReasoningChannelID(channelName string) (chatID string) {

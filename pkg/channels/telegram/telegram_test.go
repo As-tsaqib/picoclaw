@@ -155,12 +155,14 @@ func newTestChannelWithConstructor(
 	base.SetRunning(true)
 
 	return &TelegramChannel{
-		BaseChannel: base,
-		bot:         bot,
-		chatIDs:     make(map[string]int64),
-		bc:          &config.Channel{Type: config.ChannelTelegram, Enabled: true},
-		tgCfg:       &config.TelegramSettings{},
-		progress:    channels.NewToolFeedbackAnimator(nil),
+		BaseChannel:       base,
+		bot:               bot,
+		chatIDs:           make(map[string]int64),
+		bc:                &config.Channel{Type: config.ChannelTelegram, Enabled: true},
+		tgCfg:             &config.TelegramSettings{},
+		progress:          channels.NewToolFeedbackAnimator(nil),
+		ephemeralRoutes:   make(map[string]telegramEphemeralTarget),
+		ephemeralSessions: make(map[string]string),
 	}
 }
 

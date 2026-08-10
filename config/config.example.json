@@ -119,6 +119,11 @@
         "use_markdown_v2": false,
         "streaming": {
           "enabled": true
+        },
+        "ephemeral": {
+          "mode": "off",
+          "commands": [],
+          "personal_session_isolation": true
         }
       }
     },

@@ -113,9 +113,10 @@ type processOptions struct {
 }
 
 type continuationTarget struct {
-	SessionKey string
-	Channel    string
-	ChatID     string
+	SessionKey     string
+	Channel        string
+	ChatID         string
+	InboundContext *bus.InboundContext
 }
 
 const (
@@ -177,6 +178,14 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				al.processMessageSync(ctx, msg)
 				continue
 			}
+			if err := al.bindPrivateInboundRoute(msg, sessionKey); err != nil {
+				logger.WarnCF("agent", "Private route binding rejected; dropping turn", map[string]any{
+					"channel": msg.Channel,
+					"session": sessionKey,
+					"error":   err.Error(),
+				})
+				continue
+			}
 
 			// Atomically claim the session key with a unique placeholder sentinel
 			// to prevent a TOCTOU race where multiple messages for the same session
@@ -201,13 +210,15 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 					Content: msg.Content,
 					Media:   append([]string(nil), msg.Media...),
 				}); err != nil {
-					logger.WarnCF("agent", "Failed to enqueue steering message",
-						map[string]any{
-							"error":       err.Error(),
-							"channel":     msg.Channel,
-							"chat_id":     msg.ChatID,
-							"session_key": sessionKey,
-						})
+					logFields := map[string]any{
+						"error":       err.Error(),
+						"channel":     msg.Channel,
+						"session_key": sessionKey,
+					}
+					if !msg.Context.PrivateResponse {
+						logFields["chat_id"] = msg.ChatID
+					}
+					logger.WarnCF("agent", "Failed to enqueue steering message", logFields)
 				}
 				continue
 			}
@@ -256,13 +267,15 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 					if r := recover(); r != nil {
 						releaseSession = true
 						logger.RecoverPanicNoExit(r)
-						logger.ErrorCF("agent", "Worker goroutine panicked",
-							map[string]any{
-								"session_key": sessionKey,
-								"channel":     m.Channel,
-								"chat_id":     m.ChatID,
-								"panic":       fmt.Sprintf("%v", r),
-							})
+						logFields := map[string]any{
+							"session_key": sessionKey,
+							"channel":     m.Channel,
+							"panic":       fmt.Sprintf("%v", r),
+						}
+						if !m.Context.PrivateResponse {
+							logFields["chat_id"] = m.ChatID
+						}
+						logger.ErrorCF("agent", "Worker goroutine panicked", logFields)
 					}
 				}()
 				defer func() { <-al.workerSem }() // Release slot
@@ -274,17 +287,32 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				if al.takePendingStop(sessionKey) {
 					al.releaseSessionTurnState(sessionKey, nil)
 					target := &continuationTarget{
-						SessionKey: sessionKey,
-						Channel:    m.Channel,
-						ChatID:     m.ChatID,
+						SessionKey:     sessionKey,
+						Channel:        m.Channel,
+						ChatID:         m.ChatID,
+						InboundContext: cloneInboundContext(&m.Context),
 					}
 					continued, continueErr := al.drainQueuedSteeringContinuations(ctx, target)
 					if continueErr != nil {
-						al.maybePublishError(ctx, m.Channel, m.ChatID, sessionKey, continueErr)
+						al.maybePublishErrorForInbound(
+							ctx,
+							m.Channel,
+							m.ChatID,
+							sessionKey,
+							&m.Context,
+							continueErr,
+						)
 						return
 					}
 					if continued != "" {
-						al.PublishResponseIfNeeded(ctx, target.Channel, target.ChatID, target.SessionKey, continued)
+						al.publishResponseIfNeededForInbound(
+							ctx,
+							target.Channel,
+							target.ChatID,
+							target.SessionKey,
+							target.InboundContext,
+							continued,
+						)
 					}
 					return
 				}
@@ -540,7 +568,8 @@ func (al *AgentLoop) runAgentLoop(
 	// Record last channel for heartbeat notifications (skip internal channels and cli)
 	if opts.Dispatch.Channel() != "" &&
 		opts.Dispatch.ChatID() != "" &&
-		!constants.IsInternalChannel(opts.Dispatch.Channel()) {
+		!constants.IsInternalChannel(opts.Dispatch.Channel()) &&
+		(opts.Dispatch.InboundContext == nil || !opts.Dispatch.InboundContext.PrivateResponse) {
 		channelKey := fmt.Sprintf("%s:%s", opts.Dispatch.Channel(), opts.Dispatch.ChatID())
 		if recordErr := al.RecordLastChannel(channelKey); recordErr != nil {
 			logger.WarnCF(
@@ -613,14 +642,18 @@ func (al *AgentLoop) runAgentLoop(
 	}
 
 	if result.finalContent != "" {
-		responsePreview := utils.Truncate(result.finalContent, 120)
-		logger.InfoCF("agent", fmt.Sprintf("Response: %s", responsePreview),
-			map[string]any{
-				"agent_id":     agent.ID,
-				"session_key":  opts.Dispatch.SessionKey,
-				"iterations":   ts.currentIteration(),
-				"final_length": len(result.finalContent),
-			})
+		logFields := map[string]any{
+			"agent_id":     agent.ID,
+			"session_key":  opts.Dispatch.SessionKey,
+			"iterations":   ts.currentIteration(),
+			"final_length": len(result.finalContent),
+		}
+		if opts.Dispatch.InboundContext != nil && opts.Dispatch.InboundContext.PrivateResponse {
+			logger.InfoCF("agent", "Private response completed", logFields)
+		} else {
+			responsePreview := utils.Truncate(result.finalContent, 120)
+			logger.InfoCF("agent", fmt.Sprintf("Response: %s", responsePreview), logFields)
+		}
 	}
 
 	return result.finalContent, nil

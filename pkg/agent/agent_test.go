@@ -91,6 +91,13 @@ func (m *recordingChannelManager) DismissToolFeedback(
 	m.dismissed = append(m.dismissed, fmt.Sprintf("%s:%s", channel, chatID))
 }
 
+func (m *recordingChannelManager) BindPrivateRoute(
+	channel, sessionKey string,
+	inbound bus.InboundContext,
+) error {
+	return nil
+}
+
 func newStartedTestChannelManager(
 	t *testing.T,
 	msgBus *bus.MessageBus,
@@ -3461,6 +3468,71 @@ func TestProcessMessage_ClearCommandClearsRoutedAgentSession(t *testing.T) {
 	}
 	if got := mainAgent.Sessions.GetSummary(sessionKey); got != "main summary" {
 		t.Fatalf("main summary = %q, want %q", got, "main summary")
+	}
+}
+
+func TestProcessMessage_ClearCommandOnlyClearsEphemeralUsersPersonalSession(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{Defaults: config.AgentDefaults{
+			Workspace:         workspace,
+			ModelName:         "test-model",
+			MaxTokens:         4096,
+			MaxToolIterations: 10,
+		}},
+		Session: config.SessionConfig{Dimensions: []string{"chat"}},
+	}
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), &countingMockProvider{response: "synthetic response"})
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("expected default agent")
+	}
+
+	privateMessage := func(senderID, content, routeToken string) bus.InboundMessage {
+		return testInboundMessage(bus.InboundMessage{
+			Context: bus.InboundContext{
+				Channel:           "telegram",
+				ChatID:            "-1001234567890",
+				ChatType:          "group",
+				SenderID:          senderID,
+				PrivateResponse:   true,
+				PrivateSession:    true,
+				PrivateRouteToken: routeToken,
+			},
+			Content: content,
+		})
+	}
+	userA := privateMessage("101", "/clear", "synthetic-route-a")
+	userB := privateMessage("202", "synthetic request", "synthetic-route-b")
+
+	routeA, _, err := al.resolveMessageRoute(userA)
+	if err != nil {
+		t.Fatalf("resolve user A route: %v", err)
+	}
+	routeB, _, err := al.resolveMessageRoute(userB)
+	if err != nil {
+		t.Fatalf("resolve user B route: %v", err)
+	}
+	keyA := al.allocateRouteSession(routeA, userA).SessionKey
+	keyB := al.allocateRouteSession(routeB, userB).SessionKey
+	if keyA == keyB {
+		t.Fatalf("ephemeral users shared session %q", keyA)
+	}
+	agent.Sessions.SetHistory(keyA, []providers.Message{{Role: "user", Content: "synthetic user A history"}})
+	agent.Sessions.SetHistory(keyB, []providers.Message{{Role: "user", Content: "synthetic user B history"}})
+
+	response, err := al.processMessage(context.Background(), userA)
+	if err != nil {
+		t.Fatalf("process /clear: %v", err)
+	}
+	if response != "Chat history cleared!" {
+		t.Fatalf("response = %q, want clear confirmation", response)
+	}
+	if got := agent.Sessions.GetHistory(keyA); len(got) != 0 {
+		t.Fatalf("user A history len = %d, want 0", len(got))
+	}
+	if got := agent.Sessions.GetHistory(keyB); len(got) != 1 {
+		t.Fatalf("user B history len = %d, want 1", len(got))
 	}
 }
 

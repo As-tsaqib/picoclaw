@@ -78,16 +78,20 @@ func (m *Manager) publishOutboundSent(
 	msg bus.OutboundMessage,
 	messageIDs []string,
 ) {
+	private := outboundMessageIsPrivate(msg)
+	payload := ChannelOutboundPayload{
+		ContentLen: len([]rune(msg.Content)),
+	}
+	if !private {
+		payload.MessageIDs = append([]string(nil), messageIDs...)
+		payload.ReplyToMessageID = msg.ReplyToMessageID
+	}
 	m.publishChannelEvent(
 		runtimeevents.KindChannelMessageOutboundSent,
 		channelName,
-		scopeFromOutboundContext(msg.Context),
+		scopeFromOutboundMessage(msg),
 		runtimeevents.SeverityInfo,
-		ChannelOutboundPayload{
-			ContentLen:       len([]rune(msg.Content)),
-			MessageIDs:       append([]string(nil), messageIDs...),
-			ReplyToMessageID: msg.ReplyToMessageID,
-		},
+		payload,
 	)
 }
 
@@ -95,15 +99,16 @@ func (m *Manager) publishOutboundQueued(
 	channelName string,
 	msg bus.OutboundMessage,
 ) {
+	payload := ChannelOutboundPayload{ContentLen: len([]rune(msg.Content))}
+	if !outboundMessageIsPrivate(msg) {
+		payload.ReplyToMessageID = msg.ReplyToMessageID
+	}
 	m.publishChannelEvent(
 		runtimeevents.KindChannelMessageOutboundQueued,
 		channelName,
-		scopeFromOutboundContext(msg.Context),
+		scopeFromOutboundMessage(msg),
 		runtimeevents.SeverityInfo,
-		ChannelOutboundPayload{
-			ContentLen:       len([]rune(msg.Content)),
-			ReplyToMessageID: msg.ReplyToMessageID,
-		},
+		payload,
 	)
 }
 
@@ -113,19 +118,24 @@ func (m *Manager) publishOutboundFailed(
 	err error,
 	media bool,
 ) {
+	private := outboundMessageIsPrivate(msg)
 	payload := ChannelOutboundPayload{
-		Media:            media,
-		ContentLen:       len([]rune(msg.Content)),
-		ReplyToMessageID: msg.ReplyToMessageID,
-		Retries:          maxRetries,
+		Media:      media,
+		ContentLen: len([]rune(msg.Content)),
 	}
-	if err != nil {
+	if private {
+		payload.Error = "private delivery failed"
+	} else {
+		payload.ReplyToMessageID = msg.ReplyToMessageID
+		payload.Retries = maxRetries
+	}
+	if err != nil && !private {
 		payload.Error = err.Error()
 	}
 	m.publishChannelEvent(
 		runtimeevents.KindChannelMessageOutboundFailed,
 		channelName,
-		scopeFromOutboundContext(msg.Context),
+		scopeFromOutboundMessage(msg),
 		runtimeevents.SeverityError,
 		payload,
 	)
@@ -136,15 +146,17 @@ func (m *Manager) publishOutboundMediaSent(
 	msg bus.OutboundMediaMessage,
 	messageIDs []string,
 ) {
+	private := outboundMediaMessageIsPrivate(msg)
+	payload := ChannelOutboundPayload{Media: true}
+	if !private {
+		payload.MessageIDs = append([]string(nil), messageIDs...)
+	}
 	m.publishChannelEvent(
 		runtimeevents.KindChannelMessageOutboundSent,
 		channelName,
-		scopeFromOutboundContext(msg.Context),
+		scopeFromOutboundMediaMessage(msg),
 		runtimeevents.SeverityInfo,
-		ChannelOutboundPayload{
-			Media:      true,
-			MessageIDs: append([]string(nil), messageIDs...),
-		},
+		payload,
 	)
 }
 
@@ -155,7 +167,7 @@ func (m *Manager) publishOutboundMediaQueued(
 	m.publishChannelEvent(
 		runtimeevents.KindChannelMessageOutboundQueued,
 		channelName,
-		scopeFromOutboundContext(msg.Context),
+		scopeFromOutboundMediaMessage(msg),
 		runtimeevents.SeverityInfo,
 		ChannelOutboundPayload{Media: true},
 	)
@@ -166,23 +178,34 @@ func (m *Manager) publishOutboundMediaFailed(
 	msg bus.OutboundMediaMessage,
 	err error,
 ) {
-	payload := ChannelOutboundPayload{
-		Media:   true,
-		Retries: maxRetries,
+	private := outboundMediaMessageIsPrivate(msg)
+	payload := ChannelOutboundPayload{Media: true}
+	if private {
+		payload.Error = "private delivery failed"
+	} else {
+		payload.Retries = maxRetries
 	}
-	if err != nil {
+	if err != nil && !private {
 		payload.Error = err.Error()
 	}
 	m.publishChannelEvent(
 		runtimeevents.KindChannelMessageOutboundFailed,
 		channelName,
-		scopeFromOutboundContext(msg.Context),
+		scopeFromOutboundMediaMessage(msg),
 		runtimeevents.SeverityError,
 		payload,
 	)
 }
 
 func scopeFromOutboundContext(ctx bus.InboundContext) runtimeevents.Scope {
+	if ctx.PrivateResponse {
+		// Omit user/chat/message identifiers and opaque route-bearing IDs from
+		// telemetry for private interactions.
+		return runtimeevents.Scope{
+			Channel: ctx.Channel,
+			Account: ctx.Account,
+		}
+	}
 	return runtimeevents.Scope{
 		Channel:   ctx.Channel,
 		Account:   ctx.Account,
@@ -194,4 +217,30 @@ func scopeFromOutboundContext(ctx bus.InboundContext) runtimeevents.Scope {
 		SenderID:  ctx.SenderID,
 		MessageID: ctx.MessageID,
 	}
+}
+
+func scopeFromOutboundMessage(msg bus.OutboundMessage) runtimeevents.Scope {
+	if outboundMessageIsPrivate(msg) && !msg.Context.PrivateResponse {
+		ctx := msg.Context
+		ctx.PrivateResponse = true
+		return scopeFromOutboundContext(ctx)
+	}
+	return scopeFromOutboundContext(msg.Context)
+}
+
+func scopeFromOutboundMediaMessage(msg bus.OutboundMediaMessage) runtimeevents.Scope {
+	if outboundMediaMessageIsPrivate(msg) && !msg.Context.PrivateResponse {
+		ctx := msg.Context
+		ctx.PrivateResponse = true
+		return scopeFromOutboundContext(ctx)
+	}
+	return scopeFromOutboundContext(msg.Context)
+}
+
+func outboundMessageIsPrivate(msg bus.OutboundMessage) bool {
+	return msg.Context.PrivateResponse || (msg.Scope != nil && msg.Scope.PrivateResponse)
+}
+
+func outboundMediaMessageIsPrivate(msg bus.OutboundMediaMessage) bool {
+	return msg.Context.PrivateResponse || (msg.Scope != nil && msg.Scope.PrivateResponse)
 }

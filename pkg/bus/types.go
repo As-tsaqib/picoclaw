@@ -33,6 +33,14 @@ type InboundContext struct {
 
 	ReplyHandles map[string]string `json:"reply_handles,omitempty"`
 	Raw          map[string]string `json:"raw,omitempty"`
+
+	// PrivateResponse marks a turn whose response must not be delivered through
+	// a public channel path. PrivateRouteToken is an opaque, channel-issued
+	// capability used to resolve the verified destination. Both fields are
+	// intentionally process-local and excluded from serialized payloads.
+	PrivateResponse   bool   `json:"-"`
+	PrivateSession    bool   `json:"-"`
+	PrivateRouteToken string `json:"-"`
 }
 
 type InboundMessage struct {
@@ -59,6 +67,12 @@ type OutboundScope struct {
 	Account    string            `json:"account,omitempty"`
 	Dimensions []string          `json:"dimensions,omitempty"`
 	Values     map[string]string `json:"values,omitempty"`
+
+	// Process-local private delivery capability propagated with the active
+	// session. A channel must still validate the token against its own trusted
+	// state before using it.
+	PrivateResponse   bool   `json:"-"`
+	PrivateRouteToken string `json:"-"`
 }
 
 // ContextUsage describes how much of the model's context window the current

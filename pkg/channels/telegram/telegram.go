@@ -68,12 +68,17 @@ type TelegramChannel struct {
 	mediaGroupMu    sync.Mutex
 	mediaGroups     map[string]*telegramMediaGroup
 	mediaGroupDelay time.Duration
+
+	ephemeralMu       sync.Mutex
+	ephemeralRoutes   map[string]telegramEphemeralTarget
+	ephemeralSessions map[string]string
 }
 
 type telegramMediaGroup struct {
 	messages   []*telego.Message
 	timer      *time.Timer
 	generation uint64
+	private    bool
 }
 
 type telegramMessageParts struct {
@@ -137,6 +142,9 @@ func NewTelegramChannel(
 
 		mediaGroups:     make(map[string]*telegramMediaGroup),
 		mediaGroupDelay: telegramMediaGroupDelay(telegramCfg),
+
+		ephemeralRoutes:   make(map[string]telegramEphemeralTarget),
+		ephemeralSessions: make(map[string]string),
 	}
 	ch.progress = channels.NewToolFeedbackAnimator(ch.EditMessage)
 	return ch, nil
@@ -172,6 +180,13 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	bh.HandleMessage(func(ctx *th.Context, message telego.Message) error {
 		return c.handleMessage(ctx, &message)
 	}, th.AnyMessage())
+
+	// Callback queries are an eligible source for Bot API ephemeral replies.
+	// Inline callbacks without an accessible chat message are intentionally
+	// ignored because there is no verified group/topic target to protect.
+	bh.HandleCallbackQuery(func(ctx *th.Context, query telego.CallbackQuery) error {
+		return c.handleCallbackQuery(ctx, &query)
+	}, th.AnyCallbackQueryWithMessage())
 
 	c.SetRunning(true)
 	logger.InfoCF("telegram", "Telegram bot connected", map[string]any{
@@ -225,6 +240,10 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]
 	chatID, threadID, err := resolveTelegramOutboundTarget(msg.ChatID, &msg.Context)
 	if err != nil {
 		return nil, fmt.Errorf("invalid chat ID %s: %w", msg.ChatID, channels.ErrSendFailed)
+	}
+	ephemeralTarget, err := c.resolveEphemeralTarget(msg.Context, msg.Scope, msg.SessionKey, chatID, threadID)
+	if err != nil {
+		return nil, ephemeralDeliveryError("route resolution", err)
 	}
 
 	if msg.Content == "" {
@@ -295,6 +314,7 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]
 					replyToID:     replyToID,
 					mdFallback:    chunk,
 					useMarkdownV2: useMarkdownV2,
+					ephemeral:     ephemeralTarget,
 				})
 				if err != nil {
 					return nil, err
@@ -335,6 +355,7 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]
 			replyToID:     replyToID,
 			mdFallback:    chunk,
 			useMarkdownV2: useMarkdownV2,
+			ephemeral:     ephemeralTarget,
 		})
 		if err != nil {
 			return nil, err
@@ -360,6 +381,7 @@ type sendChunkParams struct {
 	replyToID     string
 	mdFallback    string
 	useMarkdownV2 bool
+	ephemeral     *telegramEphemeralTarget
 }
 
 // sendChunk sends a native rich message when the chunk contains a table.
@@ -369,21 +391,14 @@ func (c *TelegramChannel) sendChunk(
 	ctx context.Context,
 	params sendChunkParams,
 ) (string, error) {
-	var replyParameters *telego.ReplyParameters
-	if params.replyToID != "" {
-		if mid, parseErr := strconv.Atoi(params.replyToID); parseErr == nil {
-			replyParameters = &telego.ReplyParameters{MessageID: mid}
-		}
-	}
-
-	if hasTelegramRichTable(params.mdFallback) {
+	if hasTelegramRichTable(params.mdFallback) && params.ephemeral == nil {
 		pMsg, richErr := c.bot.SendRichMessage(ctx, &telego.SendRichMessageParams{
 			ChatID:          tu.ID(params.chatID),
 			MessageThreadID: params.threadID,
 			RichMessage: telego.InputRichMessage{
 				Markdown: params.mdFallback,
 			},
-			ReplyParameters: replyParameters,
+			ReplyParameters: ephemeralReplyParameters(nil, params.replyToID),
 		})
 		if richErr == nil {
 			return strconv.Itoa(pMsg.MessageID), nil
@@ -393,6 +408,13 @@ func (c *TelegramChannel) sendChunk(
 			"chat_id": params.chatID,
 			"error":   richErr.Error(),
 		})
+		fallbackMarkdown := telegramTableFallbackMarkdown(params.mdFallback)
+		params.content = parseContent(fallbackMarkdown, params.useMarkdownV2)
+		params.mdFallback = telegramTableFallbackPlainText(params.mdFallback)
+	} else if hasTelegramRichTable(params.mdFallback) {
+		// sendRichMessage has no receiver_user_id in Bot API 10.2. Using it
+		// here would expose the table publicly, so keep the fallback on the
+		// receiver-aware sendMessage path.
 		fallbackMarkdown := telegramTableFallbackMarkdown(params.mdFallback)
 		params.content = parseContent(fallbackMarkdown, params.useMarkdownV2)
 		params.mdFallback = telegramTableFallbackPlainText(params.mdFallback)
@@ -406,10 +428,22 @@ func (c *TelegramChannel) sendChunk(
 		tgMsg.WithParseMode(telego.ModeHTML)
 	}
 
-	tgMsg.ReplyParameters = replyParameters
+	applyEphemeralSendMessage(tgMsg, params.ephemeral, params.replyToID)
 
 	pMsg, err := c.bot.SendMessage(ctx, tgMsg)
 	if err != nil {
+		if params.ephemeral != nil {
+			if !isTelegramParseRejection(err) {
+				return "", ephemeralDeliveryError("send", err)
+			}
+			tgMsg.Text = params.mdFallback
+			tgMsg.ParseMode = ""
+			pMsg, err = c.bot.SendMessage(ctx, tgMsg)
+			if err != nil {
+				return "", ephemeralDeliveryError("format fallback", err)
+			}
+			return validateEphemeralSendResult(pMsg, params.ephemeral)
+		}
 		logParseFailed(err, params.useMarkdownV2)
 
 		tgMsg.Text = params.mdFallback
@@ -420,7 +454,7 @@ func (c *TelegramChannel) sendChunk(
 		}
 	}
 
-	return strconv.Itoa(pMsg.MessageID), nil
+	return validateEphemeralSendResult(pMsg, params.ephemeral)
 }
 
 // maxTypingDuration limits how long the typing indicator can run.
@@ -470,6 +504,9 @@ func (c *TelegramChannel) StartTyping(ctx context.Context, chatID string) (func(
 
 // EditMessage implements channels.MessageEditor.
 func (c *TelegramChannel) EditMessage(ctx context.Context, chatID string, messageID string, content string) error {
+	if strings.HasPrefix(strings.TrimSpace(messageID), ephemeralMessageIDPrefix) {
+		return c.editEphemeralMessageText(ctx, chatID, messageID, content)
+	}
 	useMarkdownV2 := c.tgCfg.UseMarkdownV2
 	cid, _, err := parseTelegramChatID(chatID)
 	if err != nil {
@@ -560,6 +597,20 @@ func logUnknownTelegramEditResult(chatID string, messageID int, err error) {
 
 // DeleteMessage implements channels.MessageDeleter.
 func (c *TelegramChannel) DeleteMessage(ctx context.Context, chatID string, messageID string) error {
+	if strings.HasPrefix(strings.TrimSpace(messageID), ephemeralMessageIDPrefix) {
+		target, ephemeralID, encoded, err := c.resolveEphemeralMessageReference(chatID, messageID)
+		if err != nil || !encoded {
+			return ephemeralDeliveryError("delete", err)
+		}
+		if err := c.bot.DeleteEphemeralMessage(ctx, &telego.DeleteEphemeralMessageParams{
+			ChatID:             tu.ID(target.ChatID),
+			ReceiverUserID:     target.ReceiverUserID,
+			EphemeralMessageID: ephemeralID,
+		}); err != nil {
+			return ephemeralDeliveryError("delete", err)
+		}
+		return nil
+	}
 	cid, _, err := parseTelegramChatID(chatID)
 	if err != nil {
 		return err
@@ -695,6 +746,10 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 	if err != nil {
 		return nil, fmt.Errorf("invalid chat ID %s: %w", msg.ChatID, channels.ErrSendFailed)
 	}
+	ephemeralTarget, err := c.resolveEphemeralTarget(msg.Context, msg.Scope, msg.SessionKey, chatID, threadID)
+	if err != nil {
+		return nil, ephemeralDeliveryError("media route resolution", err)
+	}
 
 	store := c.GetMediaStore()
 	if store == nil {
@@ -704,7 +759,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 	var messageIDs []string
 	leadingCaption := telegramLeadingCaption(msg.Parts)
 	if len([]rune(leadingCaption)) > telegramCaptionLimit {
-		leadingIDs, leadingErr := c.sendCaptionText(ctx, chatID, threadID, leadingCaption)
+		leadingIDs, leadingErr := c.sendCaptionText(ctx, chatID, threadID, leadingCaption, ephemeralTarget)
 		if leadingErr != nil {
 			return nil, leadingErr
 		}
@@ -712,7 +767,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 		msg = telegramClearMediaCaptions(msg)
 	}
 
-	if len(msg.Parts) > 1 && telegramCanSendMediaGroup(msg.Parts) {
+	if ephemeralTarget == nil && len(msg.Parts) > 1 && telegramCanSendMediaGroup(msg.Parts) {
 		groupIDs, err := c.sendImageMediaGroups(ctx, chatID, threadID, store, msg.Parts)
 		if err != nil {
 			logger.ErrorCF("telegram", "Failed to send media group", map[string]any{
@@ -733,30 +788,47 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 	for _, part := range msg.Parts {
 		localPath, err := store.Resolve(part.Ref)
 		if err != nil {
-			logger.ErrorCF("telegram", "Failed to resolve media ref", map[string]any{
-				"ref":   part.Ref,
-				"error": err.Error(),
-			})
+			fields := map[string]any{"type": part.Type}
+			if ephemeralTarget == nil {
+				fields["ref"] = part.Ref
+				fields["error"] = err.Error()
+			}
+			logger.ErrorCF("telegram", "Failed to resolve media ref", fields)
+			if ephemeralTarget != nil {
+				return nil, ephemeralDeliveryError("media resolve", err)
+			}
 			continue
 		}
 
 		file, err := os.Open(localPath)
 		if err != nil {
-			logger.ErrorCF("telegram", "Failed to open media file", map[string]any{
-				"path":  localPath,
-				"error": err.Error(),
-			})
+			fields := map[string]any{"type": part.Type}
+			if ephemeralTarget == nil {
+				fields["path"] = localPath
+				fields["error"] = err.Error()
+			}
+			logger.ErrorCF("telegram", "Failed to open media file", fields)
+			if ephemeralTarget != nil {
+				return nil, ephemeralDeliveryError("media open", err)
+			}
 			continue
 		}
 
 		var tgResult *telego.Message
+		var replyParameters *telego.ReplyParameters
+		if ephemeralTarget != nil {
+			replyParameters = ephemeralReplyParameters(ephemeralTarget, msg.Context.ReplyToMessageID)
+		}
 		switch part.Type {
 		case "image":
 			params := &telego.SendPhotoParams{
 				ChatID:          tu.ID(chatID),
 				MessageThreadID: threadID,
+				ReceiverUserID:  ephemeralReceiverUserID(ephemeralTarget),
+				CallbackQueryID: ephemeralCallbackQueryID(ephemeralTarget),
 				Photo:           telego.InputFile{File: file},
 				Caption:         part.Caption,
+				ReplyParameters: replyParameters,
 			}
 			tgResult, err = c.bot.SendPhoto(ctx, params)
 			if err != nil && strings.Contains(err.Error(), "PHOTO_INVALID_DIMENSIONS") {
@@ -768,8 +840,11 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 				docParams := &telego.SendDocumentParams{
 					ChatID:          tu.ID(chatID),
 					MessageThreadID: threadID,
+					ReceiverUserID:  ephemeralReceiverUserID(ephemeralTarget),
+					CallbackQueryID: ephemeralCallbackQueryID(ephemeralTarget),
 					Document:        telego.InputFile{File: file},
 					Caption:         part.Caption,
+					ReplyParameters: replyParameters,
 				}
 				tgResult, err = c.bot.SendDocument(ctx, docParams)
 			}
@@ -781,16 +856,22 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 				vparams := &telego.SendVoiceParams{
 					ChatID:          tu.ID(chatID),
 					MessageThreadID: threadID,
+					ReceiverUserID:  ephemeralReceiverUserID(ephemeralTarget),
+					CallbackQueryID: ephemeralCallbackQueryID(ephemeralTarget),
 					Voice:           telego.InputFile{File: file},
 					Caption:         part.Caption,
+					ReplyParameters: replyParameters,
 				}
 				tgResult, err = c.bot.SendVoice(ctx, vparams)
 			} else {
 				params := &telego.SendAudioParams{
 					ChatID:          tu.ID(chatID),
 					MessageThreadID: threadID,
+					ReceiverUserID:  ephemeralReceiverUserID(ephemeralTarget),
+					CallbackQueryID: ephemeralCallbackQueryID(ephemeralTarget),
 					Audio:           telego.InputFile{File: file},
 					Caption:         part.Caption,
+					ReplyParameters: replyParameters,
 				}
 				tgResult, err = c.bot.SendAudio(ctx, params)
 			}
@@ -798,31 +879,49 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 			params := &telego.SendVideoParams{
 				ChatID:          tu.ID(chatID),
 				MessageThreadID: threadID,
+				ReceiverUserID:  ephemeralReceiverUserID(ephemeralTarget),
+				CallbackQueryID: ephemeralCallbackQueryID(ephemeralTarget),
 				Video:           telego.InputFile{File: file},
 				Caption:         part.Caption,
+				ReplyParameters: replyParameters,
 			}
 			tgResult, err = c.bot.SendVideo(ctx, params)
 		default: // "file" or unknown types
 			params := &telego.SendDocumentParams{
 				ChatID:          tu.ID(chatID),
 				MessageThreadID: threadID,
+				ReceiverUserID:  ephemeralReceiverUserID(ephemeralTarget),
+				CallbackQueryID: ephemeralCallbackQueryID(ephemeralTarget),
 				Document:        telego.InputFile{File: file},
 				Caption:         part.Caption,
+				ReplyParameters: replyParameters,
 			}
 			tgResult, err = c.bot.SendDocument(ctx, params)
 		}
 
-		if tgResult != nil {
-			messageIDs = append(messageIDs, strconv.Itoa(tgResult.MessageID))
-		}
 		file.Close()
 
 		if err != nil {
+			if ephemeralTarget != nil {
+				logger.ErrorCF("telegram", "Failed to send ephemeral media", map[string]any{
+					"type": part.Type,
+				})
+				return nil, ephemeralDeliveryError("media send", err)
+			}
 			logger.ErrorCF("telegram", "Failed to send media", map[string]any{
 				"type":  part.Type,
 				"error": err.Error(),
 			})
 			return nil, fmt.Errorf("telegram send media: %w", channels.ErrTemporary)
+		}
+		if tgResult != nil {
+			messageID, resultErr := validateEphemeralSendResult(tgResult, ephemeralTarget)
+			if resultErr != nil {
+				return nil, resultErr
+			}
+			messageIDs = append(messageIDs, messageID)
+		} else if ephemeralTarget != nil {
+			return nil, ephemeralDeliveryError("media confirmation", fmt.Errorf("empty response"))
 		}
 	}
 
@@ -935,6 +1034,7 @@ func (c *TelegramChannel) sendCaptionText(
 	chatID int64,
 	threadID int,
 	text string,
+	ephemeralTarget *telegramEphemeralTarget,
 ) ([]string, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -953,6 +1053,7 @@ func (c *TelegramChannel) sendCaptionText(
 			content:       chunk,
 			mdFallback:    chunk,
 			useMarkdownV2: false,
+			ephemeral:     ephemeralTarget,
 		})
 		if err != nil {
 			return nil, err
@@ -1000,6 +1101,8 @@ func (c *TelegramChannel) bufferMediaGroupMessage(ctx context.Context, message *
 	msgCopy := *message
 	msgCopy.Photo = append([]telego.PhotoSize(nil), message.Photo...)
 	key := fmt.Sprintf("%d:%s", message.Chat.ID, groupID)
+	privatePlan, _ := c.planPrivateMessage(message)
+	privateMessage := privatePlan.enabled || message.EphemeralMessageID > 0
 
 	c.mediaGroupMu.Lock()
 	if c.mediaGroups == nil {
@@ -1011,6 +1114,7 @@ func (c *TelegramChannel) bufferMediaGroupMessage(ctx context.Context, message *
 		c.mediaGroups[key] = group
 	}
 	group.messages = append(group.messages, &msgCopy)
+	group.private = group.private || privateMessage
 	group.generation++
 	generation := group.generation
 	if group.timer != nil {
@@ -1023,13 +1127,21 @@ func (c *TelegramChannel) bufferMediaGroupMessage(ctx context.Context, message *
 	group.timer = time.AfterFunc(delay, func() {
 		c.flushMediaGroup(c.ctx, key, generation)
 	})
+	partCount := len(group.messages)
+	privateGroup := group.private
 	c.mediaGroupMu.Unlock()
 
-	logger.DebugCF("telegram", "Buffered media group message", map[string]any{
-		"chat_id":        message.Chat.ID,
-		"media_group_id": groupID,
-		"message_id":     message.MessageID,
-	})
+	if privateGroup {
+		logger.DebugCF("telegram", "Buffered private media group message", map[string]any{
+			"parts": partCount,
+		})
+	} else {
+		logger.DebugCF("telegram", "Buffered media group message", map[string]any{
+			"chat_id":        message.Chat.ID,
+			"media_group_id": groupID,
+			"message_id":     message.MessageID,
+		})
+	}
 	return nil
 }
 
@@ -1065,6 +1177,7 @@ func (c *TelegramChannel) flushMediaGroup(ctx context.Context, key string, gener
 		group.timer.Stop()
 	}
 	messages := append([]*telego.Message(nil), group.messages...)
+	privateGroup := group.private
 	c.mediaGroupMu.Unlock()
 
 	if len(messages) == 0 {
@@ -1086,14 +1199,28 @@ func (c *TelegramChannel) flushMediaGroup(ctx context.Context, key string, gener
 		ctx = context.Background()
 	}
 	if err := c.handleMessages(ctx, messages); err != nil {
-		logger.ErrorCF("telegram", "Failed to handle media group", map[string]any{
-			"key":   key,
-			"error": err.Error(),
-		})
+		if privateGroup {
+			logger.ErrorCF("telegram", "Failed to handle private media group", map[string]any{
+				"error": "private inbound processing failed",
+			})
+		} else {
+			logger.ErrorCF("telegram", "Failed to handle media group", map[string]any{
+				"key":   key,
+				"error": err.Error(),
+			})
+		}
 	}
 }
 
 func (c *TelegramChannel) handleMessages(ctx context.Context, messages []*telego.Message) error {
+	return c.handleMessagesWithPrivatePlan(ctx, messages, telegramPrivateInboundPlan{})
+}
+
+func (c *TelegramChannel) handleMessagesWithPrivatePlan(
+	ctx context.Context,
+	messages []*telego.Message,
+	providedPlan telegramPrivateInboundPlan,
+) error {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -1109,6 +1236,16 @@ func (c *TelegramChannel) handleMessages(ctx context.Context, messages []*telego
 	}
 	if message == nil {
 		return fmt.Errorf("message is nil")
+	}
+
+	privatePlan := providedPlan
+	if !privatePlan.enabled {
+		var planErr error
+		privatePlan, planErr = c.planPrivateMessage(message)
+		if planErr != nil {
+			c.logPrivateInboundDrop(planErr.Error())
+			return nil
+		}
 	}
 
 	user := message.From
@@ -1127,9 +1264,13 @@ func (c *TelegramChannel) handleMessages(ctx context.Context, messages []*telego
 
 	// check allowlist to avoid downloading attachments for rejected users
 	if !c.IsAllowedSender(sender) {
-		logger.DebugCF("telegram", "Message rejected by allowlist", map[string]any{
-			"user_id": platformID,
-		})
+		if privatePlan.enabled {
+			logger.DebugCF("telegram", "Private message rejected by allowlist", nil)
+		} else {
+			logger.DebugCF("telegram", "Message rejected by allowlist", map[string]any{
+				"user_id": platformID,
+			})
+		}
 		return nil
 	}
 
@@ -1143,6 +1284,9 @@ func (c *TelegramChannel) handleMessages(ctx context.Context, messages []*telego
 
 	chatIDStr := fmt.Sprintf("%d", chatID)
 	messageIDStr := fmt.Sprintf("%d", message.MessageID)
+	if message.EphemeralMessageID > 0 {
+		messageIDStr = encodeInboundEphemeralMessageID(message.EphemeralMessageID)
+	}
 	scope := channels.BuildMediaScope("telegram", chatIDStr, messageIDStr)
 
 	// Helper to register a local file with the media store
@@ -1184,7 +1328,7 @@ func (c *TelegramChannel) handleMessages(ctx context.Context, messages []*telego
 
 	// In group chats, apply unified group trigger filtering
 	isMentioned := false
-	if message.Chat.Type != "private" {
+	if message.Chat.Type != "private" && !privatePlan.callback && !privatePlan.incomingEphemeral {
 		isMentioned = c.isBotMentioned(message)
 		if isMentioned {
 			content = c.stripBotMention(content)
@@ -1223,24 +1367,54 @@ func (c *TelegramChannel) handleMessages(ctx context.Context, messages []*telego
 		compositeChatID = fmt.Sprintf("%d/%d", chatID, threadID)
 	}
 
-	logger.DebugCF("telegram", "Received message", map[string]any{
-		"sender_id": sender.CanonicalID,
-		"chat_id":   compositeChatID,
-		"thread_id": threadID,
-		"preview":   utils.Truncate(content, 50),
-	})
+	privateTarget := telegramEphemeralTarget{}
+	if privatePlan.enabled {
+		var targetErr error
+		privateTarget, targetErr = c.registerEphemeralTarget(message, privatePlan)
+		if targetErr != nil {
+			c.logPrivateInboundDrop(targetErr.Error())
+			return nil
+		}
+	}
+
+	logFields := map[string]any{
+		"thread_id":   threadID,
+		"content_len": len([]rune(content)),
+	}
+	if !privatePlan.enabled {
+		logFields["sender_id"] = sender.CanonicalID
+		logFields["chat_id"] = compositeChatID
+		logFields["preview"] = utils.Truncate(content, 50)
+	}
+	logger.DebugCF("telegram", "Received message", logFields)
 
 	peerKind := "direct"
 	if message.Chat.Type != "private" {
 		peerKind = "group"
 	}
 	messageID := fmt.Sprintf("%d", message.MessageID)
+	if privatePlan.enabled {
+		switch {
+		case privatePlan.callback:
+			messageID = callbackInboundIDPrefix + strconv.Itoa(message.MessageID)
+		case message.EphemeralMessageID > 0:
+			messageID = encodeInboundEphemeralMessageID(message.EphemeralMessageID)
+		}
+	}
 
 	metadata := map[string]string{
 		"user_id":    fmt.Sprintf("%d", user.ID),
 		"username":   user.Username,
 		"first_name": user.FirstName,
 		"is_group":   fmt.Sprintf("%t", message.Chat.Type != "private"),
+	}
+	if privatePlan.enabled {
+		metadata["telegram_ephemeral"] = "true"
+		if privatePlan.callback {
+			metadata["telegram_ephemeral_source"] = "callback"
+		} else {
+			metadata["telegram_ephemeral_source"] = "message"
+		}
 	}
 
 	inboundCtx := bus.InboundContext{
@@ -1252,11 +1426,22 @@ func (c *TelegramChannel) handleMessages(ctx context.Context, messages []*telego
 		Mentioned: isMentioned,
 		Raw:       metadata,
 	}
+	if privatePlan.enabled {
+		inboundCtx.PrivateResponse = true
+		inboundCtx.PrivateSession = c.ephemeralConfig().PersonalSessionIsolationEnabled()
+		inboundCtx.PrivateRouteToken = privateTarget.Token
+	}
 	if message.Chat.IsForum && threadID != 0 {
 		inboundCtx.TopicID = fmt.Sprintf("%d", threadID)
 	}
 	if message.ReplyToMessage != nil {
-		inboundCtx.ReplyToMessageID = fmt.Sprintf("%d", message.ReplyToMessage.MessageID)
+		if message.ReplyToMessage.EphemeralMessageID > 0 && privatePlan.enabled {
+			inboundCtx.ReplyToMessageID = encodeInboundEphemeralMessageID(
+				message.ReplyToMessage.EphemeralMessageID,
+			)
+		} else {
+			inboundCtx.ReplyToMessageID = fmt.Sprintf("%d", message.ReplyToMessage.MessageID)
+		}
 	}
 
 	c.HandleMessageWithContext(
@@ -1479,7 +1664,8 @@ func (c *TelegramChannel) downloadFileWithInfo(file *telego.File, ext string) st
 	}
 
 	url := c.bot.FileDownloadURL(file.FilePath)
-	logger.DebugCF("telegram", "File URL", map[string]any{"url": url})
+	// The download URL contains the bot token; never write it to logs.
+	logger.DebugCF("telegram", "Prepared Telegram file download", nil)
 
 	// Use FilePath as filename for better identification
 	filename := file.FilePath + ext
@@ -1553,9 +1739,17 @@ func (c *TelegramChannel) PrepareToolFeedbackMessageContent(content string) stri
 func telegramToolFeedbackChatKey(chatID string, outboundCtx *bus.InboundContext) string {
 	resolvedChatID, threadID, err := resolveTelegramOutboundTarget(chatID, outboundCtx)
 	if err != nil || threadID == 0 {
-		return strings.TrimSpace(chatID)
+		key := strings.TrimSpace(chatID)
+		if outboundCtx != nil && outboundCtx.PrivateRouteToken != "" {
+			key += ":private:" + outboundCtx.PrivateRouteToken
+		}
+		return key
 	}
-	return fmt.Sprintf("%d/%d", resolvedChatID, threadID)
+	key := fmt.Sprintf("%d/%d", resolvedChatID, threadID)
+	if outboundCtx != nil && outboundCtx.PrivateRouteToken != "" {
+		key += ":private:" + outboundCtx.PrivateRouteToken
+	}
+	return key
 }
 
 func (c *TelegramChannel) ToolFeedbackMessageChatID(chatID string, outboundCtx *bus.InboundContext) string {
@@ -1627,6 +1821,22 @@ func isTelegramFormattingRejection(err error) bool {
 		strings.Contains(message, "unsupported") ||
 		strings.Contains(message, "can't parse") ||
 		strings.Contains(message, "cannot parse")
+}
+
+// isTelegramParseRejection is intentionally narrower than the rich-message
+// compatibility check. Ephemeral sends may retry only when Telegram
+// definitively rejected entity parsing; network and unsupported-API errors
+// must never cause a second send attempt.
+func isTelegramParseRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "can't parse entities") ||
+		strings.Contains(message, "cannot parse entities") ||
+		strings.Contains(message, "unsupported start tag") ||
+		strings.Contains(message, "can't find end tag") ||
+		strings.Contains(message, "character reserved")
 }
 
 // isBotMentioned checks if the bot is mentioned in the message via entities.
@@ -1738,6 +1948,19 @@ func (c *TelegramChannel) BeginStream(ctx context.Context, chatID string) (chann
 		throttleInterval: time.Duration(streamCfg.ThrottleSeconds) * time.Second,
 		minGrowth:        streamCfg.MinGrowthChars,
 	}, nil
+}
+
+// BeginStreamForSession implements channels.SessionStreamingCapable. Telegram
+// drafts have no receiver_user_id field, so private turns are explicitly
+// disabled and will use the fail-closed final Send path instead.
+func (c *TelegramChannel) BeginStreamForSession(
+	ctx context.Context,
+	chatID, sessionKey string,
+) (channels.Streamer, error) {
+	if c.sessionHasEphemeralRoute(sessionKey) {
+		return nil, fmt.Errorf("telegram streaming is disabled for ephemeral sessions")
+	}
+	return c.BeginStream(ctx, chatID)
 }
 
 // telegramStreamer streams partial LLM output via Telegram's sendMessageDraft API.

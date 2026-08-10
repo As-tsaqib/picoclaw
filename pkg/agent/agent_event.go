@@ -48,7 +48,7 @@ func (al *AgentLoop) emitEvent(kind runtimeevents.Kind, meta HookMeta, payload a
 	}
 
 	deliveredToEvolution := false
-	if kind == runtimeevents.KindAgentTurnEnd {
+	if kind == runtimeevents.KindAgentTurnEnd && !turnContextIsPrivate(eventCtx) {
 		evolution := al.currentEvolutionBridge()
 		if evolution != nil {
 			deliveredToEvolution = evolution.handleRuntimeTurnEnd(evt)

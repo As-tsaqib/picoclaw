@@ -60,6 +60,27 @@ type StreamingCapable interface {
 	BeginStream(ctx context.Context, chatID string) (Streamer, error)
 }
 
+// SessionStreamingCapable allows a channel to make a streaming decision with
+// the resolved session key. This is useful for privacy-sensitive turns whose
+// delivery policy is attached to the session rather than the public chat ID.
+type SessionStreamingCapable interface {
+	BeginStreamForSession(ctx context.Context, chatID, sessionKey string) (Streamer, error)
+}
+
+// PrivateSessionCapable lets the manager identify a private session before
+// running public placeholder or stream cleanup. This is needed when an
+// outbound message still has its session key but no longer has inbound facts.
+type PrivateSessionCapable interface {
+	IsPrivateSession(sessionKey string) bool
+}
+
+// PrivateRouteBinder lets a channel bind a verified inbound private route to
+// the opaque session key allocated by the agent. The binding is intentionally
+// channel-specific and is never accepted from model-generated metadata.
+type PrivateRouteBinder interface {
+	BindPrivateRoute(sessionKey string, inbound bus.InboundContext) error
+}
+
 // Streamer is defined in pkg/bus to avoid circular imports.
 // This alias keeps channel implementations using channels.Streamer unchanged.
 type Streamer = bus.Streamer

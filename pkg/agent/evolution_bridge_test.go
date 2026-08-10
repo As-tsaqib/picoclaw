@@ -176,6 +176,33 @@ func TestEvolutionBridge_RuntimeBusTurnEndWritesCaseRecord(t *testing.T) {
 	}
 }
 
+func TestEvolutionBridge_PrivateTurnIsNotIngested(t *testing.T) {
+	tmpDir := t.TempDir()
+	al := newEvolutionTestLoop(t, tmpDir, config.EvolutionConfig{
+		Enabled: true,
+		Mode:    "observe",
+	}, &simpleMockProvider{response: "ok"})
+	defer al.Close()
+
+	bridge := al.currentEvolutionBridge()
+	if bridge == nil {
+		t.Fatal("expected evolution bridge")
+	}
+	accepted := bridge.handleRuntimeTurnEnd(runtimeevents.Event{
+		Kind:  runtimeevents.KindAgentTurnEnd,
+		Attrs: map[string]any{privateRuntimeEventAttr: true},
+		Payload: TurnEndPayload{
+			Status:       TurnEndStatusCompleted,
+			Workspace:    tmpDir,
+			UserMessage:  "synthetic private request",
+			FinalContent: "synthetic private response",
+		},
+	})
+	if accepted {
+		t.Fatal("private turn was accepted by global evolution memory")
+	}
+}
+
 func TestEvolutionBridge_RuntimeBusOnlyCurrentBridgeConsumesTurnEnd(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := &config.Config{

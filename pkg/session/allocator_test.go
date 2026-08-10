@@ -1,6 +1,8 @@
 package session
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
@@ -116,6 +118,153 @@ func TestAllocateRouteSession_TelegramForumTopicsRemainIsolatedByDefault(t *test
 	}
 	if got := second.Scope.Values["chat"]; got != "group:-1001234567890/99" {
 		t.Fatalf("second.Scope.Values[chat] = %q, want %q", got, "group:-1001234567890/99")
+	}
+}
+
+func TestAllocateRouteSession_TelegramEphemeralUsersAreIsolated(t *testing.T) {
+	allocate := func(sender string) Allocation {
+		return AllocateRouteSession(AllocationInput{
+			AgentID: "main",
+			Context: bus.InboundContext{
+				Channel:         "telegram",
+				ChatID:          "-1001234567890",
+				ChatType:        "group",
+				SenderID:        sender,
+				PrivateResponse: true,
+				PrivateSession:  true,
+			},
+			SessionPolicy: routing.SessionPolicy{Dimensions: []string{"chat"}},
+		})
+	}
+
+	userA := allocate("101")
+	userB := allocate("202")
+	if userA.SessionKey == userB.SessionKey {
+		t.Fatalf("two ephemeral users shared session %q", userA.SessionKey)
+	}
+	if got := userA.Scope.Dimensions; len(got) != 2 || got[0] != "chat" || got[1] != "sender" {
+		t.Fatalf("ephemeral dimensions = %v, want [chat sender]", got)
+	}
+	if userA.Scope.Values["sender"] != "101" || userB.Scope.Values["sender"] != "202" {
+		t.Fatalf("sender scope values = %q, %q", userA.Scope.Values["sender"], userB.Scope.Values["sender"])
+	}
+	if containsAlias(userA.SessionAliases, "agent:main:telegram:group:-1001234567890") {
+		t.Fatalf("private aliases must not include shared group alias: %v", userA.SessionAliases)
+	}
+}
+
+func TestAllocateRouteSession_TelegramEphemeralAlwaysIncludesGroupAndRawUser(t *testing.T) {
+	allocation := AllocateRouteSession(AllocationInput{
+		AgentID: "main",
+		Context: bus.InboundContext{
+			Channel:         "telegram",
+			ChatID:          "-1009876543210",
+			ChatType:        "group",
+			SenderID:        "707",
+			PrivateResponse: true,
+			PrivateSession:  true,
+		},
+		SessionPolicy: routing.SessionPolicy{
+			Dimensions:    []string{"Sender"},
+			IdentityLinks: map[string][]string{"shared": {"telegram:707", "telegram:808"}},
+		},
+	})
+	if got := allocation.Scope.Dimensions; len(got) != 2 || got[0] != "sender" || got[1] != "chat" {
+		t.Fatalf("private dimensions = %v, want [sender chat]", got)
+	}
+	if allocation.Scope.Values["sender"] != "707" || allocation.Scope.Values["chat"] != "group:-1009876543210" {
+		t.Fatalf("private scope values = %v", allocation.Scope.Values)
+	}
+	otherInput := AllocationInput{
+		AgentID: "main",
+		Context: bus.InboundContext{
+			Channel:         "telegram",
+			ChatID:          "-1009876543211",
+			ChatType:        "group",
+			SenderID:        "808",
+			PrivateResponse: true,
+			PrivateSession:  true,
+		},
+		SessionPolicy: routing.SessionPolicy{
+			Dimensions:    []string{"Sender"},
+			IdentityLinks: map[string][]string{"shared": {"telegram:707", "telegram:808"}},
+		},
+	}
+	other := AllocateRouteSession(otherInput)
+	if allocation.SessionKey == other.SessionKey {
+		t.Fatal("linked Telegram users or separate groups shared a private session")
+	}
+}
+
+func TestAllocateRouteSession_TelegramNormalGroupRemainsShared(t *testing.T) {
+	allocate := func(sender string) Allocation {
+		return AllocateRouteSession(AllocationInput{
+			AgentID: "main",
+			Context: bus.InboundContext{
+				Channel:  "telegram",
+				ChatID:   "-1001234567890",
+				ChatType: "group",
+				SenderID: sender,
+			},
+			SessionPolicy: routing.SessionPolicy{Dimensions: []string{"chat"}},
+		})
+	}
+	if first, second := allocate("101"), allocate("202"); first.SessionKey != second.SessionKey {
+		t.Fatalf("normal group session behavior changed: %q != %q", first.SessionKey, second.SessionKey)
+	}
+}
+
+func TestAllocateRouteSession_TelegramEphemeralHistoryIsSeparateFromPublicHistory(t *testing.T) {
+	baseContext := bus.InboundContext{
+		Channel:  "telegram",
+		ChatID:   "-1001234567890",
+		ChatType: "group",
+		SenderID: "101",
+	}
+	public := AllocateRouteSession(AllocationInput{
+		AgentID:       "main",
+		Context:       baseContext,
+		SessionPolicy: routing.SessionPolicy{Dimensions: []string{"chat", "sender"}},
+	})
+	privateContext := baseContext
+	privateContext.PrivateResponse = true
+	privateContext.PrivateSession = true
+	private := AllocateRouteSession(AllocationInput{
+		AgentID:       "main",
+		Context:       privateContext,
+		SessionPolicy: routing.SessionPolicy{Dimensions: []string{"chat", "sender"}},
+	})
+
+	if public.SessionKey == private.SessionKey {
+		t.Fatalf("public and private histories shared session %q", public.SessionKey)
+	}
+}
+
+func TestSessionScope_PrivateMarkerPersistsWithoutRouteCapability(t *testing.T) {
+	scope := SessionScope{
+		Version:           ScopeVersionV1,
+		AgentID:           "main",
+		Channel:           "telegram",
+		PrivateResponse:   true,
+		PrivateRouteToken: "synthetic-process-local-capability",
+	}
+	data, err := json.Marshal(scope)
+	if err != nil {
+		t.Fatalf("marshal private scope: %v", err)
+	}
+	if string(data) == "" || !strings.Contains(string(data), `"private_response":true`) {
+		t.Fatalf("private marker was not persisted: %s", data)
+	}
+	if strings.Contains(string(data), scope.PrivateRouteToken) {
+		t.Fatalf("private route capability was persisted: %s", data)
+	}
+
+	var restored SessionScope
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatalf("unmarshal private scope: %v", err)
+	}
+	if !restored.PrivateResponse || restored.PrivateRouteToken != "" {
+		t.Fatalf("restored private scope = %+v", restored)
 	}
 }
 

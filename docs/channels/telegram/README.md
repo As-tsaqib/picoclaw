@@ -30,6 +30,9 @@ The Telegram channel uses long polling via the Telegram Bot API for bot-based co
 | proxy            | string | No       | Proxy URL for connecting to the Telegram API (e.g. http://127.0.0.1:7890) |
 | use_markdown_v2 | bool   | No       | Enable Telegram MarkdownV2 formatting                              |
 | media_group_delay_ms | int | No       | Idle delay before processing Telegram media groups/albums. Defaults to 500 ms |
+| ephemeral.mode | string | No | Private group reply policy: `off` (default), `commands`, or `all` |
+| ephemeral.commands | array | No | Command names used by `commands` mode; empty means every registered command |
+| ephemeral.personal_session_isolation | bool | No | Must remain `true` while ephemeral mode is enabled; defaults to `true` |
 
 ## Setup
 
@@ -62,6 +65,35 @@ Examples:
 /use git
 explain how to squash the last 3 commits
 ```
+
+## Ephemeral Group Replies (Bot API 10.2)
+
+Ephemeral replies are disabled by default. They apply only to groups and supergroups; private chats keep their normal delivery behavior.
+
+```json
+{
+  "ephemeral": {
+    "mode": "commands",
+    "commands": ["clear", "help"],
+    "personal_session_isolation": true
+  }
+}
+```
+
+- `off` preserves the existing Telegram payloads and group session keys.
+- `commands` marks only the listed slash commands as ephemeral. An empty list accepts every Telegram bot-command entity and marks every registered PicoClaw command as ephemeral in Telegram's command menu.
+- `all` makes every eligible group response ephemeral.
+- Personal session isolation prevents two members of one group from sharing ephemeral history. The private key always contains the verified group ID and raw Telegram sender ID, even when public `identity_links` are configured. Disabling it while the feature is enabled is rejected as unsafe.
+- `/clear` clears only the requesting member's private session. PicoClaw does not register a built-in `/new` command; `/new` is handled as ordinary model input unless a separately installed command handles it. A routed agent gets a separate private session for the same group and user.
+- Private history is still stored by the configured PicoClaw session backend so the interaction can continue. It is separate from that user's public group history and from other users' private history. Workspace `memory/MEMORY.md` remains agent/workspace-wide; do not save secrets there from an ephemeral turn. Private turns are excluded from the optional evolution-learning sink.
+
+The receiver is always derived from the verified Telegram update; model output and arbitrary metadata cannot select it. If Telegram rejects private delivery, PicoClaw fails closed and does not resend the content publicly.
+
+Telegram permits non-admin bots to send an ephemeral reply for 15 seconds after an incoming ephemeral message or callback query. Administrators can send to a non-bot member without that short-lived authorization, but delivery is never guaranteed, especially while the user is offline. Replies to an existing ephemeral interaction remain private in `commands` mode even when the follow-up text is not itself a slash command.
+
+Bot API 10.2 does not expose an ephemeral receiver on `sendRichMessage`, `sendMediaGroup`, or streaming drafts. Consequently, ephemeral tables use a receiver-aware preformatted fallback, albums are sent as individual private media, and streaming is disabled for the private session. Normal public rich tables continue to use native rich messages. Reasoning-channel side output and model-triggered reactions are also disabled for private turns. Legacy asynchronous tool follow-up turns are suppressed because their system-message route cannot carry the process-local private capability; an async tool's direct `ForUser` result can still use the verified private route while it remains valid.
+
+PicoClaw verifies that Telegram's response contains an ephemeral message ID and the expected receiver. Operators using a custom `base_url` must ensure that it implements Bot API 10.2 and rejects unsupported parameters. A non-conforming server that silently ignores `receiver_user_id` can only be detected after it responds and cannot be made safe by a client-side retry policy.
 
 ## Advanced Formatting
 

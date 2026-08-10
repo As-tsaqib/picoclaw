@@ -179,8 +179,11 @@ toolLoop:
 				if toolReq != nil && toolReq.HookResult != nil {
 					hookResult := toolReq.HookResult
 
-					argsJSON, _ := json.Marshal(toolArgs)
-					argsPreview := utils.Truncate(string(argsJSON), 200)
+					argsPreview := "[private arguments redacted]"
+					if !turnStateIsPrivate(ts) {
+						argsJSON, _ := json.Marshal(toolArgs)
+						argsPreview = utils.Truncate(string(argsJSON), 200)
+					}
 					logger.InfoCF("agent", fmt.Sprintf("Tool call (hook respond): %s(%s)", toolName, argsPreview),
 						map[string]any{
 							"agent_id":  ts.agent.ID,
@@ -223,16 +226,12 @@ toolLoop:
 					shouldSendForUser := !hookResult.Silent && hookResult.ForUser != "" &&
 						(ts.opts.SendResponse || hookResult.ResponseHandled)
 					if shouldSendForUser {
-						al.bus.PublishOutbound(ctx, bus.OutboundMessage{
-							Context: bus.InboundContext{
-								Channel: ts.channel,
-								ChatID:  ts.chatID,
-								Raw: map[string]string{
-									"is_tool_call": "true",
-								},
-							},
-							Content: hookResult.ForUser,
-						})
+						hookMsg := outboundMessageForTurn(ts, hookResult.ForUser)
+						if hookMsg.Context.Raw == nil {
+							hookMsg.Context.Raw = make(map[string]string, 1)
+						}
+						hookMsg.Context.Raw["is_tool_call"] = "true"
+						al.bus.PublishOutbound(ctx, hookMsg)
 					}
 
 					if len(hookResult.Media) > 0 && hookResult.ResponseHandled {
@@ -264,14 +263,18 @@ toolLoop:
 						}
 						if al.channelManager != nil && ts.channel != "" && !constants.IsInternalChannel(ts.channel) {
 							if err := al.channelManager.SendMedia(ctx, outboundMedia); err != nil {
-								logger.WarnCF("agent", "Failed to deliver hook media",
-									map[string]any{
-										"agent_id": ts.agent.ID,
-										"tool":     toolName,
-										"channel":  ts.channel,
-										"chat_id":  ts.chatID,
-										"error":    err.Error(),
-									})
+								logFields := map[string]any{
+									"agent_id": ts.agent.ID,
+									"tool":     toolName,
+									"channel":  ts.channel,
+								}
+								if turnStateIsPrivate(ts) {
+									logFields["error"] = "private delivery failed"
+								} else {
+									logFields["chat_id"] = ts.chatID
+									logFields["error"] = err.Error()
+								}
+								logger.WarnCF("agent", "Failed to deliver hook media", logFields)
 								hookResult.IsError = true
 								hookResult.ForLLM = fmt.Sprintf("failed to deliver attachment: %v", err)
 							} else {
@@ -472,8 +475,11 @@ toolLoop:
 			continue
 		}
 
-		argsJSON, _ := json.Marshal(toolArgs)
-		argsPreview := utils.Truncate(string(argsJSON), 200)
+		argsPreview := "[private arguments redacted]"
+		if !turnStateIsPrivate(ts) {
+			argsJSON, _ := json.Marshal(toolArgs)
+			argsPreview = utils.Truncate(string(argsJSON), 200)
+		}
 		logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", toolName, argsPreview),
 			map[string]any{
 				"agent_id":  ts.agent.ID,
@@ -517,6 +523,17 @@ toolLoop:
 				outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer outCancel()
 				_ = al.bus.PublishOutbound(outCtx, outboundMessageForTurn(ts, result.ForUser))
+			}
+			if turnStateIsPrivate(ts) {
+				// The legacy async follow-up path reconstructs a public origin from
+				// channel:chat_id and cannot carry a process-local private route.
+				// A direct ForUser result above remains safe; suppress the follow-up
+				// turn instead of risking disclosure in the group.
+				logger.InfoCF("agent", "Private async tool follow-up suppressed", map[string]any{
+					"tool":    asyncToolName,
+					"channel": ts.channel,
+				})
+				return
 			}
 
 			content := result.ContentForLLM()
@@ -644,14 +661,18 @@ toolLoop:
 			}
 			if al.channelManager != nil && ts.channel != "" && !constants.IsInternalChannel(ts.channel) {
 				if err := al.channelManager.SendMedia(ctx, outboundMedia); err != nil {
-					logger.WarnCF("agent", "Failed to deliver handled tool media",
-						map[string]any{
-							"agent_id": ts.agent.ID,
-							"tool":     toolName,
-							"channel":  ts.channel,
-							"chat_id":  ts.chatID,
-							"error":    err.Error(),
-						})
+					logFields := map[string]any{
+						"agent_id": ts.agent.ID,
+						"tool":     toolName,
+						"channel":  ts.channel,
+					}
+					if turnStateIsPrivate(ts) {
+						logFields["error"] = "private delivery failed"
+					} else {
+						logFields["chat_id"] = ts.chatID
+						logFields["error"] = err.Error()
+					}
+					logger.WarnCF("agent", "Failed to deliver handled tool media", logFields)
 					toolResult = tools.ErrorResult(fmt.Sprintf("failed to deliver attachment: %v", err)).WithError(err)
 				} else {
 					handledAttachments = append(

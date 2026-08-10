@@ -131,6 +131,35 @@ func TestRuntimeEventLogFieldsIncludeSafeAttrs(t *testing.T) {
 	}
 }
 
+func TestRuntimeEventLogFields_RedactsPrivatePayloadAndTarget(t *testing.T) {
+	meta := HookMeta{
+		AgentID:    "main",
+		SessionKey: "synthetic-private-session",
+		turnContext: &TurnContext{Inbound: &bus.InboundContext{
+			Channel:         "telegram",
+			ChatID:          "-100123",
+			SenderID:        "42",
+			MessageID:       "ephemeral-inbound:secret-capability:7",
+			PrivateResponse: true,
+		}},
+	}
+	evt := runtimeevents.Event{
+		Kind:    runtimeevents.KindAgentTurnStart,
+		Scope:   runtimeScopeFromHookMeta(meta, meta.turnContext),
+		Attrs:   runtimeAttrsFromHookMeta(meta),
+		Payload: TurnStartPayload{UserMessage: "synthetic private message"},
+	}
+	fields := runtimeEventLogFields(evt)
+	if fields["private_payload_redacted"] != true {
+		t.Fatalf("private payload was not redacted: %#v", fields)
+	}
+	for _, key := range []string{"chat_id", "sender_id", "message_id", "user_len"} {
+		if _, exists := fields[key]; exists {
+			t.Fatalf("private event field %q leaked: %#v", key, fields)
+		}
+	}
+}
+
 func runtimeEventLoggerStateForTest(
 	al *AgentLoop,
 ) (*runtimeEventLogger, runtimeevents.Subscription) {

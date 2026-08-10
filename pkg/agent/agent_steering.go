@@ -15,14 +15,29 @@ func (al *AgentLoop) processMessageSync(ctx context.Context, msg bus.InboundMess
 	}
 
 	response, err := al.processMessage(ctx, msg)
-	al.publishResponseOrError(ctx, msg.Channel, msg.ChatID, msg.SessionKey, response, err)
+	al.publishResponseOrErrorForInbound(
+		ctx,
+		msg.Channel,
+		msg.ChatID,
+		msg.SessionKey,
+		&msg.Context,
+		response,
+		err,
+	)
 }
 
 func (al *AgentLoop) runTurnWithSteering(ctx context.Context, initialMsg bus.InboundMessage) {
 	// Process the initial message
 	response, err := al.processMessage(ctx, initialMsg)
 	if err != nil {
-		if !al.maybePublishError(ctx, initialMsg.Channel, initialMsg.ChatID, initialMsg.SessionKey, err) {
+		if !al.maybePublishErrorForInbound(
+			ctx,
+			initialMsg.Channel,
+			initialMsg.ChatID,
+			initialMsg.SessionKey,
+			&initialMsg.Context,
+			err,
+		) {
 			return // context canceled
 		}
 		response = ""
@@ -46,19 +61,29 @@ func (al *AgentLoop) runTurnWithSteering(ctx context.Context, initialMsg bus.Inb
 
 	continued, continueErr := al.drainQueuedSteeringContinuations(ctx, target)
 	if continueErr != nil {
+		logFields := map[string]any{
+			"channel": target.Channel,
+			"error":   continueErr.Error(),
+		}
+		if target.InboundContext == nil || !target.InboundContext.PrivateResponse {
+			logFields["chat_id"] = target.ChatID
+		}
 		logger.WarnCF("agent", "Failed to continue queued steering",
-			map[string]any{
-				"channel": target.Channel,
-				"chat_id": target.ChatID,
-				"error":   continueErr.Error(),
-			})
+			logFields)
 	} else if continued != "" {
 		finalResponse = continued
 	}
 
 	// Publish final response
 	if finalResponse != "" {
-		al.PublishResponseIfNeeded(ctx, target.Channel, target.ChatID, target.SessionKey, finalResponse)
+		al.publishResponseIfNeededForInbound(
+			ctx,
+			target.Channel,
+			target.ChatID,
+			target.SessionKey,
+			target.InboundContext,
+			finalResponse,
+		)
 	}
 }
 
@@ -76,14 +101,22 @@ func (al *AgentLoop) drainQueuedSteeringContinuations(
 			return finalResponse, err
 		}
 
-		logger.InfoCF("agent", "Continuing queued steering after turn end",
-			map[string]any{
-				"channel":     target.Channel,
-				"chat_id":     target.ChatID,
-				"session_key": target.SessionKey,
-				"queue_depth": al.pendingSteeringCountForScope(target.SessionKey),
-			})
+		logFields := map[string]any{
+			"channel":     target.Channel,
+			"session_key": target.SessionKey,
+			"queue_depth": al.pendingSteeringCountForScope(target.SessionKey),
+		}
+		if target.InboundContext == nil || !target.InboundContext.PrivateResponse {
+			logFields["chat_id"] = target.ChatID
+		}
+		logger.InfoCF("agent", "Continuing queued steering after turn end", logFields)
 
+		if target.InboundContext != nil && target.InboundContext.PrivateResponse {
+			// Each queued private inbound was already verified and bound to this
+			// isolated session. Resolve the final response through the latest
+			// session binding instead of reusing an older, possibly expired callback.
+			target.InboundContext.PrivateRouteToken = ""
+		}
 		continued, continueErr := al.Continue(ctx, target.SessionKey, target.Channel, target.ChatID)
 		if continueErr != nil {
 			return finalResponse, continueErr

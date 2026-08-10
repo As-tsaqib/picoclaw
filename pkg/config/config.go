@@ -519,6 +519,78 @@ type StreamingConfig struct {
 	MinGrowthChars  int  `json:"min_growth_chars,omitempty"`
 }
 
+const (
+	TelegramEphemeralModeOff      = "off"
+	TelegramEphemeralModeCommands = "commands"
+	TelegramEphemeralModeAll      = "all"
+)
+
+// TelegramEphemeralConfig controls private bot replies in Telegram groups.
+// A nil PersonalSessionIsolation value intentionally means true so newly
+// enabled configurations are isolated unless the operator explicitly opts out.
+type TelegramEphemeralConfig struct {
+	Mode                     string   `json:"mode,omitempty"                     yaml:"-" env:"PICOCLAW_CHANNELS_TELEGRAM_EPHEMERAL_MODE"`
+	Commands                 []string `json:"commands,omitempty"                 yaml:"-" env:"PICOCLAW_CHANNELS_TELEGRAM_EPHEMERAL_COMMANDS"`
+	PersonalSessionIsolation *bool    `json:"personal_session_isolation,omitempty" yaml:"-" env:"PICOCLAW_CHANNELS_TELEGRAM_EPHEMERAL_PERSONAL_SESSION_ISOLATION"`
+}
+
+// IsZero reports whether no ephemeral setting was configured.
+func (c TelegramEphemeralConfig) IsZero() bool {
+	return strings.TrimSpace(c.Mode) == "" && len(c.Commands) == 0 && c.PersonalSessionIsolation == nil
+}
+
+// EffectiveMode returns the normalized mode, defaulting to off.
+func (c TelegramEphemeralConfig) EffectiveMode() string {
+	mode := strings.ToLower(strings.TrimSpace(c.Mode))
+	if mode == "" {
+		return TelegramEphemeralModeOff
+	}
+	return mode
+}
+
+// Enabled reports whether ephemeral delivery is enabled.
+func (c TelegramEphemeralConfig) Enabled() bool {
+	return c.EffectiveMode() != TelegramEphemeralModeOff
+}
+
+// PersonalSessionIsolationEnabled reports whether private group sessions are isolated per user.
+func (c TelegramEphemeralConfig) PersonalSessionIsolationEnabled() bool {
+	return c.PersonalSessionIsolation == nil || *c.PersonalSessionIsolation
+}
+
+// IsCommandEphemeral reports whether a normalized Telegram command belongs to
+// the configured private reply set. An empty allowlist accepts any Telegram
+// bot-command entity; registered PicoClaw commands are also marked ephemeral
+// in Telegram's command menu.
+func (c TelegramEphemeralConfig) IsCommandEphemeral(command string) bool {
+	mode := c.EffectiveMode()
+	if mode == TelegramEphemeralModeAll {
+		return true
+	}
+	if mode != TelegramEphemeralModeCommands {
+		return false
+	}
+	command = normalizeTelegramEphemeralCommand(command)
+	if command == "" {
+		return false
+	}
+	if len(c.Commands) == 0 {
+		return true
+	}
+	for _, allowed := range c.Commands {
+		if normalizeTelegramEphemeralCommand(allowed) == command {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeTelegramEphemeralCommand(command string) string {
+	command = strings.ToLower(strings.TrimSpace(command))
+	command = strings.TrimPrefix(command, "/")
+	return command
+}
+
 func (c StreamingConfig) IsZero() bool {
 	return !c.Enabled && c.ThrottleSeconds == 0 && c.MinGrowthChars == 0
 }
@@ -542,12 +614,13 @@ type WhatsAppSettings struct {
 }
 
 type TelegramSettings struct {
-	Token             SecureString    `json:"token,omitzero"       yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
-	BaseURL           string          `json:"base_url"             yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_BASE_URL"`
-	Proxy             string          `json:"proxy"                yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_PROXY"`
-	Streaming         StreamingConfig `json:"streaming,omitzero"   yaml:"-"`
-	UseMarkdownV2     bool            `json:"use_markdown_v2"      yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_USE_MARKDOWN_V2"`
-	MediaGroupDelayMS int             `json:"media_group_delay_ms" yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_MEDIA_GROUP_DELAY_MS"`
+	Token             SecureString            `json:"token,omitzero"       yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
+	BaseURL           string                  `json:"base_url"             yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_BASE_URL"`
+	Proxy             string                  `json:"proxy"                yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_PROXY"`
+	Streaming         StreamingConfig         `json:"streaming,omitzero"   yaml:"-"`
+	Ephemeral         TelegramEphemeralConfig `json:"ephemeral,omitzero" yaml:"-"`
+	UseMarkdownV2     bool                    `json:"use_markdown_v2"      yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_USE_MARKDOWN_V2"`
+	MediaGroupDelayMS int                     `json:"media_group_delay_ms" yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_MEDIA_GROUP_DELAY_MS"`
 }
 
 type FeishuSettings struct {
