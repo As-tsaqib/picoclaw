@@ -53,9 +53,9 @@ func TestCheckpointProgressCommitsOnlyAfterDeliveredResponse(t *testing.T) {
 	mutation := createCheckpointMutation("Go interfaces", "Explain method sets")
 	mutation.Action = CheckpointActionCreate
 
-	staged, err := store.Apply(caller, "turn-interrupted", mutation)
-	if err != nil {
-		t.Fatalf("Apply(staged create) error = %v", err)
+	staged, applyErr := store.Apply(caller, "turn-interrupted", mutation)
+	if applyErr != nil {
+		t.Fatalf("Apply(staged create) error = %v", applyErr)
 	}
 	if visible, err := store.ListForTurn(caller, "turn-interrupted", false); err != nil || len(visible) != 1 {
 		t.Fatalf("ListForTurn(staged) = %#v, %v", visible, err)
@@ -73,14 +73,20 @@ func TestCheckpointProgressCommitsOnlyAfterDeliveredResponse(t *testing.T) {
 		t.Fatalf("Apply(delivered create) error = %v", err)
 	}
 	now = now.Add(time.Minute)
-	if err := store.CommitDelivered("turn-delivered", caller.SessionKey, "Here is the interfaces lesson.", "msg-100"); err != nil {
-		t.Fatalf("CommitDelivered() error = %v", err)
+	if commitErr := store.CommitDelivered(
+		"turn-delivered",
+		caller.SessionKey,
+		"Here is the interfaces lesson.",
+		"msg-100",
+	); commitErr != nil {
+		t.Fatalf("CommitDelivered() error = %v", commitErr)
 	}
 	durable, err := store.Get(caller, created.ID)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if durable.LastDelivered == nil || durable.LastDelivered.Excerpt != "Here is the interfaces lesson." ||
+	if durable.LastDelivered == nil ||
+		durable.LastDelivered.Excerpt != "Here is the interfaces lesson." ||
 		durable.LastDelivered.MessageRef != "msg-100" {
 		t.Fatalf("LastDelivered = %#v", durable.LastDelivered)
 	}
@@ -93,8 +99,8 @@ func TestCheckpointProgressCommitsOnlyAfterDeliveredResponse(t *testing.T) {
 		NextStep:       stringPointer("Practice pointer receivers"),
 	}
 	now = now.Add(time.Minute)
-	if _, err := store.Apply(caller, "turn-update-interrupted", update); err != nil {
-		t.Fatalf("Apply(staged update) error = %v", err)
+	if _, updateErr := store.Apply(caller, "turn-update-interrupted", update); updateErr != nil {
+		t.Fatalf("Apply(staged update) error = %v", updateErr)
 	}
 	store.DiscardTurn("turn-update-interrupted")
 	unchanged, err := store.Get(caller, created.ID)
@@ -103,12 +109,17 @@ func TestCheckpointProgressCommitsOnlyAfterDeliveredResponse(t *testing.T) {
 	}
 
 	now = now.Add(time.Minute)
-	if _, err := store.Apply(caller, "turn-update-delivered", update); err != nil {
-		t.Fatalf("Apply(update) error = %v", err)
+	if _, updateErr := store.Apply(caller, "turn-update-delivered", update); updateErr != nil {
+		t.Fatalf("Apply(update) error = %v", updateErr)
 	}
 	now = now.Add(time.Minute)
-	if err := store.CommitDelivered("turn-update-delivered", caller.SessionKey, "Method sets are now complete.", "msg-101"); err != nil {
-		t.Fatalf("CommitDelivered(update) error = %v", err)
+	if commitErr := store.CommitDelivered(
+		"turn-update-delivered",
+		caller.SessionKey,
+		"Method sets are now complete.",
+		"msg-101",
+	); commitErr != nil {
+		t.Fatalf("CommitDelivered(update) error = %v", commitErr)
 	}
 	advanced, err := store.Get(caller, created.ID)
 	if err != nil || advanced.NextStep != "Practice pointer receivers" || len(advanced.CompletedItems) != 1 {
@@ -152,8 +163,8 @@ func TestCheckpointContinuationResolutionAndTopicIsolation(t *testing.T) {
 	if err != nil || resolved.ID != first.ID {
 		t.Fatalf("relevant continuation = %#v, %v, want OAuth", resolved, err)
 	}
-	if _, err := store.Get(otherTopic, first.ID); !errors.Is(err, ErrCheckpointNotFound) {
-		t.Fatalf("other topic Get() error = %v, want not found", err)
+	if _, getErr := store.Get(otherTopic, first.ID); !errors.Is(getErr, ErrCheckpointNotFound) {
+		t.Fatalf("other topic Get() error = %v, want not found", getErr)
 	}
 
 	// An unrelated question does not mutate or replace the active checkpoint.
@@ -162,7 +173,8 @@ func TestCheckpointContinuationResolutionAndTopicIsolation(t *testing.T) {
 		t.Fatalf("Get(before unrelated question) error = %v", err)
 	}
 	after, err := store.Get(caller, second.ID)
-	if err != nil || after.NextStep != before.NextStep || !after.UpdatedAt.Equal(before.UpdatedAt) {
+	if err != nil || after.NextStep != before.NextStep ||
+		!after.UpdatedAt.Equal(before.UpdatedAt) {
 		t.Fatalf("unrelated question changed checkpoint: before=%#v after=%#v err=%v", before, after, err)
 	}
 }
@@ -198,10 +210,10 @@ func TestCheckpointAmbiguityCompletionAndRetention(t *testing.T) {
 	if err != nil || completed.Status != CheckpointStatusCompleted {
 		t.Fatalf("complete = %#v, %v", completed, err)
 	}
-	if _, err := store.Apply(caller, "", CheckpointMutation{
+	if _, resumeErr := store.Apply(caller, "", CheckpointMutation{
 		Action: CheckpointActionResume, ID: completed.ID,
-	}); !errors.Is(err, ErrCheckpointNotResumable) {
-		t.Fatalf("resume completed error = %v", err)
+	}); !errors.Is(resumeErr, ErrCheckpointNotResumable) {
+		t.Fatalf("resume completed error = %v", resumeErr)
 	}
 	active, err := store.List(caller, false)
 	if err != nil || len(active) != 1 || active[0].ID == completed.ID {

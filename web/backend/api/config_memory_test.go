@@ -15,14 +15,14 @@ func TestHandlePatchConfigMemoryRoundTripPreservesOtherFields(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()
 
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error = %v", err)
+	cfg, loadErr := config.LoadConfig(configPath)
+	if loadErr != nil {
+		t.Fatalf("LoadConfig() error = %v", loadErr)
 	}
 	cfg.Gateway.Port = 19444
 	cfg.Agents.Defaults.MaxTokens = 8192
-	if err := config.SaveConfig(configPath, cfg); err != nil {
-		t.Fatalf("SaveConfig() error = %v", err)
+	if saveErr := config.SaveConfig(configPath, cfg); saveErr != nil {
+		t.Fatalf("SaveConfig() error = %v", saveErr)
 	}
 
 	patch := `{
@@ -69,10 +69,15 @@ func TestHandlePatchConfigMemoryRoundTripPreservesOtherFields(t *testing.T) {
 		t.Fatalf("LoadConfig(updated) error = %v", err)
 	}
 	if updated.Gateway.Port != 19444 || updated.Agents.Defaults.MaxTokens != 8192 {
-		t.Fatalf("unrelated fields changed: gateway.port=%d max_tokens=%d", updated.Gateway.Port, updated.Agents.Defaults.MaxTokens)
+		t.Fatalf(
+			"unrelated fields changed: gateway.port=%d max_tokens=%d",
+			updated.Gateway.Port,
+			updated.Agents.Defaults.MaxTokens,
+		)
 	}
 	memoryCfg := updated.Memory
-	if memoryCfg.Enabled || memoryCfg.BackgroundReview.Enabled || !memoryCfg.WriteApproval || !memoryCfg.Checkpoints.Enabled {
+	if memoryCfg.Enabled || memoryCfg.BackgroundReview.Enabled ||
+		!memoryCfg.WriteApproval || !memoryCfg.Checkpoints.Enabled {
 		t.Fatalf("memory booleans did not round trip: %#v", memoryCfg)
 	}
 	if memoryCfg.Notifications != config.MemoryNotificationVerbose ||
@@ -96,21 +101,21 @@ func TestHandleGetConfigWithoutMemoryReturnsActiveDefaults(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()
 
-	raw, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
+	raw, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile() error = %v", readErr)
 	}
 	var document map[string]any
-	if err := json.Unmarshal(raw, &document); err != nil {
-		t.Fatalf("Unmarshal() error = %v", err)
+	if unmarshalErr := json.Unmarshal(raw, &document); unmarshalErr != nil {
+		t.Fatalf("Unmarshal() error = %v", unmarshalErr)
 	}
 	delete(document, "memory")
-	raw, err = json.Marshal(document)
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
+	raw, marshalErr := json.Marshal(document)
+	if marshalErr != nil {
+		t.Fatalf("Marshal() error = %v", marshalErr)
 	}
-	if err := os.WriteFile(configPath, raw, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
+	if writeErr := os.WriteFile(configPath, raw, 0o600); writeErr != nil {
+		t.Fatalf("WriteFile() error = %v", writeErr)
 	}
 
 	h := NewHandler(configPath)
@@ -149,12 +154,21 @@ func TestHandlePatchConfigRejectsInvalidMemoryValues(t *testing.T) {
 			h := NewHandler(configPath)
 			mux := http.NewServeMux()
 			h.RegisterRoutes(mux)
-			req := httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(patch))
+			req := httptest.NewRequest(
+				http.MethodPatch,
+				"/api/config",
+				bytes.NewBufferString(patch),
+			)
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 			if rec.Code != http.StatusBadRequest {
-				t.Fatalf("PATCH status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+				t.Fatalf(
+					"PATCH status = %d, want %d, body=%s",
+					rec.Code,
+					http.StatusBadRequest,
+					rec.Body.String(),
+				)
 			}
 		})
 	}

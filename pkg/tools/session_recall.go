@@ -18,18 +18,29 @@ type SessionRecallTool struct {
 	maxChars   int
 }
 
-func NewSessionRecallTool(store *memory.RecallStore, mode string, maxResults, maxChars int) *SessionRecallTool {
+func NewSessionRecallTool(
+	store *memory.RecallStore,
+	mode string,
+	maxResults int,
+	maxChars int,
+) *SessionRecallTool {
 	return &SessionRecallTool{store: store, mode: mode, maxResults: maxResults, maxChars: maxChars}
 }
 
 func (t *SessionRecallTool) Name() string { return SessionRecallToolName }
 
 func (t *SessionRecallTool) Description() string {
-	return "Search bounded excerpts from other sessions/topics only when the user explicitly refers to earlier work or another topic. Backend policy enforces isolated, same-canonical-user, or same-group scope; no session key or user ID can be requested."
+	return "Search bounded excerpts from other sessions/topics only when the user explicitly refers to earlier work " +
+		"or another topic. Backend policy enforces isolated, same-canonical-user, or same-group scope; no session " +
+		"key or user ID can be requested."
 }
 
 func (t *SessionRecallTool) PromptMetadata() PromptMetadata {
-	return PromptMetadata{Layer: ToolPromptLayerCapability, Slot: ToolPromptSlotTooling, Source: ToolPromptSourceRegistry}
+	return PromptMetadata{
+		Layer:  ToolPromptLayerCapability,
+		Slot:   ToolPromptSlotTooling,
+		Source: ToolPromptSourceRegistry,
+	}
 }
 
 func (t *SessionRecallTool) Parameters() map[string]any {
@@ -37,8 +48,9 @@ func (t *SessionRecallTool) Parameters() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"query": map[string]any{
-				"type":        "string",
-				"description": "Terms describing the prior discussion, topic, task, or error. Session/user identifiers are intentionally unsupported.",
+				"type": "string",
+				"description": "Terms describing the prior discussion, topic, task, or error. " +
+					"Session/user identifiers are intentionally unsupported.",
 			},
 		},
 		"required": []string{"query"},

@@ -26,7 +26,11 @@ func configureMemoryCommandRuntime(
 			lines := []string{
 				"Curated memory: enabled",
 				fmt.Sprintf("Recall mode: %s", rt.Config.Memory.Recall.EffectiveMode()),
-				fmt.Sprintf("Background review: %t (interval %d)", rt.Config.Memory.BackgroundReview.Enabled, rt.Config.Memory.BackgroundReview.EffectiveInterval()),
+				fmt.Sprintf(
+					"Background review: %t (interval %d)",
+					rt.Config.Memory.BackgroundReview.Enabled,
+					rt.Config.Memory.BackgroundReview.EffectiveInterval(),
+				),
 				fmt.Sprintf("Write approval: %t", rt.Config.Memory.WriteApproval),
 				fmt.Sprintf("Notifications: %s", rt.Config.Memory.EffectiveNotificationMode()),
 			}
@@ -90,14 +94,26 @@ func configureMemoryCommandRuntime(
 			return formatPendingMemory(workspace, user), nil
 		}
 		rt.MemoryApprove = func(id string) (string, error) {
-			count, err := resolvePendingMemory(agent.CuratedMemory, caller, id, true, caller.GroupID == "")
+			count, err := resolvePendingMemory(
+				agent.CuratedMemory,
+				caller,
+				id,
+				true,
+				caller.GroupID == "",
+			)
 			if err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("Approved %d memory operation(s).", count), nil
 		}
 		rt.MemoryReject = func(id string) (string, error) {
-			count, err := resolvePendingMemory(agent.CuratedMemory, caller, id, false, caller.GroupID == "")
+			count, err := resolvePendingMemory(
+				agent.CuratedMemory,
+				caller,
+				id,
+				false,
+				caller.GroupID == "",
+			)
 			if err != nil {
 				return "", err
 			}
@@ -130,7 +146,12 @@ func configureMemoryCommandRuntime(
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("Resumed %s (%s). Next: %s", checkpoint.Title, checkpoint.ID, checkpoint.NextStep), nil
+			return fmt.Sprintf(
+				"Resumed %s (%s). Next: %s",
+				checkpoint.Title,
+				checkpoint.ID,
+				checkpoint.NextStep,
+			), nil
 		}
 		rt.CheckpointForget = func(id string) (string, error) {
 			checkpoint, err := agent.Checkpoints.Apply(caller, "", memory.CheckpointMutation{
@@ -145,7 +166,14 @@ func configureMemoryCommandRuntime(
 }
 
 func formatMemoryStats(stats memory.CuratedStats) string {
-	return fmt.Sprintf("%s: %d entries, %d/%d characters, %d pending", stats.Target, stats.Entries, stats.Characters, stats.Capacity, stats.PendingCount)
+	return fmt.Sprintf(
+		"%s: %d entries, %d/%d characters, %d pending",
+		stats.Target,
+		stats.Entries,
+		stats.Characters,
+		stats.Capacity,
+		stats.PendingCount,
+	)
 }
 
 func formatMemoryEntries(workspace, user []memory.CuratedEntry) string {
@@ -157,7 +185,10 @@ func formatMemoryEntries(workspace, user []memory.CuratedEntry) string {
 			return
 		}
 		for _, entry := range entries {
-			lines = append(lines, fmt.Sprintf("- `%s` — %s", entry.ID, memory.RedactMemoryText(entry.Content)))
+			lines = append(
+				lines,
+				fmt.Sprintf("- `%s` — %s", entry.ID, memory.RedactMemoryText(entry.Content)),
+			)
 		}
 	}
 	appendEntries("Workspace memory:", workspace)
@@ -189,7 +220,13 @@ func formatPendingMemory(workspace, user []memory.PendingCuratedChange) string {
 	var lines []string
 	appendPending := func(target string, changes []memory.PendingCuratedChange) {
 		for _, change := range changes {
-			lines = append(lines, fmt.Sprintf("- `%s` (%s, %d operation(s), %s)", change.ID, target, len(change.Mutations), change.CreatedAt.UTC().Format("2006-01-02 15:04Z")))
+			lines = append(lines, fmt.Sprintf(
+				"- `%s` (%s, %d operation(s), %s)",
+				change.ID,
+				target,
+				len(change.Mutations),
+				change.CreatedAt.UTC().Format("2006-01-02 15:04Z"),
+			))
 		}
 	}
 	appendPending("workspace", workspace)

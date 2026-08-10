@@ -10,7 +10,10 @@ import (
 var curatedSecretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----`),
 	regexp.MustCompile(`(?i)\bauthorization\s*[:=]\s*["']?bearer\s+[a-z0-9._~+/=-]{8,}`),
-	regexp.MustCompile(`(?i)\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|password|passwd|cookie|authorization)\s*[:=]\s*["']?[^\s"']{4,}`),
+	regexp.MustCompile(
+		`(?i)\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|` +
+			`password|passwd|cookie|authorization)\s*[:=]\s*["']?[^\s"']{4,}`,
+	),
 	regexp.MustCompile(`(?i)\b[a-z][a-z0-9_]*(?:api[_]?key|token|secret|password|passwd)\s*[:=]\s*["']?[^\s"']{4,}`),
 	regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/=-]{8,}`),
 	regexp.MustCompile(`(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^\s:/]+:[^\s@/]+@`),
@@ -24,12 +27,18 @@ var curatedSecretPatterns = []*regexp.Regexp{
 }
 
 var curatedInjectionPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\bignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|prompts?|rules?)\b`),
+	regexp.MustCompile(
+		`(?i)\bignore\s+(?:all\s+)?(?:previous|prior|above)\s+` +
+			`(?:instructions?|prompts?|rules?)\b`,
+	),
 	regexp.MustCompile(`(?i)\b(?:system|developer)\s+(?:prompt|message|instruction)\s*:`),
 	regexp.MustCompile(`(?i)<\/?(?:system|developer|assistant|tool)(?:\s|>)`),
 	regexp.MustCompile(`(?i)\[(?:INST|SYS)\]`),
 	regexp.MustCompile(`(?i)\byou\s+must\s+(?:now\s+)?(?:ignore|override|disobey)\b`),
-	regexp.MustCompile(`(?i)\babaikan\s+(?:semua\s+)?(?:instruksi|perintah|aturan)\s+(?:sebelumnya|di atas)\b`),
+	regexp.MustCompile(
+		`(?i)\babaikan\s+(?:semua\s+)?(?:instruksi|perintah|aturan)\s+` +
+			`(?:sebelumnya|di atas)\b`,
+	),
 	regexp.MustCompile(`(?i)<\/?(?:curated_memory|task_checkpoints|transcript_snapshot)(?:\s|>)`),
 }
 

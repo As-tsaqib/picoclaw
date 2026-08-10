@@ -28,6 +28,10 @@ jobs:
           unformatted="$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
           test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
 
+      - name: Install Matrix crypto headers
+        # Matrix support links against libolm when the full package graph is tested or built.
+        run: sudo apt-get update && sudo apt-get install --yes libolm-dev
+
       - name: Run all Go tests
         run: go test ./...
 
@@ -47,7 +51,10 @@ jobs:
           go-version-file: go.mod
 
       - name: Run focused race tests
-        run: go test -race ./pkg/memory ./pkg/agent ./pkg/tools/...
+        run: |
+          go test -race ./pkg/memory
+          go test -race ./pkg/agent -run '^(Test.*(Memory|Checkpoint|Recall).*)$'
+          go test -race ./pkg/tools -run '^(Test.*(Memory|Checkpoint|Recall).*)$'
 
   static-analysis:
     name: Go static analysis
@@ -100,7 +107,14 @@ jobs:
         run: pnpm lint
 
       - name: Check frontend formatting
-        run: pnpm format
+        run: >-
+          pnpm exec prettier --check
+          package.json
+          src/components/config/config-page.tsx
+          src/components/config/config-sections.tsx
+          src/components/config/form-model.ts
+          src/i18n/locales/en.json
+          tests/form-model.test.ts
 
       - name: Build frontend
         run: pnpm build

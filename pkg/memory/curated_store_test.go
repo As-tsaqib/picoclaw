@@ -80,10 +80,10 @@ func TestCuratedStoreCRUDSearchDuplicateAndRestart(t *testing.T) {
 	if err != nil || len(entries) != 1 || entries[0].Content != replacement {
 		t.Fatalf("restart List() = %#v, %v", entries, err)
 	}
-	if _, err := restarted.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+	if _, removeErr := restarted.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
 		Action: CuratedActionRemove, ID: entry.ID,
-	}}, false); err != nil {
-		t.Fatalf("ApplyBatch(remove) error = %v", err)
+	}}, false); removeErr != nil {
+		t.Fatalf("ApplyBatch(remove) error = %v", removeErr)
 	}
 	entries, err = restarted.List(CuratedTargetCurrentUser, caller)
 	if err != nil || len(entries) != 0 {
@@ -102,10 +102,10 @@ func TestCuratedStoreScopePrivacyAndWorkspaceSharing(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("user B private list = %#v, %v", entries, err)
 	}
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, userB, []CuratedMutation{{
+	if _, replaceErr := store.ApplyBatch(CuratedTargetCurrentUser, userB, []CuratedMutation{{
 		Action: CuratedActionReplace, ID: private.ID, Content: "attempted overwrite",
-	}}, false); !errors.Is(err, ErrCuratedEntryNotFound) {
-		t.Fatalf("cross-user replace error = %v, want not found", err)
+	}}, false); !errors.Is(replaceErr, ErrCuratedEntryNotFound) {
+		t.Fatalf("cross-user replace error = %v, want not found", replaceErr)
 	}
 	entries, err = store.List(CuratedTargetWorkspace, userB)
 	if err != nil || len(entries) != 1 || entries[0].ID != workspace.ID {
@@ -146,11 +146,11 @@ func TestCuratedStoreCapacityConsolidationAndAtomicBatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List(before atomic failure) error = %v", err)
 	}
-	if _, err := store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{
+	if _, batchErr := store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{
 		{Action: CuratedActionAdd, Content: "new"},
 		{Action: CuratedActionReplace, ID: "mem_0000000000000000", Content: "missing"},
-	}, false); !errors.Is(err, ErrCuratedEntryNotFound) {
-		t.Fatalf("atomic failure error = %v", err)
+	}, false); !errors.Is(batchErr, ErrCuratedEntryNotFound) {
+		t.Fatalf("atomic failure error = %v", batchErr)
 	}
 	after, err := store.List(CuratedTargetWorkspace, caller)
 	if err != nil || len(after) != len(before) || after[0].ID != before[0].ID {

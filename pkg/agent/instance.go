@@ -65,8 +65,12 @@ type AgentInstance struct {
 	// from model_list, instead of inheriting the primary model's provider config.
 	CandidateProviders map[string]providers.LLMProvider
 
-	memoryReviewMu     sync.Mutex
-	memoryReviewCancel context.CancelFunc
+	memoryReviewer *memoryReviewController
+}
+
+type memoryReviewController struct {
+	mu     sync.Mutex
+	cancel context.CancelFunc
 }
 
 // NewAgentInstance creates an agent instance from config.
@@ -319,6 +323,7 @@ func NewAgentInstance(
 		RecallMemory:              recallMemory,
 		Checkpoints:               checkpoints,
 		MemoryReviewState:         reviewState,
+		memoryReviewer:            &memoryReviewController{},
 		Router:                    router,
 		LightCandidates:           lightCandidates,
 		LightProvider:             lightProvider,
@@ -502,12 +507,14 @@ func mediaTempDirPattern() string {
 
 // Close releases resources held by the agent's session store.
 func (a *AgentInstance) Close() error {
-	a.memoryReviewMu.Lock()
-	if a.memoryReviewCancel != nil {
-		a.memoryReviewCancel()
-		a.memoryReviewCancel = nil
+	if a.memoryReviewer != nil {
+		a.memoryReviewer.mu.Lock()
+		if a.memoryReviewer.cancel != nil {
+			a.memoryReviewer.cancel()
+			a.memoryReviewer.cancel = nil
+		}
+		a.memoryReviewer.mu.Unlock()
 	}
-	a.memoryReviewMu.Unlock()
 	if a.Sessions != nil {
 		return a.Sessions.Close()
 	}

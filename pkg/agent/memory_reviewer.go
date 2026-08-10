@@ -61,7 +61,7 @@ func (al *AgentLoop) startMemoryReview(
 	force bool,
 ) (bool, error) {
 	if al == nil || agent == nil || al.cfg == nil || agent.CuratedMemory == nil ||
-		agent.RecallMemory == nil || agent.MemoryReviewState == nil {
+		agent.RecallMemory == nil || agent.MemoryReviewState == nil || agent.memoryReviewer == nil {
 		return false, fmt.Errorf("memory reviewer is unavailable")
 	}
 	if !al.cfg.Memory.Enabled {
@@ -73,23 +73,22 @@ func (al *AgentLoop) startMemoryReview(
 	if strings.TrimSpace(caller.SessionRef) == "" || strings.TrimSpace(caller.UserKey) == "" {
 		return false, fmt.Errorf("trusted user/session scope is unavailable")
 	}
-
-	agent.memoryReviewMu.Lock()
-	if agent.memoryReviewCancel != nil {
-		agent.memoryReviewMu.Unlock()
+	agent.memoryReviewer.mu.Lock()
+	if agent.memoryReviewer.cancel != nil {
+		agent.memoryReviewer.mu.Unlock()
 		return false, nil
 	}
 	timeout := time.Duration(al.cfg.Memory.BackgroundReview.EffectiveTimeoutSeconds()) * time.Second
 	reviewCtx, cancel := context.WithTimeout(context.Background(), timeout)
-	agent.memoryReviewCancel = cancel
-	agent.memoryReviewMu.Unlock()
+	agent.memoryReviewer.cancel = cancel
+	agent.memoryReviewer.mu.Unlock()
 
 	go func() {
 		defer func() {
 			cancel()
-			agent.memoryReviewMu.Lock()
-			agent.memoryReviewCancel = nil
-			agent.memoryReviewMu.Unlock()
+			agent.memoryReviewer.mu.Lock()
+			agent.memoryReviewer.cancel = nil
+			agent.memoryReviewer.mu.Unlock()
 		}()
 		if err := al.runMemoryReview(reviewCtx, agent, caller); err != nil && reviewCtx.Err() == nil {
 			logger.WarnCF("memory", "Background memory review failed", safeMemoryLogFields(err))
@@ -106,9 +105,12 @@ func (al *AgentLoop) cancelMemoryReviewForLiveTurn(agent *AgentInstance, opts pr
 	if channel == "" || channel == "system" {
 		return
 	}
-	agent.memoryReviewMu.Lock()
-	cancel := agent.memoryReviewCancel
-	agent.memoryReviewMu.Unlock()
+	if agent.memoryReviewer == nil {
+		return
+	}
+	agent.memoryReviewer.mu.Lock()
+	cancel := agent.memoryReviewer.cancel
+	agent.memoryReviewer.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
@@ -134,8 +136,8 @@ func (al *AgentLoop) runMemoryReview(
 	if len(records) == 0 || latest <= cursor.LastReviewedSequence {
 		return nil
 	}
-	if err := agent.MemoryReviewState.MarkAttempt(caller); err != nil {
-		return err
+	if markErr := agent.MemoryReviewState.MarkAttempt(caller); markErr != nil {
+		return markErr
 	}
 
 	snapshot := make([]memoryReviewRecord, 0, len(records))
@@ -206,7 +208,14 @@ func (al *AgentLoop) runMemoryReview(
 			toolCtx := tools.WithToolCallerScope(ctx, caller)
 			toolCtx = tools.WithToolTurnID(toolCtx, "")
 			toolCtx = tools.WithBackgroundMemoryReview(toolCtx, true)
-			result := restricted.ExecuteWithContext(toolCtx, call.Name, call.Arguments, caller.Channel, caller.ChatID, nil)
+			result := restricted.ExecuteWithContext(
+				toolCtx,
+				call.Name,
+				call.Arguments,
+				caller.Channel,
+				caller.ChatID,
+				nil,
+			)
 			messages = append(messages, providers.Message{
 				Role: "tool", ToolCallID: callID, Content: result.ContentForLLM(),
 			})

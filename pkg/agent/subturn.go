@@ -361,6 +361,7 @@ func spawnSubTurn(
 	ephemeralStore := newEphemeralSession(nil)
 	agent := *baseAgent // shallow copy
 	agent.Sessions = ephemeralStore
+	agent.memoryReviewer = &memoryReviewController{}
 	// Clone the tool registry so child turn's tool registrations
 	// don't pollute the parent's registry.
 	if baseAgent.Tools != nil {

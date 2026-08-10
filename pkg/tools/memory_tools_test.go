@@ -123,11 +123,23 @@ func TestSessionRecallToolRejectsArbitraryScopeAndReviewerUse(t *testing.T) {
 	caller := toolMemoryCaller("session-current", "user-a", "group-1", "30")
 	sameUser := toolMemoryCaller("session-same-user", "user-a", "group-1", "10")
 	otherUser := toolMemoryCaller("session-other-user", "user-b", "group-1", "20")
-	if _, err := store.AppendDeliveredTurn(sameUser, "turn-1", "OAuth invalid state", "same user fix", ""); err != nil {
-		t.Fatalf("AppendDeliveredTurn(same user) error = %v", err)
+	if _, appendErr := store.AppendDeliveredTurn(
+		sameUser,
+		"turn-1",
+		"OAuth invalid state",
+		"same user fix",
+		"",
+	); appendErr != nil {
+		t.Fatalf("AppendDeliveredTurn(same user) error = %v", appendErr)
 	}
-	if _, err := store.AppendDeliveredTurn(otherUser, "turn-2", "OAuth private salary state", "other user", ""); err != nil {
-		t.Fatalf("AppendDeliveredTurn(other user) error = %v", err)
+	if _, appendErr := store.AppendDeliveredTurn(
+		otherUser,
+		"turn-2",
+		"OAuth private salary state",
+		"other user",
+		"",
+	); appendErr != nil {
+		t.Fatalf("AppendDeliveredTurn(other user) error = %v", appendErr)
 	}
 	tool := NewSessionRecallTool(store, memory.RecallModeUserRecall, 10, 4_000)
 	payload := decodeToolResult(t, tool.Execute(toolContext(caller, "turn-current"), map[string]any{

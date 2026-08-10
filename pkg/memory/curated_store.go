@@ -161,62 +161,74 @@ func (s *CuratedStore) ApplyBatch(
 	if len(mutations) == 0 {
 		return CuratedBatchResult{}, ErrCuratedInvalidAction
 	}
-	path, digest, limit, err := s.scopePath(target, caller)
-	if err != nil {
-		return CuratedBatchResult{}, err
+	path, digest, limit, scopeErr := s.scopePath(target, caller)
+	if scopeErr != nil {
+		return CuratedBatchResult{}, scopeErr
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	doc, err := s.readDocument(path, digest)
-	if err != nil {
-		return CuratedBatchResult{}, err
+	doc, readErr := s.readDocument(path, digest)
+	if readErr != nil {
+		return CuratedBatchResult{}, readErr
 	}
 	now := s.now().UTC()
-	prepared, err := s.prepareMutations(doc, mutations, caller, now)
-	if err != nil {
-		return CuratedBatchResult{}, err
+	prepared, prepareErr := s.prepareMutations(doc, mutations, caller, now)
+	if prepareErr != nil {
+		return CuratedBatchResult{}, prepareErr
 	}
 
 	projected := cloneCuratedEntries(doc.Entries)
 	for _, pending := range doc.Pending {
-		projected, _, err = applyCuratedMutations(projected, pending.Mutations, now)
-		if err != nil {
-			return CuratedBatchResult{}, fmt.Errorf("invalid pending curated memory state: %w", err)
+		var mutationErr error
+		projected, _, mutationErr = applyCuratedMutations(projected, pending.Mutations, now)
+		if mutationErr != nil {
+			return CuratedBatchResult{}, fmt.Errorf("invalid pending curated memory state: %w", mutationErr)
 		}
 	}
-	projected, applied, err := applyCuratedMutations(projected, prepared, now)
-	if err != nil {
-		return CuratedBatchResult{}, err
+	projected, _, projectionErr := applyCuratedMutations(projected, prepared, now)
+	if projectionErr != nil {
+		return CuratedBatchResult{}, projectionErr
 	}
-	if err := enforceCuratedCapacity(target, doc.Entries, projected, limit); err != nil {
-		return CuratedBatchResult{}, err
+	if capacityErr := enforceCuratedCapacity(
+		target,
+		doc.Entries,
+		projected,
+		limit,
+	); capacityErr != nil {
+		return CuratedBatchResult{}, capacityErr
 	}
 
 	if stage {
-		pendingID, err := s.newStableID("pm", pendingIDs(doc.Pending))
-		if err != nil {
-			return CuratedBatchResult{}, err
+		pendingID, idErr := s.newStableID("pm", pendingIDs(doc.Pending))
+		if idErr != nil {
+			return CuratedBatchResult{}, idErr
 		}
 		pending := PendingCuratedChange{ID: pendingID, Mutations: prepared, CreatedAt: now}
 		doc.Pending = append(doc.Pending, pending)
-		if err := s.writeDocument(path, doc); err != nil {
-			return CuratedBatchResult{}, err
+		if writeErr := s.writeDocument(path, doc); writeErr != nil {
+			return CuratedBatchResult{}, writeErr
 		}
 		return CuratedBatchResult{Pending: &pending}, nil
 	}
 
 	// Re-apply only the requested batch to the actual entries. Pending batches
 	// remain staged and do not silently become visible.
-	doc.Entries, applied, err = applyCuratedMutations(cloneCuratedEntries(doc.Entries), prepared, now)
-	if err != nil {
-		return CuratedBatchResult{}, err
+	entries, applied, applyErr := applyCuratedMutations(cloneCuratedEntries(doc.Entries), prepared, now)
+	if applyErr != nil {
+		return CuratedBatchResult{}, applyErr
 	}
-	if err := enforceCuratedCapacity(target, nil, doc.Entries, limit); err != nil {
-		return CuratedBatchResult{}, err
+	doc.Entries = entries
+	if capacityErr := enforceCuratedCapacity(
+		target,
+		nil,
+		doc.Entries,
+		limit,
+	); capacityErr != nil {
+		return CuratedBatchResult{}, capacityErr
 	}
-	if err := s.writeDocument(path, doc); err != nil {
-		return CuratedBatchResult{}, err
+	if writeErr := s.writeDocument(path, doc); writeErr != nil {
+		return CuratedBatchResult{}, writeErr
 	}
 	return CuratedBatchResult{Applied: applied}, nil
 }
@@ -570,7 +582,9 @@ func curatedCharacters(entries []CuratedEntry) int {
 }
 
 func cloneCuratedEntries(entries []CuratedEntry) []CuratedEntry {
-	return append([]CuratedEntry(nil), entries...)
+	out := make([]CuratedEntry, len(entries))
+	copy(out, entries)
+	return out
 }
 
 func clonePendingChanges(changes []PendingCuratedChange) []PendingCuratedChange {

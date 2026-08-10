@@ -31,10 +31,7 @@ function mergePatch(target: JsonObject, patch: JsonObject): JsonObject {
       typeof result[key] === "object" &&
       !Array.isArray(result[key])
     ) {
-      result[key] = mergePatch(
-        result[key] as JsonObject,
-        value as JsonObject,
-      )
+      result[key] = mergePatch(result[key] as JsonObject, value as JsonObject)
       continue
     }
     result[key] = clone(value)

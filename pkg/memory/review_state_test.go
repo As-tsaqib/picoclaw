@@ -4,9 +4,9 @@ import "testing"
 
 func TestReviewStatePersistsCountersAndScopesUsers(t *testing.T) {
 	root := t.TempDir()
-	store, err := NewReviewStateStore(root)
-	if err != nil {
-		t.Fatalf("NewReviewStateStore() error = %v", err)
+	store, storeErr := NewReviewStateStore(root)
+	if storeErr != nil {
+		t.Fatalf("NewReviewStateStore() error = %v", storeErr)
 	}
 	callerA := recallCaller("shared-session", "canonical-user-a", "group-1", "10", "OAuth")
 	callerB := recallCaller("shared-session", "canonical-user-b", "group-1", "10", "OAuth")
@@ -34,9 +34,9 @@ func TestReviewStatePersistsCountersAndScopesUsers(t *testing.T) {
 }
 
 func TestReviewStateSuccessfulReviewPreservesTurnsArrivingDuringReview(t *testing.T) {
-	store, err := NewReviewStateStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewReviewStateStore() error = %v", err)
+	store, storeErr := NewReviewStateStore(t.TempDir())
+	if storeErr != nil {
+		t.Fatalf("NewReviewStateStore() error = %v", storeErr)
 	}
 	caller := recallCaller("session", "canonical-user", "group-1", "10", "OAuth")
 	for range 10 {
@@ -60,8 +60,8 @@ func TestReviewStateSuccessfulReviewPreservesTurnsArrivingDuringReview(t *testin
 	if cursor.SuccessfulTurns != 2 || cursor.LastReviewedSequence != 10 || cursor.LastSuccessfulReviewAt.IsZero() {
 		t.Fatalf("cursor after review = %#v", cursor)
 	}
-	if err := store.ForgetSession(caller.SessionRef); err != nil {
-		t.Fatalf("ForgetSession() error = %v", err)
+	if forgetErr := store.ForgetSession(caller.SessionRef); forgetErr != nil {
+		t.Fatalf("ForgetSession() error = %v", forgetErr)
 	}
 	cursor, err = store.Get(caller)
 	if err != nil || cursor.SuccessfulTurns != 0 || cursor.LastReviewedSequence != 0 {

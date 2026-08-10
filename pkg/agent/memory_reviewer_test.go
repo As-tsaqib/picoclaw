@@ -114,6 +114,7 @@ func newMemoryReviewerHarness(
 		ID: "main", Model: "review-test", Provider: provider,
 		Tools: tools.NewToolRegistry(), Sessions: sessions,
 		CuratedMemory: curated, RecallMemory: recall, MemoryReviewState: reviewState,
+		memoryReviewer: &memoryReviewController{},
 	}
 	al := &AgentLoop{cfg: cfg, bus: bus.NewMessageBus()}
 	caller := memory.CallerScope{

@@ -45,7 +45,14 @@ func TestMemoryAndCheckpointCommandsDispatchRuntimeControls(t *testing.T) {
 				},
 			})
 			if result.Outcome != OutcomeHandled || result.Err != nil || reply != test.want {
-				t.Fatalf("Execute(%q) outcome=%v err=%v reply=%q, want %q", test.command, result.Outcome, result.Err, reply, test.want)
+				t.Fatalf(
+					"Execute(%q) outcome=%v err=%v reply=%q, want %q",
+					test.command,
+					result.Outcome,
+					result.Err,
+					reply,
+					test.want,
+				)
 			}
 		})
 	}

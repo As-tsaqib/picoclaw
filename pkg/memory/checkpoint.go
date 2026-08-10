@@ -650,14 +650,15 @@ func validateCheckpoint(checkpoint TaskCheckpoint, maxContextChars int) error {
 	if utf8.RuneCountInString(checkpoint.ImportantContext) > maxContextChars {
 		return ErrCheckpointCapacity
 	}
-	values := []string{
+	values := make([]string, 0, 6+len(checkpoint.CompletedItems))
+	values = append(values,
 		checkpoint.Kind,
 		checkpoint.Title,
 		checkpoint.Objective,
 		checkpoint.CurrentStep,
 		checkpoint.NextStep,
 		checkpoint.ImportantContext,
-	}
+	)
 	values = append(values, checkpoint.CompletedItems...)
 	for _, value := range values {
 		if strings.TrimSpace(value) == "" {

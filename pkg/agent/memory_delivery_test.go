@@ -10,11 +10,12 @@ import (
 
 func TestDeferredMemoryDeliveryUsesActuallyDeliveredContent(t *testing.T) {
 	al, agent, caller := newMemoryReviewerHarness(t, &mockProvider{})
-	checkpoints, err := memory.NewCheckpointStore(filepath.Join(t.TempDir(), "checkpoints"), memory.CheckpointStoreOptions{
-		MaxCount: 10, MaxContextChars: 1_000,
-	})
-	if err != nil {
-		t.Fatalf("NewCheckpointStore() error = %v", err)
+	checkpoints, storeErr := memory.NewCheckpointStore(
+		filepath.Join(t.TempDir(), "checkpoints"),
+		memory.CheckpointStoreOptions{MaxCount: 10, MaxContextChars: 1_000},
+	)
+	if storeErr != nil {
+		t.Fatalf("NewCheckpointStore() error = %v", storeErr)
 	}
 	agent.Checkpoints = checkpoints
 	kind, title, objective, nextStep := "lesson", "Go interfaces", "Learn interfaces", "Explain method sets"
@@ -35,7 +36,8 @@ func TestDeferredMemoryDeliveryUsesActuallyDeliveredContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get(checkpoint) error = %v", err)
 	}
-	if checkpoint.LastDelivered == nil || checkpoint.LastDelivered.Excerpt != "text actually delivered by message tool" {
+	if checkpoint.LastDelivered == nil ||
+		checkpoint.LastDelivered.Excerpt != "text actually delivered by message tool" {
 		t.Fatalf("checkpoint LastDelivered = %#v", checkpoint.LastDelivered)
 	}
 	records, _, err := agent.RecallMemory.RecordsAfter(caller, 0, config.DefaultMemoryRecallChars)
@@ -49,11 +51,12 @@ func TestDeferredMemoryDeliveryUsesActuallyDeliveredContent(t *testing.T) {
 
 func TestFailedDeliveryDiscardsCheckpointProgress(t *testing.T) {
 	al, agent, caller := newMemoryReviewerHarness(t, &mockProvider{})
-	checkpoints, err := memory.NewCheckpointStore(filepath.Join(t.TempDir(), "checkpoints"), memory.CheckpointStoreOptions{
-		MaxCount: 10, MaxContextChars: 1_000,
-	})
-	if err != nil {
-		t.Fatalf("NewCheckpointStore() error = %v", err)
+	checkpoints, storeErr := memory.NewCheckpointStore(
+		filepath.Join(t.TempDir(), "checkpoints"),
+		memory.CheckpointStoreOptions{MaxCount: 10, MaxContextChars: 1_000},
+	)
+	if storeErr != nil {
+		t.Fatalf("NewCheckpointStore() error = %v", storeErr)
 	}
 	agent.Checkpoints = checkpoints
 	kind, title, objective, nextStep := "debugging", "OAuth issue", "Fix callback", "Inspect state"
@@ -65,10 +68,10 @@ func TestFailedDeliveryDiscardsCheckpointProgress(t *testing.T) {
 		t.Fatalf("Apply(create) error = %v", err)
 	}
 	nextStep = "Rotate nonce"
-	if _, err := checkpoints.Apply(caller, "turn-failed", memory.CheckpointMutation{
+	if _, updateErr := checkpoints.Apply(caller, "turn-failed", memory.CheckpointMutation{
 		Action: memory.CheckpointActionUpdate, ID: created.ID, NextStep: &nextStep,
-	}); err != nil {
-		t.Fatalf("Apply(update) error = %v", err)
+	}); updateErr != nil {
+		t.Fatalf("Apply(update) error = %v", updateErr)
 	}
 	al.commitMemoryDelivery(deferredMemoryDelivery{
 		agent: agent, caller: caller, turnID: "turn-failed",
@@ -82,17 +85,23 @@ func TestFailedDeliveryDiscardsCheckpointProgress(t *testing.T) {
 
 func TestClearSessionMemoryStatePreservesCuratedMemoryAndDurableCheckpoint(t *testing.T) {
 	_, agent, caller := newMemoryReviewerHarness(t, &mockProvider{})
-	checkpoints, err := memory.NewCheckpointStore(filepath.Join(t.TempDir(), "checkpoints"), memory.CheckpointStoreOptions{
-		MaxCount: 10, MaxContextChars: 1_000,
-	})
-	if err != nil {
-		t.Fatalf("NewCheckpointStore() error = %v", err)
+	checkpoints, storeErr := memory.NewCheckpointStore(
+		filepath.Join(t.TempDir(), "checkpoints"),
+		memory.CheckpointStoreOptions{MaxCount: 10, MaxContextChars: 1_000},
+	)
+	if storeErr != nil {
+		t.Fatalf("NewCheckpointStore() error = %v", storeErr)
 	}
 	agent.Checkpoints = checkpoints
-	if _, err := agent.CuratedMemory.ApplyBatch(memory.CuratedTargetCurrentUser, caller, []memory.CuratedMutation{{
-		Action: memory.CuratedActionAdd, Content: "Prefers concise responses",
-	}}, false); err != nil {
-		t.Fatalf("ApplyBatch(curated) error = %v", err)
+	if _, applyErr := agent.CuratedMemory.ApplyBatch(
+		memory.CuratedTargetCurrentUser,
+		caller,
+		[]memory.CuratedMutation{{
+			Action: memory.CuratedActionAdd, Content: "Prefers concise responses",
+		}},
+		false,
+	); applyErr != nil {
+		t.Fatalf("ApplyBatch(curated) error = %v", applyErr)
 	}
 	kind, title, objective, nextStep := "lesson", "Go lesson", "Learn Go", "Explain interfaces"
 	checkpoint, err := checkpoints.Apply(caller, "", memory.CheckpointMutation{
@@ -103,18 +112,18 @@ func TestClearSessionMemoryStatePreservesCuratedMemoryAndDurableCheckpoint(t *te
 		t.Fatalf("Apply(durable checkpoint) error = %v", err)
 	}
 	nextStep = "Undelivered next step"
-	if _, err := checkpoints.Apply(caller, "pending-turn", memory.CheckpointMutation{
+	if _, updateErr := checkpoints.Apply(caller, "pending-turn", memory.CheckpointMutation{
 		Action: memory.CheckpointActionUpdate, ID: checkpoint.ID, NextStep: &nextStep,
-	}); err != nil {
-		t.Fatalf("Apply(pending checkpoint) error = %v", err)
+	}); updateErr != nil {
+		t.Fatalf("Apply(pending checkpoint) error = %v", updateErr)
 	}
 	appendReviewerTurn(t, agent, caller, "turn-1")
-	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
-		t.Fatalf("RecordSuccessfulTurn() error = %v", err)
+	if _, recordErr := agent.MemoryReviewState.RecordSuccessfulTurn(caller); recordErr != nil {
+		t.Fatalf("RecordSuccessfulTurn() error = %v", recordErr)
 	}
 
-	if err := clearSessionMemoryState(agent, caller); err != nil {
-		t.Fatalf("clearSessionMemoryState() error = %v", err)
+	if clearErr := clearSessionMemoryState(agent, caller); clearErr != nil {
+		t.Fatalf("clearSessionMemoryState() error = %v", clearErr)
 	}
 	entries, err := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
 	if err != nil || len(entries) != 1 {
@@ -124,9 +133,9 @@ func TestClearSessionMemoryStatePreservesCuratedMemoryAndDurableCheckpoint(t *te
 	if err != nil || persisted.NextStep != "Explain interfaces" {
 		t.Fatalf("durable checkpoint changed: %#v, %v", persisted, err)
 	}
-	if pending, err := checkpoints.ListForTurn(caller, "pending-turn", false); err != nil ||
+	if pending, listErr := checkpoints.ListForTurn(caller, "pending-turn", false); listErr != nil ||
 		len(pending) != 1 || pending[0].NextStep != "Explain interfaces" {
-		t.Fatalf("pending checkpoint mutation survived clear: %#v, %v", pending, err)
+		t.Fatalf("pending checkpoint mutation survived clear: %#v, %v", pending, listErr)
 	}
 	records, _, err := agent.RecallMemory.RecordsAfter(caller, 0, 4_000)
 	if err != nil || len(records) != 0 {

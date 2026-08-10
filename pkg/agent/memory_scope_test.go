@@ -79,6 +79,12 @@ func TestDisabledMemoryFlagsPreservePreviousRuntimeShape(t *testing.T) {
 		cfg,
 	)
 	if curated != nil || recall != nil || checkpoints != nil || review != nil {
-		t.Fatalf("disabled memory initialized stores: curated=%v recall=%v checkpoints=%v review=%v", curated, recall, checkpoints, review)
+		t.Fatalf(
+			"disabled memory initialized stores: curated=%v recall=%v checkpoints=%v review=%v",
+			curated,
+			recall,
+			checkpoints,
+			review,
+		)
 	}
 }

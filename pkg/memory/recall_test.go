@@ -138,7 +138,13 @@ func TestRecallStoreRecordsAfterKeepsWholeScopedTurnCursor(t *testing.T) {
 	store := newTestRecallStore(t, t.TempDir(), 100)
 	callerA := recallCaller("session_shared", "canonical-user-a", "group-1", "10", "OAuth")
 	callerB := recallCaller("session_shared", "canonical-user-b", "group-1", "10", "OAuth")
-	first := appendRecallTurn(t, store, callerA, strings.Repeat("first user ", 200), strings.Repeat("first assistant ", 200))
+	first := appendRecallTurn(
+		t,
+		store,
+		callerA,
+		strings.Repeat("first user ", 200),
+		strings.Repeat("first assistant ", 200),
+	)
 	appendRecallTurn(t, store, callerB, "other user's turn", "private other response")
 	second := appendRecallTurn(t, store, callerA, "second scoped turn", "second scoped answer")
 

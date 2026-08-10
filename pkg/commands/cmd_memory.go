@@ -12,10 +12,19 @@ func memoryCommand() Definition {
 		SubCommands: []SubCommand{
 			{Name: "status", Description: "Show memory configuration and capacity", Handler: memoryStatusHandler},
 			{Name: "list", Description: "List current workspace/user entries", Handler: memoryListHandler},
-			{Name: "forget", Description: "Remove a current-user memory entry", ArgsUsage: "<id>", Handler: memoryForgetHandler},
+			{
+				Name: "forget", Description: "Remove a current-user memory entry",
+				ArgsUsage: "<id>", Handler: memoryForgetHandler,
+			},
 			{Name: "pending", Description: "List staged memory changes", Handler: memoryPendingHandler},
-			{Name: "approve", Description: "Approve one or all staged changes", ArgsUsage: "<id|all>", Handler: memoryApproveHandler},
-			{Name: "reject", Description: "Reject one or all staged changes", ArgsUsage: "<id|all>", Handler: memoryRejectHandler},
+			{
+				Name: "approve", Description: "Approve one or all staged changes",
+				ArgsUsage: "<id|all>", Handler: memoryApproveHandler,
+			},
+			{
+				Name: "reject", Description: "Reject one or all staged changes",
+				ArgsUsage: "<id|all>", Handler: memoryRejectHandler,
+			},
 			{Name: "review", Description: "Run one bounded review of delivered turns", Handler: memoryReviewHandler},
 		},
 	}

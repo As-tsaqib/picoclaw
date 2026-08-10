@@ -85,10 +85,7 @@ export function MemoryRecallSection({
       visibleModels.set(option.value, option)
     }
   }
-  if (
-    form.memoryReviewModel &&
-    !visibleModels.has(form.memoryReviewModel)
-  ) {
+  if (form.memoryReviewModel && !visibleModels.has(form.memoryReviewModel)) {
     visibleModels.set(form.memoryReviewModel, {
       provider: form.memoryReviewProvider,
       value: form.memoryReviewModel,
@@ -136,7 +133,7 @@ export function MemoryRecallSection({
       />
 
       {form.memoryBackgroundReviewEnabled && (
-        <div className="border-amber-500/30 bg-amber-500/10 my-3 flex gap-3 rounded-lg border p-3 text-sm">
+        <div className="my-3 flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
           <IconAlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <p className="text-amber-950 dark:text-amber-100">
             {t("pages.config.memory_background_review_cost_warning")}
@@ -333,7 +330,7 @@ export function MemoryRecallSection({
       </Field>
 
       {form.memoryRecallMode === "group_recall" && (
-        <div className="border-orange-500/30 bg-orange-500/10 my-3 flex gap-3 rounded-lg border p-3 text-sm">
+        <div className="my-3 flex gap-3 rounded-lg border border-orange-500/30 bg-orange-500/10 p-3 text-sm">
           <IconAlertTriangle className="mt-0.5 size-4 shrink-0 text-orange-600 dark:text-orange-400" />
           <p className="text-orange-950 dark:text-orange-100">
             {t("pages.config.memory_group_recall_privacy_warning")}

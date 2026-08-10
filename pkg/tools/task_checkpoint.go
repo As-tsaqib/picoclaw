@@ -23,11 +23,17 @@ func NewTaskCheckpointTool(store *memory.CheckpointStore) *TaskCheckpointTool {
 func (t *TaskCheckpointTool) Name() string { return TaskCheckpointToolName }
 
 func (t *TaskCheckpointTool) Description() string {
-	return "Create and maintain resumable lesson, debugging, coding, research, or setup task checkpoints for the current session/topic. Progress mutations are staged until the final assistant response is successfully delivered. Use resolve when the user asks to continue an earlier task in this topic."
+	return "Create and maintain resumable lesson, debugging, coding, research, or setup task checkpoints for the " +
+		"current session/topic. Progress mutations are staged until the final assistant response is successfully " +
+		"delivered. Use resolve when the user asks to continue an earlier task in this topic."
 }
 
 func (t *TaskCheckpointTool) PromptMetadata() PromptMetadata {
-	return PromptMetadata{Layer: ToolPromptLayerCapability, Slot: ToolPromptSlotTooling, Source: ToolPromptSourceRegistry}
+	return PromptMetadata{
+		Layer:  ToolPromptLayerCapability,
+		Slot:   ToolPromptSlotTooling,
+		Source: ToolPromptSourceRegistry,
+	}
 }
 
 func (t *TaskCheckpointTool) Parameters() map[string]any {
@@ -36,13 +42,18 @@ func (t *TaskCheckpointTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"action": map[string]any{
 				"type": "string",
-				"enum": []string{"create", "update", "suspend", "resume", "complete", "list", "get", "resolve", "archive", "delete"},
+				"enum": []string{
+					"create", "update", "suspend", "resume", "complete",
+					"list", "get", "resolve", "archive", "delete",
+				},
 			},
-			"id":                map[string]any{"type": "string"},
-			"kind":              map[string]any{"type": "string"},
-			"title":             map[string]any{"type": "string"},
-			"objective":         map[string]any{"type": "string"},
-			"completed_items":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "maxItems": 50},
+			"id":        map[string]any{"type": "string"},
+			"kind":      map[string]any{"type": "string"},
+			"title":     map[string]any{"type": "string"},
+			"objective": map[string]any{"type": "string"},
+			"completed_items": map[string]any{
+				"type": "array", "items": map[string]any{"type": "string"}, "maxItems": 50,
+			},
 			"current_step":      map[string]any{"type": "string"},
 			"next_step":         map[string]any{"type": "string"},
 			"important_context": map[string]any{"type": "string"},
@@ -93,7 +104,9 @@ func (t *TaskCheckpointTool) Execute(ctx context.Context, args map[string]any) *
 		if err != nil {
 			return checkpointToolError(err)
 		}
-		return checkpointToolJSON(map[string]any{"ok": true, "checkpoint": checkpoint, "staged_until_delivery": turnID != ""})
+		return checkpointToolJSON(map[string]any{
+			"ok": true, "checkpoint": checkpoint, "staged_until_delivery": turnID != "",
+		})
 	default:
 		return checkpointToolError(memory.ErrCheckpointInvalid)
 	}
@@ -104,7 +117,10 @@ func (t *TaskCheckpointTool) ArgumentsForLog(args map[string]any) map[string]any
 	if id := stringArg(args, "id"); id != "" {
 		out["id"] = id
 	}
-	for _, key := range []string{"kind", "title", "objective", "current_step", "next_step", "important_context", "query"} {
+	keys := []string{
+		"kind", "title", "objective", "current_step", "next_step", "important_context", "query",
+	}
+	for _, key := range keys {
 		if value := stringArg(args, key); value != "" {
 			out[key+"_chars"] = utf8.RuneCountInString(value)
 		}
