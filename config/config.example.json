@@ -21,6 +21,33 @@
       }
     }
   },
+  "memory": {
+    "enabled": true,
+    "workspace_char_limit": 12000,
+    "per_user_char_limit": 8000,
+    "write_approval": false,
+    "notifications": "off",
+    "background_review": {
+      "enabled": true,
+      "interval": 10,
+      "provider": "",
+      "model": "",
+      "timeout_seconds": 30,
+      "max_iterations": 2
+    },
+    "recall": {
+      "mode": "isolated",
+      "max_results": 5,
+      "max_chars": 4000,
+      "max_records": 2000
+    },
+    "checkpoints": {
+      "enabled": false,
+      "max_count": 100,
+      "max_context_chars": 2000,
+      "completed_retention_days": 90
+    }
+  },
   "evolution": {
     "enabled": false,
     "mode": "observe",

@@ -6,6 +6,7 @@ Task-oriented guides for setup, configuration, and common PicoClaw workflows.
 - [Android Termux Guide](android-termux.md): run the PicoClaw terminal binary on an ARM64 Android phone.
 - [Configuration Guide](configuration.md): environment variables, workspace layout, routing, and sandbox settings.
 - [Session Guide](session-guide.md): how session scope affects memory sharing, summaries, and isolation.
+- [Memory & Recall Guide](curated-memory.md): curated memory, cross-topic recall, background reviews, privacy, and resumable checkpoints.
 - [Routing Guide](routing-guide.md): agent dispatch, session overrides, and light-model routing.
 - [Chat Apps Configuration](chat-apps.md): supported chat platforms and channel-specific setup paths.
 - [Providers & Model Configuration](providers.md): `model_list`, providers, and model routing.

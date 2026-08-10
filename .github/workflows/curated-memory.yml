@@ -1,0 +1,103 @@
+name: Curated Memory Feature
+
+on:
+  push:
+    branches:
+      - feat/curated-memory-recall
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  go-validation:
+    name: Go tests and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Check Go formatting
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+          test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
+
+      - name: Run all Go tests
+        run: go test ./...
+
+      - name: Build PicoClaw
+        run: go build ./cmd/picoclaw
+
+  memory-race:
+    name: Memory race tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run focused race tests
+        run: go test -race ./pkg/memory ./pkg/agent ./pkg/tools/...
+
+  static-analysis:
+    name: Go static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Golangci Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.10.1
+          args: --build-tags=goolm,stdjson
+
+  frontend:
+    name: Dashboard checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/frontend/pnpm-lock.yaml
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run dashboard config tests
+        run: pnpm test:config
+
+      - name: Run frontend lint
+        run: pnpm lint
+
+      - name: Check frontend formatting
+        run: pnpm format
+
+      - name: Build frontend
+        run: pnpm build
