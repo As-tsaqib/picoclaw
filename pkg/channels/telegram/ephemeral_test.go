@@ -465,7 +465,6 @@ func TestTelegramEphemeralIncomingID_IsNeverUsedAsOutgoingDeleteID(t *testing.T)
 		return nil, nil
 	}}
 	channel := newTestChannel(t, caller)
-	target := mustRegisterEphemeralTarget(t, channel, -100322, 0, 56, 13, "")
 	incomingID := encodeInboundEphemeralMessageID(13)
 
 	err := channel.DeleteMessage(context.Background(), "-100322", incomingID)
