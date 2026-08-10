@@ -804,10 +804,19 @@ func TestTelegramEphemeralStreaming_IsExplicitlyDisabledPerSession(t *testing.T)
 }
 
 func TestTelegramEphemeralBind_RejectsForgedSenderOrChannel(t *testing.T) {
-	channel := newTestChannel(t, &stubCaller{callFn: func(_ context.Context, _ string, _ *ta.RequestData) (*ta.Response, error) {
-		t.Fatal("route binding must not call Telegram")
-		return nil, nil
-	}})
+	channel := newTestChannel(
+		t,
+		&stubCaller{
+			callFn: func(
+				_ context.Context,
+				_ string,
+				_ *ta.RequestData,
+			) (*ta.Response, error) {
+				t.Fatal("route binding must not call Telegram")
+				return nil, nil
+			},
+		},
+	)
 	target := mustRegisterEphemeralTarget(t, channel, -100556, 0, 48, 0, "")
 	inbound := privateOutboundContext(target)
 	inbound.SenderID = "999"
