@@ -255,7 +255,9 @@ func (al *AgentLoop) resolveMemoryReviewProvider(
 		if requestedProvider != "" && providers.NormalizeProvider(protocol) != requestedProvider {
 			continue
 		}
-		if strings.EqualFold(candidate.ModelName, requestedModel) || candidate.Model == requestedModel || modelID == requestedModel {
+		if strings.EqualFold(candidate.ModelName, requestedModel) ||
+			candidate.Model == requestedModel ||
+			modelID == requestedModel {
 			clone := *candidate
 			if clone.Workspace == "" {
 				clone.Workspace = agent.Workspace

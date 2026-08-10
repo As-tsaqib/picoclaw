@@ -116,5 +116,19 @@ jobs:
           src/i18n/locales/en.json
           tests/form-model.test.ts
 
+      - name: Show frontend formatting diff
+        if: failure()
+        run: |
+          pnpm exec prettier --write \
+            package.json \
+            src/components/config/config-page.tsx \
+            src/components/config/config-sections.tsx \
+            src/components/config/form-model.ts \
+            src/i18n/locales/en.json \
+            tests/form-model.test.ts
+          git diff -- \
+            src/components/config/config-sections.tsx \
+            tests/form-model.test.ts
+
       - name: Build frontend
         run: pnpm build

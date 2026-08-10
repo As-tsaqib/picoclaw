@@ -40,11 +40,11 @@ const (
 // reviewer default to enabled; operators should account for the reviewer's
 // additional provider token/API usage.
 type MemoryConfig struct {
-	Enabled            bool                   `json:"enabled" env:"PICOCLAW_MEMORY_ENABLED"`
+	Enabled            bool                   `json:"enabled"                        env:"PICOCLAW_MEMORY_ENABLED"`
 	WorkspaceCharLimit int                    `json:"workspace_char_limit,omitempty" env:"PICOCLAW_MEMORY_WORKSPACE_CHAR_LIMIT"`
-	PerUserCharLimit   int                    `json:"per_user_char_limit,omitempty" env:"PICOCLAW_MEMORY_PER_USER_CHAR_LIMIT"`
-	WriteApproval      bool                   `json:"write_approval,omitempty" env:"PICOCLAW_MEMORY_WRITE_APPROVAL"`
-	Notifications      string                 `json:"notifications,omitempty" env:"PICOCLAW_MEMORY_NOTIFICATIONS"`
+	PerUserCharLimit   int                    `json:"per_user_char_limit,omitempty"  env:"PICOCLAW_MEMORY_PER_USER_CHAR_LIMIT"`
+	WriteApproval      bool                   `json:"write_approval,omitempty"       env:"PICOCLAW_MEMORY_WRITE_APPROVAL"`
+	Notifications      string                 `json:"notifications,omitempty"        env:"PICOCLAW_MEMORY_NOTIFICATIONS"`
 	BackgroundReview   MemoryReviewConfig     `json:"background_review,omitempty"`
 	Recall             MemoryRecallConfig     `json:"recall,omitempty"`
 	Checkpoints        MemoryCheckpointConfig `json:"checkpoints,omitempty"`
@@ -73,10 +73,11 @@ type MemoryRecallConfig struct {
 // MemoryCheckpointConfig controls persistent task state. Checkpoints are
 // session/topic state, not personal semantic memory.
 type MemoryCheckpointConfig struct {
-	Enabled                bool `json:"enabled" env:"PICOCLAW_MEMORY_CHECKPOINTS_ENABLED"`
-	MaxCount               int  `json:"max_count,omitempty" env:"PICOCLAW_MEMORY_CHECKPOINTS_MAX_COUNT"`
-	MaxContextChars        int  `json:"max_context_chars,omitempty" env:"PICOCLAW_MEMORY_CHECKPOINTS_MAX_CONTEXT_CHARS"`
-	CompletedRetentionDays int  `json:"completed_retention_days,omitempty" env:"PICOCLAW_MEMORY_CHECKPOINTS_COMPLETED_RETENTION_DAYS"`
+	Enabled         bool `json:"enabled"                     env:"PICOCLAW_MEMORY_CHECKPOINTS_ENABLED"`
+	MaxCount        int  `json:"max_count,omitempty"         env:"PICOCLAW_MEMORY_CHECKPOINTS_MAX_COUNT"`
+	MaxContextChars int  `json:"max_context_chars,omitempty" env:"PICOCLAW_MEMORY_CHECKPOINTS_MAX_CONTEXT_CHARS"`
+
+	CompletedRetentionDays int `json:"completed_retention_days,omitempty" env:"PICOCLAW_MEMORY_CHECKPOINTS_COMPLETED_RETENTION_DAYS"`
 }
 
 func (c MemoryConfig) EffectiveWorkspaceCharLimit() int {
