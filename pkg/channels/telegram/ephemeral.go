@@ -298,8 +298,8 @@ func (c *TelegramChannel) resolveEphemeralTarget(
 	if target.ChatID != chatID || target.ThreadID != threadID {
 		return nil, fmt.Errorf("private delivery target mismatch")
 	}
-	copy := target
-	return &copy, nil
+	targetCopy := target
+	return &targetCopy, nil
 }
 
 func (c *TelegramChannel) sessionHasEphemeralRoute(sessionKey string) bool {

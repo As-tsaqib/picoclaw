@@ -168,14 +168,15 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	sessionKey := scopeKey
 	if err := al.bindPrivateInboundRoute(msg, sessionKey); err != nil {
 		// Bind only the route capability issued by the Telegram update. If the
-		// channel rejects it, stop this turn before any response can be routed
-		// through a public fallback.
+		// channel rejects it, propagate the error through the verified private
+		// inbound context. Private delivery failures are permanent and never fall
+		// back to a public send.
 		logger.WarnCF("agent", "Private route binding rejected; dropping turn", map[string]any{
 			"channel": msg.Channel,
 			"session": sessionKey,
 			"error":   err.Error(),
 		})
-		return "", nil
+		return "", err
 	}
 
 	// Reset message-tool state for this round so we don't skip publishing due to a previous round.

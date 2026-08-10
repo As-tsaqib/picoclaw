@@ -90,12 +90,22 @@ func TestTelegramEphemeralConfig_Validation(t *testing.T) {
 		},
 		{
 			name:     "invalid command",
-			settings: TelegramSettings{Ephemeral: TelegramEphemeralConfig{Mode: "commands", Commands: []string{"bad-command"}}},
+			settings: TelegramSettings{
+				Ephemeral: TelegramEphemeralConfig{
+					Mode:     "commands",
+					Commands: []string{"bad-command"},
+				},
+			},
 			wantErr:  "ephemeral.commands",
 		},
 		{
 			name:     "duplicate command",
-			settings: TelegramSettings{Ephemeral: TelegramEphemeralConfig{Mode: "commands", Commands: []string{"clear", "/clear"}}},
+			settings: TelegramSettings{
+				Ephemeral: TelegramEphemeralConfig{
+					Mode:     "commands",
+					Commands: []string{"clear", "/clear"},
+				},
+			},
 			wantErr:  "duplicate",
 		},
 	}

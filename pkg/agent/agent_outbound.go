@@ -16,10 +16,6 @@ import (
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
-func (al *AgentLoop) maybePublishError(ctx context.Context, channel, chatID, sessionKey string, err error) bool {
-	return al.maybePublishErrorForInbound(ctx, channel, chatID, sessionKey, nil, err)
-}
-
 func (al *AgentLoop) maybePublishErrorForInbound(
 	ctx context.Context,
 	channel, chatID, sessionKey string,
@@ -38,15 +34,6 @@ func (al *AgentLoop) maybePublishErrorForInbound(
 		formatProcessingError(err),
 	)
 	return true
-}
-
-func (al *AgentLoop) publishResponseOrError(
-	ctx context.Context,
-	channel, chatID, sessionKey string,
-	response string,
-	err error,
-) {
-	al.publishResponseOrErrorForInbound(ctx, channel, chatID, sessionKey, nil, response, err)
 }
 
 func (al *AgentLoop) publishResponseOrErrorForInbound(

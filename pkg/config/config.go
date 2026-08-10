@@ -529,8 +529,8 @@ const (
 // A nil PersonalSessionIsolation value intentionally means true so newly
 // enabled configurations are isolated unless the operator explicitly opts out.
 type TelegramEphemeralConfig struct {
-	Mode                     string   `json:"mode,omitempty"                     yaml:"-" env:"PICOCLAW_CHANNELS_TELEGRAM_EPHEMERAL_MODE"`
-	Commands                 []string `json:"commands,omitempty"                 yaml:"-" env:"PICOCLAW_CHANNELS_TELEGRAM_EPHEMERAL_COMMANDS"`
+	Mode                     string   `json:"mode,omitempty"                       yaml:"-" env:"PICOCLAW_CHANNELS_TELEGRAM_EPHEMERAL_MODE"`
+	Commands                 []string `json:"commands,omitempty"                   yaml:"-" env:"PICOCLAW_CHANNELS_TELEGRAM_EPHEMERAL_COMMANDS"`
 	PersonalSessionIsolation *bool    `json:"personal_session_isolation,omitempty" yaml:"-" env:"PICOCLAW_CHANNELS_TELEGRAM_EPHEMERAL_PERSONAL_SESSION_ISOLATION"`
 }
 

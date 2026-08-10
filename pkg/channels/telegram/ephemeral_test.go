@@ -485,8 +485,26 @@ func TestTelegramEphemeralAuxiliaryEdits_UseDedicatedMethods(t *testing.T) {
 		Media: telego.InputFile{FileID: "synthetic-file-id"},
 	}
 
-	require.NoError(t, channel.EditEphemeralMessageMedia(context.Background(), "-100654", messageID, inputMedia, markup))
-	require.NoError(t, channel.EditEphemeralMessageCaption(context.Background(), "-100654", messageID, "synthetic caption", markup))
+	require.NoError(
+		t,
+		channel.EditEphemeralMessageMedia(
+			context.Background(),
+			"-100654",
+			messageID,
+			inputMedia,
+			markup,
+		),
+	)
+	require.NoError(
+		t,
+		channel.EditEphemeralMessageCaption(
+			context.Background(),
+			"-100654",
+			messageID,
+			"synthetic caption",
+			markup,
+		),
+	)
 	require.NoError(t, channel.EditEphemeralMessageReplyMarkup(context.Background(), "-100654", messageID, markup))
 	require.Len(t, caller.calls, 3)
 	assert.Contains(t, caller.calls[0].URL, "editEphemeralMessageMedia")
