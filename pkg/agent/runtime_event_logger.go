@@ -146,7 +146,7 @@ func (l *runtimeEventLogger) handle(_ context.Context, evt runtimeevents.Event) 
 	}
 
 	fields := runtimeEventLogFields(evt)
-	if l.configSnapshot().IncludePayload && evt.Payload != nil {
+	if l.configSnapshot().IncludePayload && evt.Payload != nil && !runtimeEventIsPrivate(evt) {
 		fields["payload"] = evt.Payload
 	}
 
@@ -200,7 +200,11 @@ func runtimeEventLogFields(evt runtimeevents.Event) map[string]any {
 	appendRuntimeEventScopeFields(fields, evt.Scope)
 	appendRuntimeEventCorrelationFields(fields, evt.Correlation)
 	appendRuntimeEventAttrs(fields, evt.Attrs)
-	appendRuntimeEventPayloadSummary(fields, evt.Payload)
+	if runtimeEventIsPrivate(evt) {
+		fields["private_payload_redacted"] = true
+	} else {
+		appendRuntimeEventPayloadSummary(fields, evt.Payload)
+	}
 	return fields
 }
 

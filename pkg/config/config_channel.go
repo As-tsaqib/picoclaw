@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -754,6 +755,9 @@ func InitChannelList(channels ChannelsConfig) error {
 			if err := validateChannelStreamingConfig(name, target); err != nil {
 				return err
 			}
+			if err := validateTelegramEphemeralConfig(name, target); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -806,6 +810,58 @@ func validateChannelStreamingConfig(channelName string, target any) error {
 	}
 	if streaming.MinGrowthChars < 0 {
 		return fmt.Errorf("channel %q streaming.min_growth_chars must be >= 0", channelName)
+	}
+	return nil
+}
+
+var telegramCommandNamePattern = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
+
+func validateTelegramEphemeralConfig(channelName string, target any) error {
+	settings, ok := target.(*TelegramSettings)
+	if !ok || settings == nil {
+		return nil
+	}
+
+	mode := settings.Ephemeral.EffectiveMode()
+	switch mode {
+	case TelegramEphemeralModeOff, TelegramEphemeralModeCommands, TelegramEphemeralModeAll:
+	default:
+		return fmt.Errorf(
+			"channel %q ephemeral.mode must be one of off, commands, or all",
+			channelName,
+		)
+	}
+	if mode != TelegramEphemeralModeOff && !settings.Ephemeral.PersonalSessionIsolationEnabled() {
+		return fmt.Errorf(
+			"channel %q ephemeral.personal_session_isolation must remain enabled for private group replies",
+			channelName,
+		)
+	}
+	if mode != TelegramEphemeralModeCommands && len(settings.Ephemeral.Commands) > 0 {
+		return fmt.Errorf(
+			"channel %q ephemeral.commands is only valid when ephemeral.mode is commands",
+			channelName,
+		)
+	}
+
+	seen := make(map[string]struct{}, len(settings.Ephemeral.Commands))
+	for _, configured := range settings.Ephemeral.Commands {
+		command := normalizeTelegramEphemeralCommand(configured)
+		if !telegramCommandNamePattern.MatchString(command) {
+			return fmt.Errorf(
+				"channel %q ephemeral.commands contains invalid Telegram command %q",
+				channelName,
+				configured,
+			)
+		}
+		if _, exists := seen[command]; exists {
+			return fmt.Errorf(
+				"channel %q ephemeral.commands contains duplicate command %q",
+				channelName,
+				configured,
+			)
+		}
+		seen[command] = struct{}{}
 	}
 	return nil
 }

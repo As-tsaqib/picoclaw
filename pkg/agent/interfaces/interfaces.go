@@ -54,4 +54,9 @@ type ChannelManager interface {
 	// outboundCtx carries topic/thread info needed for channels that use
 	// scoped tracker keys (e.g., Telegram forum topics); may be nil.
 	DismissToolFeedback(ctx context.Context, channel, chatID string, outboundCtx *bus.InboundContext)
+
+	// BindPrivateRoute associates verified channel metadata with the resolved
+	// session key before an ephemeral turn can produce outbound content.
+	// Implementations must reject unverified or incomplete capabilities.
+	BindPrivateRoute(channel, sessionKey string, inbound bus.InboundContext) error
 }

@@ -40,15 +40,22 @@ func outboundContextFromInbound(
 	return outboundCtx
 }
 
+func turnStateIsPrivate(ts *turnState) bool {
+	return ts != nil && ts.opts.Dispatch.InboundContext != nil &&
+		ts.opts.Dispatch.InboundContext.PrivateResponse
+}
+
 func outboundScopeFromSessionScope(scope *session.SessionScope) *bus.OutboundScope {
 	if scope == nil {
 		return nil
 	}
 	outboundScope := &bus.OutboundScope{
-		Version: scope.Version,
-		AgentID: scope.AgentID,
-		Channel: scope.Channel,
-		Account: scope.Account,
+		Version:           scope.Version,
+		AgentID:           scope.AgentID,
+		Channel:           scope.Channel,
+		Account:           scope.Account,
+		PrivateResponse:   scope.PrivateResponse,
+		PrivateRouteToken: scope.PrivateRouteToken,
 	}
 	if len(scope.Dimensions) > 0 {
 		outboundScope.Dimensions = append([]string(nil), scope.Dimensions...)

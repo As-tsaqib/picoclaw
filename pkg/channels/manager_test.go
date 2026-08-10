@@ -31,6 +31,15 @@ type mockChannel struct {
 	lastPlaceholderID string
 }
 
+type mockPrivateSessionChannel struct {
+	mockChannel
+	privateSessionKey string
+}
+
+func (m *mockPrivateSessionChannel) IsPrivateSession(sessionKey string) bool {
+	return sessionKey != "" && sessionKey == m.privateSessionKey
+}
+
 func (m *mockChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]string, error) {
 	m.sentMessages = append(m.sentMessages, msg)
 	if m.sendFn == nil {
@@ -187,6 +196,19 @@ type mockStreamingChannel struct {
 	streamer        Streamer
 	beginStreamFn   func(context.Context, string) (Streamer, error)
 	resolveChatIDFn func(chatID string, outboundCtx *bus.InboundContext) string
+}
+
+type mockSessionStreamingChannel struct {
+	mockStreamingChannel
+	requestedSessionKey string
+}
+
+func (m *mockSessionStreamingChannel) BeginStreamForSession(
+	ctx context.Context,
+	chatID, sessionKey string,
+) (Streamer, error) {
+	m.requestedSessionKey = sessionKey
+	return m.mockStreamingChannel.BeginStream(ctx, chatID)
 }
 
 func (m *mockStreamingChannel) BeginStream(ctx context.Context, chatID string) (Streamer, error) {
@@ -1896,6 +1918,30 @@ func TestGetStreamer_FinalizeDismissesTrackedToolFeedback(t *testing.T) {
 	}
 }
 
+func TestGetStreamer_PrefersSessionAwareCapability(t *testing.T) {
+	m := newTestManager()
+	ch := &mockSessionStreamingChannel{
+		mockStreamingChannel: mockStreamingChannel{
+			mockMessageEditor: mockMessageEditor{},
+			streamer:          &mockStreamer{},
+		},
+	}
+	m.channels["test"] = ch
+
+	streamer, ok := m.GetStreamer(
+		context.Background(),
+		"test",
+		"synthetic-chat",
+		"synthetic-private-session",
+	)
+	if !ok || streamer == nil {
+		t.Fatal("expected session-aware streamer to be selected")
+	}
+	if ch.requestedSessionKey != "synthetic-private-session" {
+		t.Fatalf("session key = %q, want synthetic-private-session", ch.requestedSessionKey)
+	}
+}
+
 func TestGetStreamer_FinalizeCleansPlaceholderImmediately(t *testing.T) {
 	m := newTestManager()
 	m.RecordPlaceholder("test", "123", "placeholder-1")
@@ -2963,6 +3009,32 @@ func TestPreSendStillWorksWithWrappedTypes(t *testing.T) {
 	}
 }
 
+func TestPreSend_PrivateSessionNeverEditsPublicPlaceholder(t *testing.T) {
+	m := newTestManager()
+	ch := &mockPrivateSessionChannel{
+		mockChannel:       mockChannel{},
+		privateSessionKey: "synthetic-private-session",
+	}
+	m.RecordPlaceholder("telegram", "group-chat", "public-placeholder")
+
+	msg := testOutboundMessage(bus.OutboundMessage{
+		Channel:    "telegram",
+		ChatID:     "group-chat",
+		SessionKey: "synthetic-private-session",
+		Content:    "synthetic private response",
+	})
+	ids, handled := m.preSend(context.Background(), "telegram", msg, ch)
+	if handled || len(ids) != 0 {
+		t.Fatalf("private preSend = (%v, %t), want normal private send path", ids, handled)
+	}
+	if ch.editedMessages != 0 {
+		t.Fatalf("public placeholder edits = %d, want 0", ch.editedMessages)
+	}
+	if _, exists := m.placeholders.Load("telegram:group-chat"); !exists {
+		t.Fatal("private turn consumed a public placeholder")
+	}
+}
+
 // --- Lazy worker creation tests (Step 6) ---
 
 func TestLazyWorkerCreation(t *testing.T) {
@@ -3159,6 +3231,39 @@ func TestSendMessage_NoWorker(t *testing.T) {
 	err := m.SendMessage(context.Background(), msg)
 	if err == nil {
 		t.Fatal("expected error when no worker exists")
+	}
+}
+
+func TestSendMessage_PrivateDeliveryRejectsUnsupportedChannel(t *testing.T) {
+	m := newTestManager()
+	called := false
+	ch := &mockChannel{
+		sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
+			called = true
+			return nil
+		},
+	}
+	m.channels["test"] = ch
+	m.workers["test"] = &channelWorker{
+		ch:      ch,
+		limiter: rate.NewLimiter(rate.Inf, 1),
+	}
+
+	err := m.SendMessage(context.Background(), testOutboundMessage(bus.OutboundMessage{
+		Channel: "test",
+		ChatID:  "group-chat",
+		Context: bus.InboundContext{
+			Channel:         "test",
+			ChatID:          "group-chat",
+			PrivateResponse: true,
+		},
+		Content: "synthetic private content",
+	}))
+	if !errors.Is(err, ErrSendFailed) {
+		t.Fatalf("private unsupported channel error = %v, want ErrSendFailed", err)
+	}
+	if called {
+		t.Fatal("unsupported channel received private content")
 	}
 }
 

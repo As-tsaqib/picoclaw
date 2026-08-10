@@ -11,14 +11,8 @@ import {
 } from "@/api/channels"
 import { type ArrayFieldFlusher } from "@/components/channels/channel-array-list-field"
 import {
-  normalizeAllowFromValues,
-  serializeStringArrayForSubmit,
-} from "@/components/channels/channel-array-utils"
-import {
-  SECRET_FIELD_MAP,
   buildEditConfig,
   getFieldValueForValidation,
-  isSecretField,
 } from "@/components/channels/channel-config-fields"
 import { getChannelDisplayName } from "@/components/channels/channel-display-name"
 import { DiscordForm } from "@/components/channels/channel-forms/discord-form"
@@ -29,6 +23,7 @@ import { SlackForm } from "@/components/channels/channel-forms/slack-form"
 import { TelegramForm } from "@/components/channels/channel-forms/telegram-form"
 import { WecomForm } from "@/components/channels/channel-forms/wecom-form"
 import { WeixinForm } from "@/components/channels/channel-forms/weixin-form"
+import { buildSavePayload } from "@/components/channels/channel-save-payload"
 import { ConfigChangeNotice } from "@/components/config-change-notice"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -46,10 +41,6 @@ function asRecord(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>
   }
   return {}
-}
-
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : ""
 }
 
 function asBool(value: unknown): boolean {
@@ -82,25 +73,6 @@ function setConfigValueByPath(
   return setRecordValueByPath(source, fieldPath.split("."), value)
 }
 
-function serializeGroupTriggerForSubmit(value: unknown): unknown {
-  const groupTrigger = asRecord(value)
-  if (Object.keys(groupTrigger).length === 0) {
-    return value
-  }
-  return {
-    ...groupTrigger,
-    prefixes: serializeStringArrayForSubmit(groupTrigger.prefixes),
-  }
-}
-
-const CHANNEL_COMMON_CONFIG_KEYS = new Set([
-  "allow_from",
-  "group_trigger",
-  "placeholder",
-  "reasoning_channel_id",
-  "typing",
-])
-
 function normalizeConfig(
   channel: SupportedChannel,
   rawConfig: ChannelConfig,
@@ -113,60 +85,6 @@ function normalizeConfig(
     config.use_native = false
   }
   return config
-}
-
-function buildSavePayload(
-  channel: SupportedChannel,
-  editConfig: ChannelConfig,
-  enabled: boolean,
-): ChannelConfig {
-  const payload: ChannelConfig = { enabled, type: channel.config_key }
-  const settings: ChannelConfig = {}
-
-  for (const [key, value] of Object.entries(editConfig)) {
-    if (key.startsWith("_")) continue
-    if (key === "enabled") continue
-    if (CHANNEL_COMMON_CONFIG_KEYS.has(key)) {
-      if (key === "allow_from") {
-        payload[key] = serializeStringArrayForSubmit(
-          normalizeAllowFromValues(value),
-        )
-      } else if (key === "group_trigger") {
-        payload[key] = serializeGroupTriggerForSubmit(value)
-      } else {
-        payload[key] = value
-      }
-      continue
-    }
-    if (isSecretField(key)) continue
-
-    settings[key] = serializeStringArrayForSubmit(value)
-  }
-
-  for (const [secretKey, editKey] of Object.entries(SECRET_FIELD_MAP)) {
-    const incoming = asString(editConfig[editKey])
-    if (incoming !== "") {
-      settings[secretKey] = incoming
-      continue
-    }
-    const existing = asString(editConfig[secretKey]).trim()
-    if (existing !== "") {
-      settings[secretKey] = existing
-    }
-  }
-
-  if (channel.name === "whatsapp_native") {
-    settings.use_native = true
-  }
-  if (channel.name === "whatsapp") {
-    settings.use_native = false
-  }
-
-  if (Object.keys(settings).length > 0) {
-    payload.settings = settings
-  }
-
-  return payload
 }
 
 function isConfigured(
@@ -727,7 +645,9 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
             {renderForm()}
 
             {serverError && (
-              <p className="text-destructive text-sm">{serverError}</p>
+              <p className="text-destructive text-sm" role="alert">
+                {serverError}
+              </p>
             )}
 
             {isDirty && (

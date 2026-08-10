@@ -322,9 +322,10 @@ func (al *AgentLoop) continueWithSteeringMessages(
 	}
 	if channel != "" || chatID != "" {
 		dispatch.InboundContext = &bus.InboundContext{
-			Channel:  channel,
-			ChatID:   chatID,
-			ChatType: inferChatTypeFromSessionScope(scope),
+			Channel:         channel,
+			ChatID:          chatID,
+			ChatType:        inferChatTypeFromSessionScope(scope),
+			PrivateResponse: scope != nil && scope.PrivateResponse,
 		}
 	}
 	return al.runAgentLoop(ctx, agent, processOptions{

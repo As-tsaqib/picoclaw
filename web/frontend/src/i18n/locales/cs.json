@@ -459,6 +459,43 @@
       "refresh": "Obnovit QR",
       "errorGeneric": "Nastala chyba. Zkuste to znovu."
     },
+    "telegram": {
+      "ephemeral": {
+        "title": "Dočasné skupinové odpovědi",
+        "description": "Nastavte skupinové odpovědi viditelné pouze žádajícímu členovi a botovi.",
+        "modeLabel": "Režim",
+        "modeOption": {
+          "off": "Vypnuto",
+          "commands": "Vybrané příkazy",
+          "all": "Všechny skupinové odpovědi"
+        },
+        "modeDescription": {
+          "off": "Všechny odpovědi Telegramu používají běžné chování.",
+          "commands": "Dočasné odpovědi používají pouze vybrané lomítkové příkazy a jejich soukromý tok.",
+          "all": "Všechny způsobilé skupinové odpovědi jsou soukromé pro žádajícího uživatele."
+        },
+        "commandsLabel": "Dočasné příkazy",
+        "commandsDescription": "Přidávejte názvy lomítkových příkazů jednotlivě nebo vložte více názvů oddělených čárkou.",
+        "commandsPlaceholder": "např. help, clear, show",
+        "invalidCommand": "Použijte 1–32 malých písmen, číslic nebo podtržítek. Úvodní lomítko je volitelné.",
+        "emptyCommands": "Prázdný seznam znamená, že dočasné budou všechny registrované příkazy PicoClaw.",
+        "isolationLabel": "Izolace osobní relace",
+        "isolationDescription": "Každý člen skupiny získá samostatnou soukromou relaci PicoClaw.",
+        "isolationLocked": "Při zapnutých dočasných odpovědích je tato volba povinná a uzamčená.",
+        "warning": {
+          "commandsSelected": "Soukromé budou pouze vybrané lomítkové příkazy.",
+          "commandsPublic": "Běžné skupinové zprávy a odpovědi zůstanou veřejné.",
+          "commandsIsolated": "Soukromá historie je izolována pro každého člena skupiny.",
+          "allAdmin": "Běžné skupinové odpovědi mohou vyžadovat, aby byl bot správcem.",
+          "allDelivery": "Telegram doručení nezaručuje, zejména pokud je uživatel offline.",
+          "allVisibility": "Ostatní členové mohou mít dojem, že bot neodpovídá, protože soukromé odpovědi nevidí.",
+          "botApi": "Dočasné odpovědi vyžadují kompatibilitu s Telegram Bot API 10.2.",
+          "streaming": "Soukromé dočasné odpovědi nepoužívají streamování; veřejné odpovědi jej mohou používat dál.",
+          "richTables": "Nativní bohaté tabulky použijí soukromou předformátovanou náhradu.",
+          "failClosed": "Pokud soukromé doručení selže, PicoClaw obsah nikdy znovu neodešle jako veřejnou zprávu."
+        }
+      }
+    },
     "field": {
       "token": "Bot Token",
       "tokenPlaceholder": "Zadejte bot token",

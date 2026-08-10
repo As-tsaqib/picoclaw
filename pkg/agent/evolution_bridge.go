@@ -138,6 +138,9 @@ func (b *evolutionBridge) OnEvent(_ context.Context, evt Event) error {
 	if b == nil || !b.cfg.Enabled || b.runtime == nil {
 		return nil
 	}
+	if turnContextIsPrivate(evt.Context) || turnContextIsPrivate(evt.Meta.turnContext) {
+		return nil
+	}
 
 	switch evt.Kind {
 	case EventKindTurnEnd:
@@ -154,6 +157,9 @@ func (b *evolutionBridge) OnEvent(_ context.Context, evt Event) error {
 
 func (b *evolutionBridge) OnRuntimeEvent(_ context.Context, evt runtimeevents.Event) error {
 	if b == nil || !b.cfg.Enabled || b.runtime == nil || evt.Kind != runtimeevents.KindAgentTurnEnd {
+		return nil
+	}
+	if runtimeEventIsPrivate(evt) {
 		return nil
 	}
 	if b.isCurrent != nil && !b.isCurrent(b) {
@@ -174,6 +180,9 @@ func (b *evolutionBridge) handleRuntimeTurnEnd(evt runtimeevents.Event) bool {
 	if b == nil || !b.cfg.Enabled || b.runtime == nil || evt.Kind != runtimeevents.KindAgentTurnEnd {
 		return false
 	}
+	if runtimeEventIsPrivate(evt) {
+		return false
+	}
 	payload, ok := evt.Payload.(TurnEndPayload)
 	if !ok {
 		return false
@@ -183,6 +192,9 @@ func (b *evolutionBridge) handleRuntimeTurnEnd(evt runtimeevents.Event) bool {
 
 func (b *evolutionBridge) handleTurnEndAsync(meta EventMeta, payload TurnEndPayload) bool {
 	if b == nil || b.runtime == nil {
+		return false
+	}
+	if turnContextIsPrivate(meta.turnContext) {
 		return false
 	}
 

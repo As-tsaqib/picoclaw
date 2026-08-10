@@ -46,19 +46,30 @@ func buildSessionScope(input AllocationInput) SessionScope {
 	inbound := input.Context
 	includeTopicInChatDimension := shouldPreserveTelegramForumIsolation(input)
 	scope := SessionScope{
-		Version: ScopeVersionV1,
-		AgentID: routing.NormalizeAgentID(input.AgentID),
-		Channel: strings.ToLower(strings.TrimSpace(inbound.Channel)),
-		Account: routing.NormalizeAccountID(inbound.Account),
+		Version:           ScopeVersionV1,
+		AgentID:           routing.NormalizeAgentID(input.AgentID),
+		Channel:           strings.ToLower(strings.TrimSpace(inbound.Channel)),
+		Account:           routing.NormalizeAccountID(inbound.Account),
+		PrivateResponse:   inbound.PrivateResponse,
+		PrivateRouteToken: inbound.PrivateRouteToken,
 	}
 	if scope.Channel == "" {
 		scope.Channel = "unknown"
 	}
 
-	dimensions := make([]string, 0, len(input.SessionPolicy.Dimensions))
-	values := make(map[string]string, len(input.SessionPolicy.Dimensions))
+	policyDimensions := append([]string(nil), input.SessionPolicy.Dimensions...)
+	if inbound.PrivateSession {
+		// A personal group session must always be scoped by both the verified
+		// Telegram group and sender, regardless of a custom public-session
+		// policy. Otherwise the same user could share private history across
+		// groups, or two users could share one group history.
+		policyDimensions = ensurePrivateDimension(policyDimensions, "chat")
+		policyDimensions = ensurePrivateDimension(policyDimensions, "sender")
+	}
+	dimensions := make([]string, 0, len(policyDimensions))
+	values := make(map[string]string, len(policyDimensions))
 
-	for _, dimension := range input.SessionPolicy.Dimensions {
+	for _, dimension := range policyDimensions {
 		switch dimension {
 		case "space":
 			if spaceID := strings.TrimSpace(inbound.SpaceID); spaceID != "" {
@@ -91,11 +102,7 @@ func buildSessionScope(input AllocationInput) SessionScope {
 				values["topic"] = "topic:" + strings.ToLower(topicID)
 			}
 		case "sender":
-			senderID := CanonicalSessionIdentityID(
-				inbound.Channel,
-				inbound.SenderID,
-				input.SessionPolicy.IdentityLinks,
-			)
+			senderID := privateOrCanonicalSenderID(input)
 			if senderID == "" {
 				continue
 			}
@@ -137,6 +144,12 @@ func buildLegacySessionAliases(input AllocationInput) []string {
 	if topicID := strings.TrimSpace(inbound.TopicID); topicID != "" {
 		peerID = peerID + "/" + topicID
 	}
+	if inbound.PrivateSession {
+		senderID := privateOrCanonicalSenderID(input)
+		if senderID != "" {
+			peerID = peerID + "/private/" + senderID
+		}
+	}
 	aliases = append(aliases, BuildLegacyPeerAlias(
 		input.AgentID,
 		inbound.Channel,
@@ -145,6 +158,33 @@ func buildLegacySessionAliases(input AllocationInput) []string {
 	))
 
 	return uniqueAliases(aliases)
+}
+
+func privateOrCanonicalSenderID(input AllocationInput) string {
+	if input.Context.PrivateSession {
+		// Identity links are intentionally ignored for private Telegram turns.
+		// The verified platform user ID is the security boundary, even when an
+		// operator has linked multiple public identities to one canonical user.
+		return strings.ToLower(strings.TrimSpace(input.Context.SenderID))
+	}
+	return CanonicalSessionIdentityID(
+		input.Context.Channel,
+		input.Context.SenderID,
+		input.SessionPolicy.IdentityLinks,
+	)
+}
+
+func ensurePrivateDimension(dimensions []string, target string) []string {
+	for i, dimension := range dimensions {
+		if strings.EqualFold(strings.TrimSpace(dimension), target) {
+			// The allocator's switch uses canonical lowercase names. Normalize a
+			// case variant here so a custom policy cannot accidentally omit one of
+			// the mandatory private security dimensions.
+			dimensions[i] = target
+			return dimensions
+		}
+	}
+	return append(dimensions, target)
 }
 
 func shouldPreserveTelegramForumIsolation(input AllocationInput) bool {

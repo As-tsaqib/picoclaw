@@ -461,6 +461,43 @@
       "refresh": "Refresh QR",
       "errorGeneric": "An error occurred. Please try again."
     },
+    "telegram": {
+      "ephemeral": {
+        "title": "Ephemeral Group Replies",
+        "description": "Configure group replies that are visible only to the requesting member and the bot.",
+        "modeLabel": "Mode",
+        "modeOption": {
+          "off": "Off",
+          "commands": "Selected Commands",
+          "all": "All Group Responses"
+        },
+        "modeDescription": {
+          "off": "All Telegram responses use normal behavior.",
+          "commands": "Only selected slash commands and their private interaction flow use ephemeral replies.",
+          "all": "All eligible group responses are private to the requesting user."
+        },
+        "commandsLabel": "Ephemeral Commands",
+        "commandsDescription": "Add slash command names one at a time, or paste multiple comma-separated names.",
+        "commandsPlaceholder": "e.g. help, clear, show",
+        "invalidCommand": "Use 1–32 lowercase letters, numbers, or underscores. A leading slash is optional.",
+        "emptyCommands": "Empty means every registered PicoClaw command will be ephemeral.",
+        "isolationLabel": "Personal Session Isolation",
+        "isolationDescription": "Each group member receives a separate private PicoClaw session.",
+        "isolationLocked": "Required and locked while ephemeral replies are enabled.",
+        "warning": {
+          "commandsSelected": "Only the selected slash commands become private.",
+          "commandsPublic": "Ordinary group messages and responses remain public.",
+          "commandsIsolated": "Private conversation history is isolated for each group member.",
+          "allAdmin": "Ordinary group responses may require the bot to be an administrator.",
+          "allDelivery": "Telegram delivery is not guaranteed, especially while the user is offline.",
+          "allVisibility": "Other members may think the bot is not responding because they cannot see private replies.",
+          "botApi": "Ephemeral replies require Telegram Bot API 10.2 compatibility.",
+          "streaming": "Streaming is not used for private ephemeral responses; public replies may still stream normally.",
+          "richTables": "Native rich tables use a private preformatted fallback.",
+          "failClosed": "If private delivery fails, PicoClaw never retries the content as a public group message."
+        }
+      }
+    },
     "field": {
       "token": "Bot Token",
       "tokenPlaceholder": "Enter bot token",

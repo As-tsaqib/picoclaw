@@ -144,12 +144,20 @@ func (p *Pipeline) CallLLM(
 			"temperature":       ts.agent.Temperature,
 			"system_prompt_len": len(exec.callMessages[0].Content),
 		})
-	logger.DebugCF("agent", "Full LLM request",
-		map[string]any{
-			"iteration":     iteration,
-			"messages_json": formatMessagesForLog(exec.callMessages),
-			"tools_json":    formatToolsForLog(exec.providerToolDefs),
+	if turnStateIsPrivate(ts) {
+		logger.DebugCF("agent", "Private LLM request details redacted", map[string]any{
+			"iteration": iteration,
+			"messages":  len(exec.callMessages),
+			"tools":     len(exec.providerToolDefs),
 		})
+	} else {
+		logger.DebugCF("agent", "Full LLM request",
+			map[string]any{
+				"iteration":     iteration,
+				"messages_json": formatMessagesForLog(exec.callMessages),
+				"tools_json":    formatToolsForLog(exec.providerToolDefs),
+			})
+	}
 
 	// LLM call closure with fallback support
 	callLLM := func(messagesForCall []providers.Message, toolDefsForCall []providers.ToolDefinition) (*providers.LLMResponse, error) {
@@ -533,7 +541,7 @@ func (p *Pipeline) CallLLM(
 			// thought message in CI even though the LLM produced reasoning content.
 			al.publishPicoReasoning(turnCtx, reasoningContent, ts.chatID, ts.sessionKey, exec.llmModelName)
 		}
-	} else {
+	} else if !turnStateIsPrivate(ts) {
 		go al.handleReasoning(
 			turnCtx,
 			reasoningContent,

@@ -39,6 +39,7 @@ func (c *TelegramChannel) RegisterCommands(ctx context.Context, defs []commands.
 		botCommands = append(botCommands, telego.BotCommand{
 			Command:     def.Name,
 			Description: def.Description,
+			IsEphemeral: c.ephemeralConfig().IsCommandEphemeral(def.Name),
 		})
 	}
 

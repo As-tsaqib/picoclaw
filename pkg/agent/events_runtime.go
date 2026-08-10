@@ -24,6 +24,9 @@ func runtimeScopeFromHookMeta(meta HookMeta, eventCtx *TurnContext) runtimeevent
 	inbound := eventCtx.Inbound
 	scope.Channel = inbound.Channel
 	scope.Account = inbound.Account
+	if inbound.PrivateResponse {
+		return scope
+	}
 	scope.ChatID = inbound.ChatID
 	scope.TopicID = inbound.TopicID
 	scope.SpaceID = inbound.SpaceID
@@ -74,15 +77,29 @@ func runtimeSeverityForAgentEvent(kind runtimeevents.Kind, payload any) runtimee
 }
 
 func runtimeAttrsFromHookMeta(meta HookMeta) map[string]any {
-	attrs := make(map[string]any, 2)
+	attrs := make(map[string]any, 3)
 	if meta.Source != "" {
 		attrs["agent_source"] = meta.Source
 	}
 	if meta.Iteration != 0 {
 		attrs["iteration"] = meta.Iteration
 	}
+	if turnContextIsPrivate(meta.turnContext) {
+		attrs[privateRuntimeEventAttr] = true
+	}
 	if len(attrs) == 0 {
 		return nil
 	}
 	return attrs
+}
+
+const privateRuntimeEventAttr = "private_response"
+
+func turnContextIsPrivate(ctx *TurnContext) bool {
+	return ctx != nil && ctx.Inbound != nil && ctx.Inbound.PrivateResponse
+}
+
+func runtimeEventIsPrivate(evt runtimeevents.Event) bool {
+	private, _ := evt.Attrs[privateRuntimeEventAttr].(bool)
+	return private
 }

@@ -1,0 +1,157 @@
+name: Telegram Ephemeral Validation
+
+on:
+  push:
+    branches:
+      - feat/telegram-ephemeral-messages
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telegram-ephemeral-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: Go generation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Run generators
+        run: go generate ./...
+      - name: Verify generated sources are current
+        run: git diff --exit-code
+
+  lint:
+    name: Formatting and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Run generators
+        run: go generate ./...
+      - name: GolangCI-Lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.10.1
+          args: --build-tags=goolm,stdjson
+
+  vulnerability:
+    name: Govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOFLAGS: -tags=goolm,stdjson
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+      - name: Run govulncheck
+        run: govulncheck -C . -format text ./...
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Run generators
+        run: go generate ./...
+      - name: Run unit tests
+        run: go test -tags goolm,stdjson ./...
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run Docker-backed integration suites
+        run: bash ./scripts/run-integration-tests.sh
+
+  build:
+    name: PicoClaw build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Run generators
+        run: go generate ./...
+      - name: Build PicoClaw
+        run: go build -tags goolm,stdjson ./cmd/picoclaw
+
+  frontend:
+    name: Frontend validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: web/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.33.0
+          run_install: false
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/frontend/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check feature formatting
+        run: >-
+          pnpm exec prettier --check
+          package.json
+          vite.config.ts
+          src/components/channels/channel-array-list-field.tsx
+          src/components/channels/channel-config-page.tsx
+          src/components/channels/channel-save-payload.ts
+          src/components/channels/channel-save-payload.test.ts
+          src/components/channels/channel-forms/telegram-ephemeral-config.ts
+          src/components/channels/channel-forms/telegram-ephemeral-config.test.ts
+          src/components/channels/channel-forms/telegram-form.tsx
+          src/components/channels/channel-forms/telegram-form.test.tsx
+          src/i18n/locales/*.json
+          src/test/setup.ts
+      - name: Run ESLint
+        run: pnpm lint
+      - name: Run component and unit tests
+        run: pnpm test
+      - name: Build production dashboard
+        run: pnpm build

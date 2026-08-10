@@ -11,6 +11,12 @@ type SessionScope struct {
 	Account    string            `json:"account"`
 	Dimensions []string          `json:"dimensions"`
 	Values     map[string]string `json:"values"`
+
+	// PrivateResponse is a non-secret, persisted fail-closed marker. It keeps a
+	// resumed or queued turn private even after its session scope is reloaded.
+	// The receiver capability itself remains process-local and is never stored.
+	PrivateResponse   bool   `json:"private_response,omitempty"`
+	PrivateRouteToken string `json:"-"`
 }
 
 // CloneScope returns a deep copy of scope.

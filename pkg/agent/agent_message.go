@@ -27,9 +27,10 @@ func (al *AgentLoop) buildContinuationTarget(msg bus.InboundMessage) (*continuat
 	allocation := al.allocateRouteSession(route, msg)
 
 	return &continuationTarget{
-		SessionKey: resolveScopeKey(allocation.SessionKey, msg.SessionKey),
-		Channel:    msg.Channel,
-		ChatID:     msg.ChatID,
+		SessionKey:     resolveScopeKey(allocation.SessionKey, msg.SessionKey),
+		Channel:        msg.Channel,
+		ChatID:         msg.ChatID,
+		InboundContext: cloneInboundContext(&msg.Context),
 	}, nil
 }
 
@@ -119,7 +120,7 @@ func (al *AgentLoop) prepareInboundMessageForAgent(
 
 	// For audio messages the placeholder was deferred by the channel.
 	// Now that transcription (and optional feedback) is done, send it.
-	if hadAudio && al.channelManager != nil {
+	if hadAudio && !msg.Context.PrivateResponse && al.channelManager != nil {
 		al.channelManager.SendPlaceholder(ctx, msg.Channel, msg.ChatID)
 	}
 
@@ -131,21 +132,29 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 
 	// Add message preview to log (show full content for error messages)
 	var logContent string
-	if strings.Contains(msg.Content, "Error:") || strings.Contains(msg.Content, "error") {
+	if msg.Context.PrivateResponse {
+		logContent = "[private Telegram interaction]"
+	} else if strings.Contains(msg.Content, "Error:") || strings.Contains(msg.Content, "error") {
 		logContent = msg.Content // Full content for errors
 	} else {
 		logContent = utils.Truncate(msg.Content, 80)
 	}
-	logger.InfoCF(
-		"agent",
-		fmt.Sprintf("Processing message from %s:%s: %s", msg.Channel, msg.SenderID, logContent),
-		map[string]any{
+	logMessage := fmt.Sprintf("Processing message from %s:%s: %s", msg.Channel, msg.SenderID, logContent)
+	logFields := map[string]any{
+		"channel":     msg.Channel,
+		"chat_id":     msg.ChatID,
+		"sender_id":   msg.SenderID,
+		"session_key": msg.SessionKey,
+	}
+	if msg.Context.PrivateResponse {
+		logMessage = "Processing private channel interaction"
+		logFields = map[string]any{
 			"channel":     msg.Channel,
-			"chat_id":     msg.ChatID,
-			"sender_id":   msg.SenderID,
+			"content_len": len([]rune(msg.Content)),
 			"session_key": msg.SessionKey,
-		},
-	)
+		}
+	}
+	logger.InfoCF("agent", logMessage, logFields)
 
 	// Route system messages to processSystemMessage
 	if msg.Channel == "system" {
@@ -163,6 +172,18 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	// agent-scoped keys supplied by the caller.
 	scopeKey := resolveScopeKey(allocation.SessionKey, msg.SessionKey)
 	sessionKey := scopeKey
+	if err := al.bindPrivateInboundRoute(msg, sessionKey); err != nil {
+		// Bind only the route capability issued by the Telegram update. If the
+		// channel rejects it, propagate the error through the verified private
+		// inbound context. Private delivery failures are permanent and never fall
+		// back to a public send.
+		logger.WarnCF("agent", "Private route binding rejected; dropping turn", map[string]any{
+			"channel": msg.Channel,
+			"session": sessionKey,
+			"error":   err.Error(),
+		})
+		return "", err
+	}
 
 	// Reset message-tool state for this round so we don't skip publishing due to a previous round.
 	if tool, ok := agent.Tools.Get("message"); ok {
@@ -221,6 +242,13 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	}
 
 	return al.runAgentLoop(ctx, agent, opts)
+}
+
+func (al *AgentLoop) bindPrivateInboundRoute(msg bus.InboundMessage, sessionKey string) error {
+	if !msg.Context.PrivateResponse || al.channelManager == nil {
+		return nil
+	}
+	return al.channelManager.BindPrivateRoute(msg.Channel, sessionKey, msg.Context)
 }
 
 func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.ResolvedRoute, *AgentInstance, error) {

@@ -44,7 +44,10 @@ func (ctx InboundContext) isZero() bool {
 		ctx.ReplyToMessageID == "" &&
 		ctx.ReplyToSenderID == "" &&
 		len(ctx.ReplyHandles) == 0 &&
-		len(ctx.Raw) == 0
+		len(ctx.Raw) == 0 &&
+		!ctx.PrivateResponse &&
+		!ctx.PrivateSession &&
+		ctx.PrivateRouteToken == ""
 }
 
 func normalizeInboundContext(ctx InboundContext) InboundContext {

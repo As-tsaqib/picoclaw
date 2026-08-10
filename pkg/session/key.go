@@ -188,6 +188,13 @@ func CanonicalScopeSignature(scope SessionScope) string {
 		fmt.Sprintf("channel=%s", strings.TrimSpace(strings.ToLower(scope.Channel))),
 		fmt.Sprintf("account=%s", strings.TrimSpace(strings.ToLower(scope.Account))),
 	}
+	if scope.PrivateResponse {
+		// Keep ephemeral history separate from a user's normal public group
+		// history even when the configured public session dimensions happen to
+		// include the sender. The route token itself is intentionally excluded
+		// so the personal private session remains stable across turns.
+		parts = append(parts, "private=ephemeral")
+	}
 	for _, dimension := range scope.Dimensions {
 		dimension = strings.TrimSpace(strings.ToLower(dimension))
 		if dimension == "" {

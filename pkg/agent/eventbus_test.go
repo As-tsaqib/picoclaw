@@ -674,6 +674,105 @@ func TestAgentLoop_EmitsFollowUpQueuedEvent(t *testing.T) {
 	}
 }
 
+func TestAgentLoop_PrivateAsyncFollowUpIsSuppressed(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace:         tmpDir,
+				ModelName:         "test-model",
+				MaxTokens:         4096,
+				MaxToolIterations: 10,
+			},
+		},
+	}
+	provider := &toolCallProvider{
+		toolCalls: []providers.ToolCall{{
+			ID:   "call_private_async_1",
+			Type: "function",
+			Name: "async_followup",
+			Function: &providers.FunctionCall{
+				Name:      "async_followup",
+				Arguments: "{}",
+			},
+			Arguments: map[string]any{},
+		}},
+		finalResp: "async launched",
+	}
+
+	msgBus := bus.NewMessageBus()
+	al := NewAgentLoop(cfg, msgBus, provider)
+	doneCh := make(chan struct{})
+	al.RegisterTool(&asyncFollowUpTool{
+		name:          "async_followup",
+		followUpText:  "synthetic private background result",
+		completionSig: doneCh,
+	})
+	defaultAgent := al.registry.GetDefaultAgent()
+	if defaultAgent == nil {
+		t.Fatal("expected default agent")
+	}
+
+	runtimeCh, closeRuntimeEvents := subscribeRuntimeEventsForTest(
+		t,
+		al,
+		4,
+		runtimeevents.KindAgentFollowUpQueued,
+	)
+	defer closeRuntimeEvents()
+
+	privateScope := &session.SessionScope{
+		Version:           session.ScopeVersionV1,
+		AgentID:           "main",
+		Channel:           "telegram",
+		Dimensions:        []string{"chat", "sender"},
+		Values:            map[string]string{"chat": "group:synthetic", "sender": "42"},
+		PrivateResponse:   true,
+		PrivateRouteToken: "synthetic-private-route",
+	}
+	resp, err := al.runAgentLoop(context.Background(), defaultAgent, processOptions{
+		Dispatch: DispatchRequest{
+			SessionKey: "synthetic-private-session",
+			InboundContext: &bus.InboundContext{
+				Channel:           "telegram",
+				ChatID:            "synthetic-group",
+				ChatType:          "group",
+				SenderID:          "42",
+				PrivateResponse:   true,
+				PrivateSession:    true,
+				PrivateRouteToken: "synthetic-private-route",
+			},
+			SessionScope: privateScope,
+			UserMessage:  "run synthetic private async tool",
+		},
+		DefaultResponse: defaultResponse,
+		EnableSummary:   false,
+		SendResponse:    false,
+	})
+	if err != nil {
+		t.Fatalf("runAgentLoop failed: %v", err)
+	}
+	if resp != "async launched" {
+		t.Fatalf("response = %q, want async launched", resp)
+	}
+
+	select {
+	case <-doneCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for private async tool completion")
+	}
+	select {
+	case evt := <-runtimeCh:
+		t.Fatalf("private async follow-up event was queued: %+v", evt)
+	case <-time.After(100 * time.Millisecond):
+	}
+	select {
+	case inbound := <-msgBus.InboundChan():
+		t.Fatalf("private async result entered public system path: %+v", inbound.Context)
+	default:
+	}
+}
+
 func receiveRuntimeEvent(t *testing.T, ch <-chan runtimeevents.Event) runtimeevents.Event {
 	t.Helper()
 

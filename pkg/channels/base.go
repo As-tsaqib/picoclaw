@@ -318,7 +318,9 @@ func (c *BaseChannel) HandleMessageWithContext(
 	// If streaming actually activates, preSend will skip the placeholder edit (streamActive map)
 	// and the typing stop will still be called. This avoids the problem of compile-time interface
 	// checks incorrectly skipping indicators when streaming may not work at runtime.
-	if c.owner != nil && c.placeholderRecorder != nil {
+	// Private-response channels must not emit public typing, reaction, or
+	// placeholder side effects before their verified private route is resolved.
+	if !inboundCtx.PrivateResponse && c.owner != nil && c.placeholderRecorder != nil {
 		// Typing
 		if tc, ok := c.owner.(TypingCapable); ok {
 			if stop, err := tc.StartTyping(ctx, deliveryChatID); err == nil {
@@ -345,11 +347,14 @@ func (c *BaseChannel) HandleMessageWithContext(
 	}
 
 	if err := c.bus.PublishInbound(ctx, msg); err != nil {
-		logger.ErrorCF("channels", "Failed to publish inbound message", map[string]any{
-			"channel": c.name,
-			"chat_id": deliveryChatID,
-			"error":   err.Error(),
-		})
+		logFields := map[string]any{"channel": c.name}
+		if inboundCtx.PrivateResponse {
+			logFields["error"] = "private inbound publish failed"
+		} else {
+			logFields["chat_id"] = deliveryChatID
+			logFields["error"] = err.Error()
+		}
+		logger.ErrorCF("channels", "Failed to publish inbound message", logFields)
 		return err
 	}
 	return nil

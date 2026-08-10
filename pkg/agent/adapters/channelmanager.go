@@ -49,3 +49,10 @@ func (a *channelManagerAdapter) DismissToolFeedback(
 ) {
 	a.inner.DismissToolFeedback(ctx, channel, chatID, outboundCtx)
 }
+
+func (a *channelManagerAdapter) BindPrivateRoute(
+	channel, sessionKey string,
+	inbound bus.InboundContext,
+) error {
+	return a.inner.BindPrivateRoute(channel, sessionKey, inbound)
+}

@@ -182,6 +182,10 @@ func registerSharedTools(
 					tools.ToolSessionKey(ctx),
 					tools.ToolSessionScope(ctx),
 				)
+				if outboundScope != nil {
+					outboundCtx.PrivateResponse = outboundScope.PrivateResponse
+					outboundCtx.PrivateRouteToken = outboundScope.PrivateRouteToken
+				}
 				if len(mediaParts) > 0 {
 					outboundMedia := bus.OutboundMediaMessage{
 						Channel:    channel,
@@ -221,6 +225,9 @@ func registerSharedTools(
 		if cfg.Tools.IsToolEnabled("reaction") {
 			reactionTool := tools.NewReactionTool()
 			reactionTool.SetReactionCallback(func(ctx context.Context, channel, chatID, messageID string) error {
+				if scope := tools.ToolSessionScope(ctx); scope != nil && scope.PrivateResponse {
+					return fmt.Errorf("reactions are disabled for private interactions")
+				}
 				if al.channelManager == nil {
 					return fmt.Errorf("channel manager not configured")
 				}
