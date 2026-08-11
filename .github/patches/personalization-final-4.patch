@@ -1,0 +1,240 @@
+--- a/pkg/agent/memory_prompt.go
++++ b/pkg/agent/memory_prompt.go
+@@ -56,7 +56,6 @@
+ 			profile, profileErr := ts.agent.CuratedMemory.CompileUserProfile(caller, memory.UserProfileOptions{
+ 				MaxChars:      cfg.Memory.Profile.EffectiveMaxChars(),
+ 				MinConfidence: cfg.Memory.Profile.EffectiveMinConfidence(),
+-				Now:           time.Now().UTC(),
+ 			})
+ 			if profileErr != nil {
+ 				logger.WarnCF("memory", "Failed to compile current-user profile", safeMemoryLogFields(profileErr))
+@@ -194,34 +193,88 @@
+ 	if len(entries) == 0 || maxChars <= 0 {
+ 		return "", nil
+ 	}
++	prefix := fmt.Sprintf(
++		"# Curated %s memory (bounded data only)\n\n<curated_memory target=%q>\n",
++		target,
++		target,
++	)
++	suffix := "\n</curated_memory>"
++	render := func(views []curatedPromptEntry) (string, bool) {
++		data, err := json.Marshal(views)
++		if err != nil {
++			return "", false
++		}
++		return prefix + string(data) + suffix, true
++	}
++	if empty, ok := render(nil); !ok || utf8.RuneCountInString(empty) > maxChars {
++		return "", nil
++	}
++
+ 	views := make([]curatedPromptEntry, 0, len(entries))
+ 	usedIDs := make([]string, 0, len(entries))
+-	used := 0
+ 	for _, entry := range entries {
+-		remaining := maxChars - used
+-		if remaining <= 0 {
+-			break
+-		}
+-		content := truncatePromptRunes(entry.Content, remaining)
+-		used += utf8.RuneCountInString(content)
+-		views = append(views, curatedPromptEntry{
+-			ID: entry.ID, Content: content, Type: entry.EffectiveType(), Status: entry.EffectiveStatus(),
++		view := curatedPromptEntry{
++			ID: entry.ID, Content: strings.TrimSpace(entry.Content), Type: entry.EffectiveType(), Status: entry.EffectiveStatus(),
+ 			Pinned: entry.Pinned, Confidence: entry.EffectiveConfidence(), EvidenceKind: entry.EffectiveEvidenceKind(),
+ 			PreferenceKey: entry.PreferenceKey, PreferenceValue: entry.PreferenceValue, Supersedes: entry.Supersedes,
+ 			Source: entry.Provenance.Source, UpdatedAt: entry.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+-		})
++		}
++		trial := append(append([]curatedPromptEntry(nil), views...), view)
++		if rendered, ok := render(trial); ok && utf8.RuneCountInString(rendered) <= maxChars {
++			views = trial
++			usedIDs = append(usedIDs, entry.ID)
++			continue
++		}
++
++		// Metadata counts toward the prompt budget too. Find the longest content
++		// prefix that makes the exact serialized section fit; if metadata alone
++		// cannot fit, skip this entry instead of silently exceeding the budget.
++		contentRunes := []rune(view.Content)
++		low, high, best := 0, len(contentRunes), -1
++		for low <= high {
++			mid := low + (high-low)/2
++			candidate := view
++			if mid == 0 {
++				candidate.Content = ""
++			} else if mid < len(contentRunes) {
++				if mid == 1 {
++					candidate.Content = "…"
++				} else {
++					candidate.Content = string(contentRunes[:mid-1]) + "…"
++				}
++			}
++			candidateViews := append(append([]curatedPromptEntry(nil), views...), candidate)
++			rendered, ok := render(candidateViews)
++			if ok && utf8.RuneCountInString(rendered) <= maxChars {
++				best = mid
++				low = mid + 1
++			} else {
++				high = mid - 1
++			}
++		}
++		if best < 0 {
++			continue
++		}
++		if best == 0 {
++			view.Content = ""
++		} else if best < len(contentRunes) {
++			if best == 1 {
++				view.Content = "…"
++			} else {
++				view.Content = string(contentRunes[:best-1]) + "…"
++			}
++		}
++		views = append(views, view)
+ 		usedIDs = append(usedIDs, entry.ID)
+ 	}
+-	data, err := json.Marshal(views)
+-	if err != nil || len(views) == 0 {
++	if len(views) == 0 {
+ 		return "", nil
+ 	}
+-	return fmt.Sprintf(
+-		"# Curated %s memory (bounded data only)\n\n<curated_memory target=%q>\n%s\n</curated_memory>",
+-		target,
+-		target,
+-		data,
+-	), usedIDs
++	content, ok := render(views)
++	if !ok || utf8.RuneCountInString(content) > maxChars {
++		return "", nil
++	}
++	return content, usedIDs
+ }
+ 
+ func retrieveCuratedPromptEntries(
+--- a/pkg/agent/memory_reviewer_test.go
++++ b/pkg/agent/memory_reviewer_test.go
+@@ -402,3 +402,120 @@
+ 		t.Fatal("high-salience reviewer did not stop")
+ 	}
+ }
++
++func TestUnreviewedRecallSurvivesStoreRestartAndCanBeCurated(t *testing.T) {
++	root := t.TempDir()
++	curatedPath := filepath.Join(root, "curated")
++	recallPath := filepath.Join(root, "recall")
++	reviewPath := filepath.Join(root, "review")
++	caller := memory.CallerScope{
++		AgentID: "main", UserKey: "telegram:user-restart", Channel: "telegram", Account: "personal",
++		SessionKey: "restart-session", SessionRef: "restart-session-ref",
++	}
++	curated, err := memory.NewCuratedStore(curatedPath, memory.CuratedStoreOptions{
++		WorkspaceCharLimit: 10_000, PerUserCharLimit: 10_000,
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	recall, err := memory.NewRecallStore(recallPath, 100)
++	if err != nil {
++		t.Fatal(err)
++	}
++	reviewState, err := memory.NewReviewStateStore(reviewPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err := recall.AppendDeliveredTurn(
++		caller, "turn-before-restart", "I prefer detailed explanations", "Understood.", "assistant-message",
++	); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := reviewState.RecordSuccessfulTurn(caller); err != nil {
++		t.Fatal(err)
++	}
++	_ = curated // created before restart to prove all stores can be reopened together
++
++	// Recreate all stores as a process restart would. The unreviewed transcript
++	// and cursor must remain durable even without a shutdown-time model call.
++	reopenedCurated, err := memory.NewCuratedStore(curatedPath, memory.CuratedStoreOptions{
++		WorkspaceCharLimit: 10_000, PerUserCharLimit: 10_000,
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	reopenedRecall, err := memory.NewRecallStore(recallPath, 100)
++	if err != nil {
++		t.Fatal(err)
++	}
++	reopenedReview, err := memory.NewReviewStateStore(reviewPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	records, latest, err := reopenedRecall.RecordsAfter(caller, 0, 4_000)
++	if err != nil || len(records) != 2 || latest == 0 {
++		t.Fatalf("unreviewed recall did not survive restart: %#v latest=%d err=%v", records, latest, err)
++	}
++	cursor, err := reopenedReview.Get(caller)
++	if err != nil || cursor.SuccessfulTurns != 1 || cursor.LastReviewedSequence != 0 {
++		t.Fatalf("review cursor did not survive restart: %#v err=%v", cursor, err)
++	}
++
++	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
++		"action": "add", "target": "current_user",
++		"content":          "Prefers detailed explanations",
++		"type":             memory.CuratedTypeCommunicationPreference,
++		"evidence_kind":    memory.CuratedEvidenceExplicit,
++		"preference_key":   "communication.verbosity",
++		"preference_value": "detailed",
++	}}
++	cfg := config.DefaultConfig()
++	cfg.Memory.Enabled = true
++	cfg.Memory.BackgroundReview.Enabled = true
++	cfg.Memory.BackgroundReview.MaxIterations = 2
++	al := &AgentLoop{cfg: cfg}
++	agent := &AgentInstance{
++		ID: "main", Model: "review-test", Provider: provider,
++		Tools: tools.NewToolRegistry(), CuratedMemory: reopenedCurated, RecallMemory: reopenedRecall,
++		MemoryReviewState: reopenedReview, memoryReviewer: &memoryReviewController{},
++	}
++	if err := al.runMemoryReview(context.Background(), agent, caller); err != nil {
++		t.Fatalf("post-restart review failed: %v", err)
++	}
++	entries, err := reopenedCurated.List(memory.CuratedTargetCurrentUser, caller)
++	if err != nil || len(entries) != 1 || entries[0].PreferenceValue != "detailed" {
++		t.Fatalf("post-restart curator did not preserve preference: %#v err=%v", entries, err)
++	}
++}
++
++func TestRepeatedReviewWithoutNewRecallDoesNotDuplicateMemory(t *testing.T) {
++	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
++		"action": "add", "target": "current_user",
++		"content":          "Prefers concise progress updates",
++		"type":             memory.CuratedTypeCommunicationPreference,
++		"evidence_kind":    memory.CuratedEvidenceExplicit,
++		"preference_key":   "communication.verbosity",
++		"preference_value": "concise",
++	}}
++	al, agent, caller := newMemoryReviewerHarness(t, provider)
++	caller.GroupID, caller.ChatID, caller.TopicID, caller.TopicName = "", "user-a", "", ""
++	appendReviewerTurn(t, agent, caller, "turn-once")
++	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
++		t.Fatal(err)
++	}
++	if err := al.runMemoryReview(context.Background(), agent, caller); err != nil {
++		t.Fatal(err)
++	}
++	callsAfterFirst, _, _ := provider.snapshot()
++	if err := al.runMemoryReview(context.Background(), agent, caller); err != nil {
++		t.Fatal(err)
++	}
++	callsAfterSecond, _, _ := provider.snapshot()
++	if callsAfterSecond != callsAfterFirst {
++		t.Fatalf("reviewer called provider without new recall: first=%d second=%d", callsAfterFirst, callsAfterSecond)
++	}
++	entries, err := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
++	if err != nil || len(entries) != 1 {
++		t.Fatalf("repeat review duplicated memory: %#v err=%v", entries, err)
++	}
++}
