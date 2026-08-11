@@ -1,0 +1,41 @@
+name: Personalization Race Debug
+
+on:
+  push:
+    branches:
+      - fix/personalized-memory-v2-audit
+
+permissions:
+  contents: read
+
+jobs:
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Generate
+        run: go generate ./...
+
+      - name: Focused race tests
+        id: race
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -count=1 -tags goolm,stdjson ./pkg/memory ./pkg/agent ./pkg/tools 2>&1 | tee race.log
+
+      - name: Upload race log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: personalization-race-log
+          path: race.log
+          if-no-files-found: error
