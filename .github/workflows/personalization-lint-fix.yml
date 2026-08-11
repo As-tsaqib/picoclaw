@@ -30,37 +30,51 @@ jobs:
         run: |
           from pathlib import Path
 
+          def fix_following_fatal(lines, index, var):
+              if index + 1 >= len(lines):
+                  return
+              if "t.Fatal(err)" in lines[index + 1]:
+                  lines[index + 1] = lines[index + 1].replace("t.Fatal(err)", f"t.Fatal({var})", 1)
+              elif 't.Fatalf("post-restart review failed: %v", err)' in lines[index + 1]:
+                  lines[index + 1] = lines[index + 1].replace(
+                      't.Fatalf("post-restart review failed: %v", err)',
+                      f't.Fatalf("post-restart review failed: %v", {var})',
+                      1,
+                  )
+
           def rewrite_if_errors(path, starters):
               p = Path(path)
               lines = p.read_text().splitlines(keepends=True)
               active = None
               changed = 0
-              for i, line in enumerate(lines):
+              for i, original in enumerate(lines):
+                  line = original
                   if active is None:
+                      matched = False
                       for needle, replacement, var in starters:
-                          if needle in line:
-                              lines[i] = line.replace(needle, replacement, 1)
+                          if needle not in line:
+                              continue
+                          line = line.replace(needle, replacement, 1)
+                          changed += 1
+                          matched = True
+                          if "err != nil {" in line:
+                              line = line.replace("err != nil {", f"{var} != nil {{", 1)
+                              fix_following_fatal(lines, i, var)
+                          else:
                               active = var
-                              changed += 1
-                              break
-                      continue
-                  if "err != nil {" in line:
+                          lines[i] = line
+                          break
+                      if matched:
+                          continue
+                  if active is not None and "err != nil {" in line:
                       lines[i] = line.replace("err != nil {", f"{active} != nil {{", 1)
-                      if i + 1 < len(lines) and "t.Fatal(err)" in lines[i + 1]:
-                          lines[i + 1] = lines[i + 1].replace("t.Fatal(err)", f"t.Fatal({active})", 1)
-                      elif i + 1 < len(lines) and 't.Fatalf("post-restart review failed: %v", err)' in lines[i + 1]:
-                          lines[i + 1] = lines[i + 1].replace(
-                              't.Fatalf("post-restart review failed: %v", err)',
-                              f't.Fatalf("post-restart review failed: %v", {active})',
-                              1,
-                          )
+                      fix_following_fatal(lines, i, active)
                       active = None
               if active is not None:
                   raise SystemExit(f"unterminated lint-only if rewrite in {path}: {active}")
               if changed == 0:
                   raise SystemExit(f"no lint-only declarations rewritten in {path}")
               p.write_text("".join(lines))
-              return changed
 
           rewrite_if_errors(
               "pkg/agent/context_manager_test.go",
@@ -71,15 +85,11 @@ jobs:
           )
           rewrite_if_errors(
               "cmd/membench/personalization.go",
-              [
-                  ("if _, err := store.Retrieve(", "if _, retrieveErr := store.Retrieve(", "retrieveErr"),
-              ],
+              [("if _, err := store.Retrieve(", "if _, retrieveErr := store.Retrieve(", "retrieveErr")],
           )
           rewrite_if_errors(
               "pkg/memory/user_profile_test.go",
-              [
-                  ("if _, err := store.ApplyBatch(", "if _, applyErr := store.ApplyBatch(", "applyErr"),
-              ],
+              [("if _, err := store.ApplyBatch(", "if _, applyErr := store.ApplyBatch(", "applyErr")],
           )
           rewrite_if_errors(
               "pkg/agent/memory_reviewer_test.go",
