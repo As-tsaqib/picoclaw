@@ -71,7 +71,12 @@ PicoClaw stores data in your configured workspace (default: `~/.picoclaw/workspa
 
 ### Agent Self-Evolution
 
-The `evolution` block controls PicoClaw's self-evolution runtime. When enabled, the agent records completed turns as learning records. In higher modes it can group repeated successful patterns, generate skill drafts, and optionally apply accepted drafts into workspace skills.
+The `evolution` block controls PicoClaw's procedural self-improvement runtime.
+Only successfully delivered, eligible main-agent turns become scrubbed learning
+records. In higher modes it can group repeated successful patterns, generate
+reviewable skill drafts, and apply safe approved drafts to workspace skills.
+Evolution is separate from personal memory and cannot read private user stores
+or modify `AGENT.md`, `SOUL.md`, or `USER.md`.
 
 ```json
 {
@@ -82,22 +87,40 @@ The `evolution` block controls PicoClaw's self-evolution runtime. When enabled, 
     "min_task_count": 2,
     "min_success_ratio": 0.7,
     "cold_path_trigger": "after_turn",
-    "cold_path_times": []
+    "cold_path_times": [],
+    "apply_policy": "approval_required",
+    "private_data_scrubbing": true,
+    "draft_timeout_seconds": 45,
+    "max_evidence_records": 50,
+    "max_draft_chars": 12000,
+    "rollback_retention": 10
   }
 }
 ```
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `enabled` | `false` | Enables learning-record capture for completed agent turns. Heartbeat turns are ignored. |
-| `mode` | `observe` | `observe` records data only. `draft` can generate candidate skill drafts. `apply` can apply accepted drafts to workspace skills. |
+| `enabled` | `false` | Enables delivered-turn procedural observation. Failed, interrupted, internal, reviewer, cron, heartbeat, and subagent turns are ignored. |
+| `mode` | `observe` | `observe` records scrubbed data only. `draft` can generate candidates. `apply` permits skill writes subject to the apply policy and safety checks. |
 | `state_dir` | `""` | Optional directory for evolution state. Leave empty to use the default under the workspace. |
 | `min_task_count` | `2` | Minimum related task records required before a pattern is eligible for draft generation. |
 | `min_success_ratio` | `0.7` | Minimum success ratio for a task cluster. Use a value greater than `0` and up to `1`. |
-| `cold_path_trigger` | `after_turn` | Runs draft generation `after_turn`, on a `scheduled` cadence, or disables automatic cold-path runs when set to `manual`. There is no user-facing manual trigger yet. Applies only in `draft` and `apply` modes. |
+| `cold_path_trigger` | `after_turn` | Runs draft generation `after_turn`, on a `scheduled` cadence, or only from the authenticated dashboard when set to `manual`. Applies only in `draft` and `apply` modes. |
 | `cold_path_times` | `[]` | Scheduled run times used when `cold_path_trigger` is `scheduled`, written as `HH:MM` strings. |
+| `apply_policy` | `approval_required` | Requires authenticated approve and apply actions. `automatic` is an explicit high-risk option and is never selected implicitly. |
+| `private_data_scrubbing` | `true` | Mandatory while evolution is enabled; removes detected secrets, personal identifiers, injection-shaped text, and unsafe controls before storage. |
+| `draft_timeout_seconds` | `45` | Maximum time for one draft-generation/review operation, from `1` through `300`. |
+| `max_evidence_records` | `50` | Maximum bounded evidence set used by a cold-path run, from `2` through `500`. |
+| `max_draft_chars` | `12000` | Maximum candidate size, from `1` through `50000` characters. |
+| `rollback_retention` | `10` | Number of rollback snapshots retained, from `1` through `100`. |
 
-Use `observe` first if you want to inspect learning records without generating skill changes. Use `draft` when you want PicoClaw to prepare reviewable improvements. Use `apply` only when you are comfortable letting accepted drafts update workspace skills.
+Use `observe` first if you want local evidence capture without generation. Use
+`draft` for reviewable improvements. Before using `apply`, inspect bounded
+evidence and diffs in the authenticated dashboard and retain
+`approval_required`. Pattern judging and draft generation may make additional
+model/API calls and consume extra tokens. See
+[Agent Self-Evolution](../architecture/agent-self-evolution.md) for the safety,
+quarantine, audit, version, and rollback flow.
 
 ### Request Context Policy
 

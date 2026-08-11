@@ -1,98 +1,243 @@
 # Memory & Recall
 
-PicoClaw has several kinds of persistent context. They solve different problems and intentionally do not collapse every conversation into one global history.
+PicoClaw keeps several kinds of context separate. This separation is a privacy
+and correctness boundary, not only an implementation detail.
 
-| Layer | Purpose | Scope |
+| Layer | Answers | Scope and ownership |
 | --- | --- | --- |
-| Session history | Recent messages in the current conversation | One allocated session/topic |
-| Session summary | Compressed older context for the same session | One allocated session/topic |
-| Curated memory | Selective durable facts and preferences | Workspace or trusted canonical user |
-| Task checkpoints | Resumable lesson, debugging, research, coding, or setup state | One allocated session/topic |
-| Skills/evolution | Reusable procedural instructions | Agent/workspace; not personal semantic memory |
+| `AGENT.md` and `SOUL.md` | Who the agent is and how it behaves | Stable, administrator-controlled personality; memory and evolution never edit these files |
+| Session history | What was said recently | One allocated session or Telegram topic |
+| Session summary | What older context in this session means | The same session or topic only |
+| Curated memory | Which selective facts remain useful | Non-personal workspace facts or one trusted canonical user |
+| Task checkpoints | Where temporary work stopped | One session or topic; never a user profile |
+| Skills and evolution | How a repeatable procedure should be performed | Agent/workspace procedural knowledge; never personal semantic memory |
 
-The existing `workspace/memory/MEMORY.md` and recent daily notes still enter the prompt as manual workspace context. Structured curated memory is stored separately below `workspace/memory/structured/` and never overwrites or migrates `MEMORY.md`. `USER.md` remains workspace-wide static context; it is not a private per-user profile.
+`USER.md` remains workspace-wide static context and is not a private profile.
+The existing `workspace/memory/MEMORY.md` and recent daily notes continue to
+enter prompts as manual workspace context. Structured memory lives separately
+under `workspace/memory/structured/` and does not rewrite or migrate those
+legacy files.
 
-## Defaults and API cost
+## Defaults and model cost
 
-Curated memory and the bounded background curator are enabled by default. The curator reviews newly delivered turns every 10 successful user turns unless configured otherwise.
+Curated memory and the bounded background curator are enabled by default. The
+curator runs after every 10 successfully delivered eligible user turns unless
+configured otherwise.
 
-> Background reviews make additional model requests and therefore consume additional provider tokens/API quota. They run asynchronously after delivery, but enabling them can increase cost.
+> Background review makes additional model requests and consumes additional
+> provider tokens/API quota. It is asynchronous and cannot delay the main
+> response, but it can increase cost. Set
+> `memory.background_review.enabled` to `false` to disable scheduled reviews.
 
-The reviewer has a timeout and a small iteration limit. It can call only `memory_manage`; shell, filesystem, web, MCP, session recall, checkpoints, subagents, and unrelated tools are unavailable. Reviewer prompts and outputs are not written to normal session history, and a reviewer cannot recursively start another review.
+The counter and review cursor survive restarts. Failed, canceled, interrupted,
+internal, reviewer, subagent, cron, heartbeat, and no-history turns do not
+advance the review. Only messages newer than the last successful cursor are
+reviewed. A new live turn cancels an in-flight review, and at most one curator
+runs for an agent at a time.
 
-Set `memory.background_review.enabled` to `false` to avoid those extra requests. An explicit `/memory review` still starts one bounded review when curated memory is available.
+The reviewer receives a compact transcript snapshot, a timeout, and a small
+iteration limit. Its registry contains only `memory_manage`; shell, file, web,
+MCP, recall, checkpoint, subagent, and evolution tools are unavailable. Its
+prompt and output never enter ordinary session history, and it cannot trigger
+itself recursively.
 
-## What curated memory stores
+## Typed curated memory
 
-Workspace memory is for non-personal facts that apply to the agent or project, including project conventions, environment details, build policy, stable tool quirks, and reliable workflow rules. It may be used by other sessions/topics handled by the same agent workspace.
+Structured entries have a stable ID, compact content, provenance, creation and
+update timestamps, and these lifecycle fields:
 
-Current-user memory is for stable information about the trusted sender, including communication preferences, name, timezone, role, explicit corrections, and persistent workflow preferences. The user scope comes from channel/account/sender identity and configured canonical identity links. A model cannot supply an arbitrary user ID.
+- `type`: `identity`, `communication_preference`, `workflow_preference`,
+  `correction`, `environment`, `project_fact`, `relationship`,
+  `episodic_fact`, or `other`;
+- `status`: `active`, `superseded`, or `archived`;
+- `pinned`: whether a compact fact is eligible regardless of the current query;
+- `confidence` from greater than zero through one;
+- `supersedes` for an explicit correction;
+- optional verification, usage, archive, and expiry timestamps.
 
-PicoClaw rejects exact normalized duplicates and content shaped like credentials, secrets, prompt injection, hidden controls, or forged memory delimiters. Do not save:
+Old structured entries without these fields still load. They behave as active
+`other` entries with full effective confidence, and a read does not rewrite the
+store merely to add defaults.
 
-- API keys, passwords, cookies, tokens, or other credentials;
-- raw logs, large tool output, whole conversations, or temporary paths/errors;
-- unverified assumptions or instructions copied from untrusted external content;
-- task progress that belongs in a checkpoint.
+Workspace memory is for non-personal facts shared by sessions in the same
+agent workspace, such as project conventions, environment details, build
+policy, stable tool quirks, and reliable workflow rules. Private identities,
+preferences, relationships, and episodic user facts are rejected from this
+scope.
 
-Entries have stable IDs, timestamps, and compact provenance. Writes are atomic, concurrency-safe, capacity-limited, and stored with owner-only permissions. Memory is rendered into prompts as bounded, explicitly delimited data rather than higher-priority instructions.
+Current-user memory contains a trusted sender's stable identity, preferences,
+corrections, and personal workflow choices. The user key is derived in backend
+code from channel, account, sender identity, and configured canonical identity
+links. Neither model tools nor dashboard requests can select an arbitrary user
+ID, agent ID, workspace, session key, or memory path.
 
-## Telegram topics and cross-topic recall
+Different users and agents use different structured stores. The same canonical
+Telegram user can use their profile across topics, while another Telegram user
+cannot read or mutate it. Private current-user listing and mutation commands
+are available only in a safe direct chat. Shared chats expose at most safe
+workspace information and redacted status.
 
-Telegram forum topics remain separate sessions by default. PicoClaw does not merge full histories from multiple topics. Each prompt contains only the current topic history and summary, bounded workspace/current-user memory, and active or suspended checkpoints for that topic.
+### What can be remembered
 
-The `session_recall` tool performs bounded lexical search only when the user explicitly refers to another topic or earlier discussion, for example “yang kita bahas sebelumnya”, “di topic OAuth kemarin”, or “remember the error from the other topic”. Results contain a short excerpt and available topic, session, timestamp, role, and message provenance.
+The agent should save compact durable information after an explicit “remember
+this” request, a stable preference, a correction, a durable environment fact,
+a project convention, or a reliable workflow lesson.
 
-Backend code enforces one of these modes:
+It must not save:
 
-- `isolated`: never search transcripts outside the current session. This is the privacy-safe default.
-- `user_recall`: search other sessions belonging to the same canonical user, channel, and account. This is recommended for a personal Telegram bot.
-- `group_recall`: search topics in the same channel/account/group, including excerpts from other participants. Use this only when everyone expects topic content to be shared across that group.
+- API keys, passwords, tokens, cookies, credentials, or private keys;
+- raw logs, large tool output, entire conversations, or temporary paths/errors;
+- unverified assumptions or instructions copied from untrusted external data;
+- task progress, which belongs in a checkpoint;
+- private user facts in workspace memory.
 
-No tool argument can override the trusted user, group, agent, or session boundary. Different users cannot read each other's private curated memory, and structured stores are separated by agent even when agents share a workspace.
+Secret patterns, prompt-injection shapes, forged delimiters, invalid UTF-8,
+hidden bidirectional text, and unsafe controls are rejected before persistence.
+Exact normalized duplicates are rejected. Likely conflicts are returned as
+non-destructive hints so the caller can clarify, archive, replace, or explicitly
+supersede the old entry. Batch consolidation is atomic, capacity-limited, and
+written with owner-only permissions.
+
+## Query-aware retrieval
+
+Normal prompt assembly does not inject the whole structured store. For each
+turn, PicoClaw retrieves:
+
+1. bounded active pinned entries;
+2. top query-relevant active workspace entries;
+3. top query-relevant active current-user entries;
+4. only the configured recent fallback when the message has no meaningful
+   lexical tokens.
+
+Workspace and current-user result/character budgets remain separate. Archived,
+superseded, and expired entries are excluded. Scoring is deterministic for a
+fixed timestamp and combines normalized token overlap, BM25-like rarity,
+prefix/trigram similarity, type and correction priority, confidence, recency,
+previous delivered use, and a stale penalty. It works locally without a vector
+database or embedding provider and supports ordinary Indonesian and English
+tokens.
+
+`last_used_at` is staged during prompt assembly and written only after the
+authoritative final response is delivered. Failed or partial delivery leaves it
+unchanged. Setting `memory.retrieval.enabled` to `false` retains the older
+bounded active-entry behavior.
+
+All rendered memory is bounded JSON-like reference data inside explicit
+delimiters. It is not a system instruction, and instruction-shaped text inside
+it must be ignored.
+
+## Telegram topics and transcript recall
+
+Telegram forum topics remain separate sessions. PicoClaw never merges their
+complete histories. A normal prompt contains the current topic history and
+summary, bounded structured memory, and current-topic checkpoints only.
+
+The `session_recall` tool performs bounded lexical search after an explicit
+cross-topic reference such as “yang kita bahas sebelumnya”, “di topic OAuth
+kemarin”, or “remember the error from the other topic”. Results include a short
+matching excerpt and available topic ID/name, opaque session reference,
+timestamp, role, and message provenance.
+
+Backend code enforces the configured mode:
+
+- `isolated`: no transcript search outside the current session. This is the
+  privacy-safe generic default.
+- `user_recall`: other sessions owned by the same canonical user in the same
+  channel/account. This is recommended for a personal Telegram bot.
+- `group_recall`: other topics in the same channel/account/group, which can
+  expose excerpts written by other participants. Enable it only when everyone
+  expects topic content to be shared across that group.
+
+Tool arguments cannot widen these boundaries or request an arbitrary session.
+Results and scanned record counts are bounded, and irrelevant topic content is
+not inserted automatically.
 
 ## Task checkpoints
 
-Enable checkpoints for work that may span multiple turns: lessons, debugging, coding, research, or multi-step setup. A checkpoint records a stable ID, kind, objective, status, completed items, current and next step, compact important context, the last delivered assistant excerpt, topic/session provenance, and timestamps.
+Enable checkpoints for lessons, debugging, coding, research, or multi-step
+setup that may span turns. A checkpoint records a stable ID, kind, title and
+objective, status, completed items, current and next step, compact important
+context, the last delivered assistant excerpt/reference, topic provenance, and
+timestamps.
 
-Checkpoint updates made during an agent turn are staged in memory and committed only after the final response is successfully delivered. A canceled, interrupted, or failed response does not falsely advance progress. An unrelated question does not replace an active checkpoint.
+Mutations made during a turn are staged and committed only after successful
+final delivery. Planned but unsent content does not advance progress. An
+unrelated question does not destroy an active checkpoint. When asked to
+continue, the agent considers only active/suspended checkpoints in the current
+topic, resumes the most recent relevant one from `next_step`, and asks for
+clarification when several are equally plausible. Completed or archived work
+is not resumed accidentally.
 
-When asked to continue, the agent resolves active/suspended checkpoints in the current topic and continues from `next_step`. It asks for clarification when multiple checkpoints are equally plausible. Completed or archived checkpoints are not resumed accidentally.
+`/clear` and its `/reset` alias clear the current session history/summary,
+current-session recall records, and its reviewer cursor. They discard
+undelivered checkpoint mutations but preserve committed checkpoints, curated
+memory, `MEMORY.md`, daily notes, and every unrelated session/topic. Starting
+or switching Telegram topics selects a separate session and deletes nothing.
 
-`/clear` and its `/reset` alias clear current session history/summary, the current session's recall excerpts, and its reviewer cursor. They discard undelivered checkpoint mutations but preserve committed checkpoints, workspace memory, current-user memory, `MEMORY.md`, daily notes, and other sessions. Starting or switching to another Telegram topic creates/selects another isolated session and does not delete any of these layers.
+## Approval and notifications
 
-## Commands
+`memory.approval_mode` supports:
 
-Curated-memory controls:
+- `off`: allowed interactive and background writes apply immediately;
+- `background_only`: curator writes are staged, while an explicit interactive
+  remember request can apply immediately;
+- `all_writes`: curator and model-initiated interactive writes are staged.
+
+Authenticated dashboard administration applies its requested workspace
+operation directly. For compatibility, legacy `write_approval: false` maps to
+`off`, `true` maps to `background_only`, and an explicit `approval_mode` wins.
+Existing config files are not rewritten merely because this enum exists.
+
+Notification modes are `off`, `on` (`💾 Memory updated`), and `verbose`. Verbose
+notifications contain at most a compact defense-in-depth redacted preview;
+private shared-chat operations never reveal their content.
+
+## Commands and dashboard
+
+Memory commands are:
 
 - `/memory status`
 - `/memory list`
-- `/memory forget <id>`
+- `/memory search QUERY`
+- `/memory edit ID CONTENT`
+- `/memory pin ID`
+- `/memory unpin ID`
+- `/memory archive ID`
+- `/memory restore ID`
+- `/memory forget ID`
 - `/memory pending`
-- `/memory approve <id|all>`
-- `/memory reject <id|all>`
+- `/memory approve ID_OR_ALL`
+- `/memory reject ID_OR_ALL`
 - `/memory review`
 
-Checkpoint controls:
+Checkpoint commands are:
 
 - `/checkpoint list`
-- `/checkpoint resume <id>`
-- `/checkpoint forget <id>`
+- `/checkpoint resume ID`
+- `/checkpoint forget ID`
 
-When `write_approval` is enabled, background mutations are staged. Immediate user/agent writes still apply directly. Notification modes are `off`, `on` (`💾 Memory updated`), and `verbose` (a compact redacted preview). Private current-user previews, status counts, and pending-change details are suppressed in shared chats; use a direct chat for private list/approval controls.
+The authenticated dashboard's **Memory & Recall** configuration section exposes
+review, approval, notification, capacity, retrieval, lifecycle, recall, and
+checkpoint controls. Its management card lists only non-personal workspace
+entries, including type/status/pin/provenance, search and lifecycle actions,
+character use, reviewer status, and bounded redacted pending diffs. It does not
+enumerate private user stores; manage those through trusted direct-chat
+commands.
 
 ## Personal Telegram-bot preset
 
-This preset enables curated memory, checkpoints, same-user recall across Telegram topics, a review every 10 delivered turns, and simple notifications. Blank reviewer provider/model values follow the main model.
+Blank reviewer provider/model values follow the main model. This preset keeps
+background changes reviewable, enables same-user recall across topics, and
+creates evolution drafts without applying them automatically:
 
 ```json
 {
   "memory": {
     "enabled": true,
+    "approval_mode": "background_only",
+    "notifications": "on",
     "workspace_char_limit": 12000,
     "per_user_char_limit": 8000,
-    "write_approval": false,
-    "notifications": "on",
     "background_review": {
       "enabled": true,
       "interval": 10,
@@ -101,11 +246,18 @@ This preset enables curated memory, checkpoints, same-user recall across Telegra
       "timeout_seconds": 30,
       "max_iterations": 2
     },
+    "retrieval": {
+      "enabled": true,
+      "engine": "hybrid_lexical",
+      "max_workspace_results": 6,
+      "max_user_results": 6,
+      "max_total_chars": 4000,
+      "pinned_char_budget": 1200
+    },
     "recall": {
       "mode": "user_recall",
       "max_results": 5,
-      "max_chars": 4000,
-      "max_records": 2000
+      "max_chars": 4000
     },
     "checkpoints": {
       "enabled": true,
@@ -113,12 +265,32 @@ This preset enables curated memory, checkpoints, same-user recall across Telegra
       "max_context_chars": 2000,
       "completed_retention_days": 90
     }
+  },
+  "evolution": {
+    "enabled": true,
+    "mode": "draft",
+    "min_task_count": 3,
+    "min_success_ratio": 0.8,
+    "cold_path_trigger": "after_turn",
+    "apply_policy": "approval_required",
+    "private_data_scrubbing": true
   }
 }
 ```
 
-The same settings are available in the dashboard under **Memory & Recall**. The dashboard warns when background review is active and when `group_recall` is selected.
+Both background memory review and evolution draft generation make extra model
+calls. Monitor provider usage before enabling them on high-volume agents.
 
-## Limitations
+## Limitations and troubleshooting
 
-Memory is selective. Lexical search may miss paraphrases, and a curator may decide that nothing is durable enough to save. Capacity limits, transcript retention, failures, model judgment, and explicit deletion all affect recall. PicoClaw cannot guarantee perfect memory, and curated memory should not be used as a credential store, audit log, or authoritative database.
+Memory is selective, and lexical retrieval can miss paraphrases. A curator can
+correctly decide that nothing is durable enough to save. Capacity, retention,
+model judgment, failed reviews, and explicit deletion also affect recall;
+PicoClaw cannot guarantee perfect memory.
+
+Use `/memory status` and the dashboard reviewer cursor when reviews appear
+stalled. Check configured provider/model availability and logs for category-only
+errors; PicoClaw deliberately does not log memory content or provider errors
+that could include transcripts. Use `/memory pending` when approval mode is
+active, and prefer `user_recall` over `group_recall` unless group-wide sharing
+is intentional.

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/curated-memory-recall
+      - feat/contextual-memory-evolution
   workflow_dispatch: {}
 
 permissions:
@@ -38,8 +39,8 @@ jobs:
       - name: Build PicoClaw
         run: go build ./cmd/picoclaw
 
-  memory-race:
-    name: Memory race tests
+  memory-evolution-race:
+    name: Memory and evolution race tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -55,6 +56,9 @@ jobs:
           go test -race ./pkg/memory
           go test -race ./pkg/agent -run '^(Test.*(Memory|Checkpoint|Recall).*)$'
           go test -race ./pkg/tools -run '^(Test.*(Memory|Checkpoint|Recall).*)$'
+          go test -race ./pkg/evolution
+          go test -race ./pkg/agent -run '^(Test.*Evolution.*)$'
+          go test -race ./web/backend/api -run '^(Test.*(Memory|Evolution).*)$'
 
   static-analysis:
     name: Go static analysis
@@ -113,6 +117,7 @@ jobs:
           src/components/config/config-page.tsx
           src/components/config/config-sections.tsx
           src/components/config/form-model.ts
+          src/components/config/memory-evolution-management.tsx
           src/i18n/locales/en.json
           tests/form-model.test.ts
 

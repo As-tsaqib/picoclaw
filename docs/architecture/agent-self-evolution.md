@@ -1,47 +1,219 @@
 # Agent Self-Evolution
 
-Agent self-evolution lets PicoClaw learn from completed turns and turn repeated successful behavior into skill improvements. The runtime is controlled by the top-level `evolution` config block.
+Agent self-evolution is PicoClaw's procedural learning layer. It observes
+successfully delivered work, looks for repeated successful procedures, and can
+turn those procedures into reviewable workspace-skill changes. It is separate
+from session history, curated personal memory, checkpoints, and the agent's
+personality files.
 
-## Flow
+Evolution is disabled by default. Enabling it without specifying a mode selects
+`observe`; automatic skill application is never enabled implicitly.
 
-The hot path runs at the end of an agent turn. When `evolution.enabled` is true, it records a learning record with the turn summary, success state, used skills, tool executions, and session/workspace metadata. Heartbeat turns are skipped.
+## Data boundaries
 
-The cold path groups related task records, checks the configured success threshold, and prepares skill drafts for patterns that have enough evidence. Drafts can target new skills or append/replace/merge existing workspace skills.
+The layers have deliberately different purposes:
 
-The apply path validates generated `SKILL.md` content before writing. Invalid drafts are rejected before a skill directory or file is created.
+| Layer | Purpose | Model-writable through evolution |
+| --- | --- | --- |
+| `AGENT.md` / `SOUL.md` | Agent identity, personality, and high-priority behavior | No |
+| `USER.md` | Workspace-wide static context | No |
+| Curated workspace/current-user memory | Durable facts and personalization | No |
+| Checkpoints | Resumable progress for a lesson or multi-step task | No |
+| Evolution records and skills | Reusable, non-personal procedures | Yes, subject to mode and safety policy |
 
-## Safety Considerations
+Evolution may learn reliable tool ordering, repository workflows, debugging
+procedures, repeatable setup steps, and other stable operational lessons. It
+must not learn names, account identifiers, locations, time zones, roles,
+relationships, communication preferences, credentials, raw private
+conversations, or data copied from current-user memory.
 
-Evolution creates a persistent feedback loop: user input can become a task record, task records can be clustered into an LLM-generated draft, and an accepted draft can become `SKILL.md` content that is loaded into future agent prompts. Treat generated skill content as prompt-sensitive material, especially in `apply` mode.
+The evolution runtime does not enumerate or query private per-user memory
+stores. Before procedural evidence is persisted, it removes secret-like
+values, personal identifiers, prompt-injection-shaped text, forbidden
+personality/private-memory paths, invalid UTF-8, bidirectional controls, and
+other control characters. Findings are stored as categories rather than the
+rejected value. This is defense in depth, not a guarantee that every possible
+secret or identifying phrase can be recognized.
 
-The current local scanner is a narrow guardrail, not a complete safety boundary. It rejects structurally invalid drafts and a small set of obvious secret-like substrings, but it does not reliably detect prompt injection, unsafe instructions, or every form of sensitive data. Use `observe` or `draft` when human review is required before skill changes reach disk.
+## Delivery-gated observation
 
-In `apply` mode, accepted drafts can update workspace skills automatically. Existing skills are backed up before replacement, but recovery is manual: an operator must restore the desired backup if an applied skill should be rolled back.
+The agent stages an evolution observation while a normal main-agent turn is in
+progress. It commits that observation only after the authoritative delivery
+path confirms that the final response was delivered successfully. Failed or
+interrupted responses cannot become positive procedural evidence, and planned
+but undelivered content is not recorded.
 
-## Modes
+Heartbeat, cron, reviewer, subagent, internal/system, no-history, and other
+private runtime events are excluded. Curator and evolution work also carry a
+suppression marker, so they cannot recursively create observations or trigger
+another learner run. Pending delivery-gated observations are transferred when
+the agent runtime reloads rather than being falsely finalized.
+
+Persisted session provenance is a bounded hash reference, not a raw session
+key. User goals, final-output excerpts, and tool-error summaries are scrubbed
+and length-limited before they enter the evolution store.
+
+## Observe, draft, and apply
+
+The pipeline has three explicit stages:
+
+1. **Observe** records scrubbed task evidence after successful delivery.
+2. **Draft** clusters repeated evidence, applies the configured evidence
+   threshold, recalls relevant workspace skills, and asks the configured model
+   for a bounded candidate change.
+3. **Apply** re-verifies evidence and safety, writes the approved skill change,
+   records a version and audit event, and retains rollback data.
+
+The configured mode controls how far the automatic pipeline may proceed:
 
 | Mode | Behavior |
-|------|----------|
-| `observe` | Record learning data only. No cold-path draft generation runs automatically. |
-| `draft` | Record learning data and generate candidate skill drafts when the cold path runs. |
-| `apply` | Generate drafts and allow accepted drafts to update workspace skills. |
+| --- | --- |
+| `observe` | Store eligible procedural observations only. |
+| `draft` | Create reviewable candidates when the cold path runs; never write a skill. |
+| `apply` | Permit skill writes, subject to `apply_policy` and all safety checks. |
 
-When `evolution.enabled` is false, `mode` is treated as disabled at runtime.
+`apply_policy` defaults to `approval_required`. In that policy, a candidate
+must be explicitly approved and then explicitly applied from the authenticated
+dashboard. `automatic` is available only as an explicit high-risk
+configuration: eligible safe candidates in `apply` mode may be written without
+human approval. It should be used only in a controlled workspace with trusted
+inputs and reliable backups.
 
-## Cold Path Trigger
+## Evidence and draft safety
 
-`cold_path_trigger` only matters in `draft` and `apply` modes.
+A single task is never enough to produce an applicable skill change.
+`min_task_count` must be at least 2, and `min_success_ratio` defines the minimum
+verified success ratio for a pattern. The cold path bounds the evidence set
+with `max_evidence_records`; approval and apply recalculate the metrics from
+the stored workspace-scoped task and pattern records rather than trusting
+model-provided counts.
 
-| Trigger | Behavior |
-|---------|----------|
-| `after_turn` | Run the cold path after eligible turns. |
-| `scheduled` | Run the cold path at configured `cold_path_times`. |
-| `manual` | Do not run automatically. There is no user-facing Web/API/CLI trigger yet; code can still invoke `Runtime.RunColdPathOnce`. |
+Before a draft can be approved or applied, PicoClaw checks:
 
-`cold_path_times` uses `HH:MM` strings and is ignored unless the trigger is `scheduled`.
+- target skill name and workspace path safety;
+- supported change kind and valid `SKILL.md` schema/frontmatter;
+- maximum draft size;
+- secret, personal-data, injection, and control-character patterns;
+- forbidden personality and private-memory paths;
+- declared tool and skill-policy constraints;
+- source evidence count and success ratio.
 
-## State
+Unsafe candidates are quarantined and cannot be applied. The dashboard exposes
+bounded findings, evidence metadata, and a bounded before/after diff; it does
+not expose raw private transcripts. Applying a draft re-runs the checks, even
+if the draft was previously approved.
 
-By default, evolution state is stored under the workspace. `state_dir` can redirect that state to another directory. The state includes learning records, clustered pattern records, drafts, and skill profiles.
+## Cold-path triggers and model cost
 
-For user-facing configuration fields, see the [Configuration Guide](../guides/configuration.md#agent-self-evolution).
+Draft generation is the cold path and applies only in `draft` or `apply` mode.
+
+| `cold_path_trigger` | Behavior |
+| --- | --- |
+| `after_turn` | Run after each eligible delivered turn. |
+| `scheduled` | Run at the configured `cold_path_times` (`HH:MM`). |
+| `manual` | Run only when requested from the authenticated dashboard. |
+
+Observation itself is local and lightweight. Pattern judging, clustering, and
+draft generation may call a model, so `draft` and `apply` can consume
+additional API tokens and incur provider cost. `after_turn` is the most eager
+option; `scheduled` or `manual` is easier to budget. Each draft generation and
+manual review is timeout-bounded, and evidence and draft sizes are capped.
+
+Background curated-memory review is a separate model consumer. Enabling both
+features incurs both kinds of API usage.
+
+## Dashboard control plane
+
+The configuration dashboard provides evolution settings and an authenticated
+management surface for:
+
+- status, last observation, and bounded record/draft counts;
+- a bounded manual cold-path review;
+- draft list, details, evidence summary, findings, and diff preview;
+- candidate approval or rejection;
+- applying an approved draft while in `apply` mode;
+- skill version history and rollback.
+
+All management routes use the existing launcher-dashboard authentication and
+derive the workspace from the server's active configuration. Requests cannot
+select an arbitrary workspace, session, user store, or filesystem path. IDs,
+skill names, query parameters, request sizes, and JSON fields are validated by
+the backend.
+
+There are intentionally no mutating `/evolution` chat commands. PicoClaw does
+not currently have a trusted, channel-independent owner/admin authorization
+primitive suitable for those commands; exposing approval, apply, or rollback
+to arbitrary chat participants would be unsafe. Use the authenticated
+dashboard instead.
+
+## Versions, audit, and rollback
+
+Before applying a change, PicoClaw snapshots the prior skill state, including
+the "skill did not exist" baseline for a newly created skill. Successful
+approve, reject, quarantine, apply, and rollback operations create bounded
+audit records. Skill profiles retain version history according to
+`rollback_retention`.
+
+Rollback validates the requested skill and stored snapshot before restoring
+it. Rolling back a newly created skill to its absent baseline removes the
+generated skill while keeping version and audit metadata. Rollback is an
+administrator action and does not itself generate new learning evidence.
+
+Evolution state lives under `workspace/state/evolution` by default. `state_dir`
+may override that location. The state includes task and pattern records,
+drafts, profiles, version snapshots, backups, and an audit log. Files containing
+evidence or control state use private permissions; generated workspace skills
+retain the repository's normal skill-file permissions.
+
+## Recommended starting point
+
+Start with reviewable drafts and stronger-than-minimum evidence:
+
+```json
+{
+  "evolution": {
+    "enabled": true,
+    "mode": "draft",
+    "apply_policy": "approval_required",
+    "private_data_scrubbing": true,
+    "min_task_count": 3,
+    "min_success_ratio": 0.8,
+    "cold_path_trigger": "after_turn",
+    "draft_timeout_seconds": 45,
+    "max_evidence_records": 50,
+    "max_draft_chars": 12000,
+    "rollback_retention": 10
+  }
+}
+```
+
+Review multiple drafts and their evidence before moving to `apply`. Keep
+`approval_required` unless the operational environment explicitly accepts the
+risk of autonomous skill mutation.
+
+## Troubleshooting and limitations
+
+- **No observations appear:** confirm evolution is enabled and the turn was a
+  normal main-agent turn whose final response was delivered successfully.
+- **No draft appears:** `observe` never drafts; in other modes, confirm the
+  trigger ran and enough successful, related evidence meets both thresholds.
+- **A draft is quarantined:** inspect the category-only findings and bounded
+  preview. Correct the source procedure or create a clean candidate; a
+  quarantined draft cannot be applied.
+- **Apply is unavailable:** the effective mode must be `apply`, the draft must
+  be approved under the normal policy, and its evidence and safety checks must
+  still pass.
+- **A generated skill regresses:** use the dashboard version history to restore
+  the previous snapshot.
+- **Costs are higher than expected:** prefer `manual` or a restrained
+  `scheduled` cold path and review provider usage alongside the independent
+  memory-curator setting.
+
+Heuristic clustering and model-generated drafts cannot guarantee improvement.
+The local scrubber cannot identify every private fact or adversarial
+instruction, and rollback retention is finite. Keep workspace backups, inspect
+previews, and treat automatic apply as an expert-only option.
+
+For configuration fields and the combined memory/evolution preset, see the
+[Configuration Guide](../guides/configuration.md#agent-self-evolution) and the
+[Curated Memory Guide](../guides/curated-memory.md).
