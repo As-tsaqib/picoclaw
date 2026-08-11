@@ -29,18 +29,14 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          import re
 
           def fix_following_fatal(lines, index, var):
               if index + 1 >= len(lines):
                   return
-              if "t.Fatal(err)" in lines[index + 1]:
-                  lines[index + 1] = lines[index + 1].replace("t.Fatal(err)", f"t.Fatal({var})", 1)
-              elif 't.Fatalf("post-restart review failed: %v", err)' in lines[index + 1]:
-                  lines[index + 1] = lines[index + 1].replace(
-                      't.Fatalf("post-restart review failed: %v", err)',
-                      f't.Fatalf("post-restart review failed: %v", {var})',
-                      1,
-                  )
+              next_line = lines[index + 1]
+              if "t.Fatal" in next_line and re.search(r"\berr\b", next_line):
+                  lines[index + 1] = re.sub(r"\berr\b", var, next_line)
 
           def rewrite_if_errors(path, starters):
               p = Path(path)
