@@ -286,31 +286,73 @@ func (c EvolutionConfig) Validate() error {
 	if trigger == "scheduled" {
 		times := c.EffectiveColdPathTimes()
 		if len(times) == 0 {
-			validationErrors = append(validationErrors, "evolution.cold_path_times must contain at least one HH:MM value when scheduled")
+			validationErrors = append(
+				validationErrors,
+				"evolution.cold_path_times must contain at least one HH:MM value when scheduled",
+			)
 		}
 		for _, value := range times {
 			if !validEvolutionScheduleTime(value) {
-				validationErrors = append(validationErrors, fmt.Sprintf("evolution.cold_path_times contains invalid HH:MM value %q", value))
+				validationErrors = append(
+					validationErrors,
+					fmt.Sprintf(
+						"evolution.cold_path_times contains invalid HH:MM value %q",
+						value,
+					),
+				)
 			}
 		}
 	}
 	if c.MinTaskCount != 0 && (c.MinTaskCount < 2 || c.MinTaskCount > MaxEvolutionEvidenceRecords) {
-		validationErrors = append(validationErrors, fmt.Sprintf("evolution.min_task_count must be between 2 and %d", MaxEvolutionEvidenceRecords))
+		validationErrors = append(
+			validationErrors,
+			fmt.Sprintf(
+				"evolution.min_task_count must be between 2 and %d",
+				MaxEvolutionEvidenceRecords,
+			),
+		)
 	}
 	if c.MinSuccessRatio != 0 && (c.MinSuccessRatio < 0 || c.MinSuccessRatio > 1) {
-		validationErrors = append(validationErrors, "evolution.min_success_ratio must be greater than 0 and at most 1")
+		validationErrors = append(
+			validationErrors,
+			"evolution.min_success_ratio must be greater than 0 and at most 1",
+		)
 	}
 	if c.DraftTimeoutSeconds != 0 && (c.DraftTimeoutSeconds < 1 || c.DraftTimeoutSeconds > MaxEvolutionDraftTimeout) {
-		validationErrors = append(validationErrors, fmt.Sprintf("evolution.draft_timeout_seconds must be between 1 and %d", MaxEvolutionDraftTimeout))
+		validationErrors = append(
+			validationErrors,
+			fmt.Sprintf(
+				"evolution.draft_timeout_seconds must be between 1 and %d",
+				MaxEvolutionDraftTimeout,
+			),
+		)
 	}
 	if c.MaxEvidenceRecords != 0 && (c.MaxEvidenceRecords < 2 || c.MaxEvidenceRecords > MaxEvolutionEvidenceRecords) {
-		validationErrors = append(validationErrors, fmt.Sprintf("evolution.max_evidence_records must be between 2 and %d", MaxEvolutionEvidenceRecords))
+		validationErrors = append(
+			validationErrors,
+			fmt.Sprintf(
+				"evolution.max_evidence_records must be between 2 and %d",
+				MaxEvolutionEvidenceRecords,
+			),
+		)
 	}
 	if c.MaxDraftChars != 0 && (c.MaxDraftChars < 1 || c.MaxDraftChars > MaxEvolutionDraftChars) {
-		validationErrors = append(validationErrors, fmt.Sprintf("evolution.max_draft_chars must be between 1 and %d", MaxEvolutionDraftChars))
+		validationErrors = append(
+			validationErrors,
+			fmt.Sprintf(
+				"evolution.max_draft_chars must be between 1 and %d",
+				MaxEvolutionDraftChars,
+			),
+		)
 	}
 	if c.RollbackRetention != 0 && (c.RollbackRetention < 1 || c.RollbackRetention > MaxEvolutionRollbackKeep) {
-		validationErrors = append(validationErrors, fmt.Sprintf("evolution.rollback_retention must be between 1 and %d", MaxEvolutionRollbackKeep))
+		validationErrors = append(
+			validationErrors,
+			fmt.Sprintf(
+				"evolution.rollback_retention must be between 1 and %d",
+				MaxEvolutionRollbackKeep,
+			),
+		)
 	}
 	if len(validationErrors) == 0 {
 		return nil
@@ -325,7 +367,8 @@ func validEvolutionScheduleTime(value string) bool {
 	}
 	hour, hourErr := strconv.Atoi(value[:2])
 	minute, minuteErr := strconv.Atoi(value[3:])
-	return hourErr == nil && minuteErr == nil && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
+	return hourErr == nil && minuteErr == nil &&
+		hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
 }
 
 // IsolationConfig controls subprocess isolation for commands started by PicoClaw.

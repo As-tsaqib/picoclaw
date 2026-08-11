@@ -320,7 +320,13 @@ func TestEvolutionManagementAPIPreviewApproveApplyVersionsRejectAndRollback(t *t
 		t.Fatalf("versions status=%d body=%s", versions.Code, versions.Body.String())
 	}
 
-	reject := managementRequest(t, harness.mux, http.MethodPost, "/api/evolution/drafts/draft-api-reject/reject", "{}")
+	reject := managementRequest(
+		t,
+		harness.mux,
+		http.MethodPost,
+		"/api/evolution/drafts/draft-api-reject/reject",
+		"{}",
+	)
 	if reject.Code != http.StatusOK || !strings.Contains(reject.Body.String(), `"status":"rejected"`) {
 		t.Fatalf("reject status=%d body=%s", reject.Code, reject.Body.String())
 	}
@@ -335,7 +341,8 @@ func TestEvolutionManagementAPIPreviewApproveApplyVersionsRejectAndRollback(t *t
 	if rollback.Code != http.StatusOK {
 		t.Fatalf("rollback status=%d body=%s", rollback.Code, rollback.Body.String())
 	}
-	if _, err := os.Stat(filepath.Join(harness.workspace, "skills", "remote-validation", "SKILL.md")); !os.IsNotExist(err) {
-		t.Fatalf("new skill should be absent after baseline rollback: %v", err)
+	skillPath := filepath.Join(harness.workspace, "skills", "remote-validation", "SKILL.md")
+	if _, statErr := os.Stat(skillPath); !os.IsNotExist(statErr) {
+		t.Fatalf("new skill should be absent after baseline rollback: %v", statErr)
 	}
 }

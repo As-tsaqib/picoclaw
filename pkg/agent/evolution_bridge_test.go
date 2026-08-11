@@ -1276,8 +1276,12 @@ func TestAgentLoop_ReloadTransferredEvolutionTurnStillRequiresSuccessfulDelivery
 			Enabled: true, Mode: "observe", PrivateDataScrubbing: true,
 		},
 	}
-	if err := al.ReloadProviderAndConfig(context.Background(), &simpleMockProvider{response: "ok"}, reloadCfg); err != nil {
-		t.Fatalf("ReloadProviderAndConfig: %v", err)
+	if reloadErr := al.ReloadProviderAndConfig(
+		context.Background(),
+		&simpleMockProvider{response: "ok"},
+		reloadCfg,
+	); reloadErr != nil {
+		t.Fatalf("ReloadProviderAndConfig: %v", reloadErr)
 	}
 	if al.currentEvolutionBridge().AcknowledgeTurn("turn-failed-after-reload", false) {
 		t.Fatal("failed delivery started evolution capture after reload")
@@ -1325,8 +1329,12 @@ func TestAgentLoop_ReloadProviderAndConfig_RebuildsEvolutionBridge(t *testing.T)
 		},
 	}
 
-	if err := al.ReloadProviderAndConfig(context.Background(), &mockProvider{}, reloadCfg); err != nil {
-		t.Fatalf("ReloadProviderAndConfig failed: %v", err)
+	if reloadErr := al.ReloadProviderAndConfig(
+		context.Background(),
+		&mockProvider{},
+		reloadCfg,
+	); reloadErr != nil {
+		t.Fatalf("ReloadProviderAndConfig failed: %v", reloadErr)
 	}
 
 	if al.evolution == nil {
@@ -1336,7 +1344,11 @@ func TestAgentLoop_ReloadProviderAndConfig_RebuildsEvolutionBridge(t *testing.T)
 		t.Fatal("expected evolution bridge to be rebuilt on reload")
 	}
 	if al.evolution.cfg.Enabled != reloadCfg.Evolution.Enabled {
-		t.Fatalf("reloaded evolution enabled = %v, want %v", al.evolution.cfg.Enabled, reloadCfg.Evolution.Enabled)
+		t.Fatalf(
+			"reloaded evolution enabled = %v, want %v",
+			al.evolution.cfg.Enabled,
+			reloadCfg.Evolution.Enabled,
+		)
 	}
 	if al.evolution.cfg.Mode != reloadCfg.Evolution.Mode {
 		t.Fatalf("reloaded evolution mode = %q, want %q", al.evolution.cfg.Mode, reloadCfg.Evolution.Mode)

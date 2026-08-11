@@ -200,21 +200,28 @@ func TestEvolutionDraftPersistenceScrubsEveryPrivateFieldAndForbiddenTarget(t *t
 
 func TestEvolutionDraftReviewChecksMetadataAndRejectsPersonalityTargets(t *testing.T) {
 	base := evolution.SkillDraft{
-		ID: "draft-metadata", WorkspaceID: t.TempDir(), SourceRecordID: "pattern-1",
-		TargetSkillName: "safe-workflow", DraftType: evolution.DraftTypeWorkflow,
-		ChangeKind: evolution.ChangeKindCreate, HumanSummary: "Safe workflow",
-		BodyOrPatch: "---\nname: safe-workflow\ndescription: safe\n---\n# Safe\n\nUse the verified procedure.",
-		Status:      evolution.DraftStatusCandidate,
+		ID:              "draft-metadata",
+		WorkspaceID:     t.TempDir(),
+		SourceRecordID:  "pattern-1",
+		TargetSkillName: "safe-workflow",
+		DraftType:       evolution.DraftTypeWorkflow,
+		ChangeKind:      evolution.ChangeKindCreate,
+		HumanSummary:    "Safe workflow",
+		BodyOrPatch: "---\nname: safe-workflow\ndescription: safe\n---\n" +
+			"# Safe\n\nUse the verified procedure.",
+		Status: evolution.DraftStatusCandidate,
 	}
 	privateMetadata := base
 	privateMetadata.IntendedUseCases = []string{"Alice prefers concise replies"}
-	if review := evolution.ReviewDraftWithPolicy(privateMetadata, 10_000); review.Status != evolution.DraftStatusQuarantined {
-		t.Fatalf("private metadata review = %#v", review)
+	privateReview := evolution.ReviewDraftWithPolicy(privateMetadata, 10_000)
+	if privateReview.Status != evolution.DraftStatusQuarantined {
+		t.Fatalf("private metadata review = %#v", privateReview)
 	}
 	personalityTarget := base
 	personalityTarget.TargetSkillName = "agent-personality"
-	if review := evolution.ReviewDraftWithPolicy(personalityTarget, 10_000); review.Status != evolution.DraftStatusQuarantined {
-		t.Fatalf("personality target review = %#v", review)
+	personalityReview := evolution.ReviewDraftWithPolicy(personalityTarget, 10_000)
+	if personalityReview.Status != evolution.DraftStatusQuarantined {
+		t.Fatalf("personality target review = %#v", personalityReview)
 	}
 	if _, err := evolution.BuildDraftPreview(base.WorkspaceID, personalityTarget); err == nil {
 		t.Fatal("personality target reached workspace path resolution")
