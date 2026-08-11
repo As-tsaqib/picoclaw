@@ -140,8 +140,8 @@ func normalizeConfidenceForEvidence(evidence string, confidence float64) float64
 	if confidence <= 0 {
 		confidence = DefaultConfidenceForEvidence(evidence)
 	}
-	if max := maxConfidenceForEvidence(evidence); confidence > max {
-		return max
+	if maxConfidence := maxConfidenceForEvidence(evidence); confidence > maxConfidence {
+		return maxConfidence
 	}
 	return confidence
 }

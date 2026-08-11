@@ -892,27 +892,30 @@ func TestLegacyCompactPreservesUnreviewedRecall(t *testing.T) {
 		AgentID: agent.ID, UserKey: "telegram:user-a", Channel: "telegram", Account: "personal",
 		SessionKey: "compact-recall", SessionRef: memorySessionRef("compact-recall"),
 	}
-	if _, err := recall.AppendDeliveredTurn(
+	if _, appendErr := recall.AppendDeliveredTurn(
 		caller,
 		"turn-pref",
 		"Mulai sekarang saya lebih suka jawaban ringkas",
 		"Baik.",
 		"assistant-message",
-	); err != nil {
-		t.Fatal(err)
+	); appendErr != nil {
+		t.Fatal(appendErr)
 	}
 
 	history := []providers.Message{
-		{Role: "user", Content: "msg 1"}, {Role: "assistant", Content: "resp 1"},
-		{Role: "user", Content: "msg 2"}, {Role: "assistant", Content: "resp 2"},
-		{Role: "user", Content: "msg 3"}, {Role: "assistant", Content: "resp 3"},
+		{Role: "user", Content: "msg 1"},
+		{Role: "assistant", Content: "resp 1"},
+		{Role: "user", Content: "msg 2"},
+		{Role: "assistant", Content: "resp 2"},
+		{Role: "user", Content: "msg 3"},
+		{Role: "assistant", Content: "resp 3"},
 	}
 	agent.Sessions.SetHistory(caller.SessionKey, history)
-	if err := al.contextManager.Compact(context.Background(), &CompactRequest{
+	if compactErr := al.contextManager.Compact(context.Background(), &CompactRequest{
 		SessionKey: caller.SessionKey,
 		Reason:     ContextCompressReasonRetry,
-	}); err != nil {
-		t.Fatal(err)
+	}); compactErr != nil {
+		t.Fatal(compactErr)
 	}
 	if got := len(agent.Sessions.GetHistory(caller.SessionKey)); got >= len(history) {
 		t.Fatalf("context was not compacted: got %d messages", got)

@@ -624,7 +624,8 @@ func applyCuratedMutations(
 			// reaffirmation. Only apply an evidence override when the caller
 			// supplied one; background/generic restores otherwise preserve the
 			// original authority and confirmation time.
-			if NormalizePreferenceKey(entries[idx].PreferenceKey) != "" && strings.TrimSpace(mutation.EvidenceKind) != "" {
+			if NormalizePreferenceKey(entries[idx].PreferenceKey) != "" &&
+				strings.TrimSpace(mutation.EvidenceKind) != "" {
 				entries[idx].EvidenceKind = NormalizeEvidenceKind(mutation.EvidenceKind)
 				confidence := DefaultConfidenceForEvidence(entries[idx].EvidenceKind)
 				if mutation.Confidence != nil {

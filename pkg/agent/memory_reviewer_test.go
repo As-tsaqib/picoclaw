@@ -157,8 +157,8 @@ func TestMemoryReviewerUsesRestrictedToolsAndDoesNotTouchSessionHistory(t *testi
 	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
 		t.Fatalf("RecordSuccessfulTurn() error = %v", err)
 	}
-	if err := al.runMemoryReview(context.Background(), agent, caller); err != nil {
-		t.Fatalf("runMemoryReview() error = %v", err)
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+		t.Fatalf("runMemoryReview() error = %v", reviewErr)
 	}
 
 	entries, err := agent.CuratedMemory.List(memory.CuratedTargetWorkspace, caller)
@@ -201,8 +201,8 @@ func TestMemoryReviewerStagesBackgroundWritesWhenApprovalEnabled(t *testing.T) {
 	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
 		t.Fatalf("RecordSuccessfulTurn() error = %v", err)
 	}
-	if err := al.runMemoryReview(context.Background(), agent, caller); err != nil {
-		t.Fatalf("runMemoryReview() error = %v", err)
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+		t.Fatalf("runMemoryReview() error = %v", reviewErr)
 	}
 	entries, err := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
 	if err != nil || len(entries) != 0 {
@@ -426,13 +426,13 @@ func TestUnreviewedRecallSurvivesStoreRestartAndCanBeCurated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := recall.AppendDeliveredTurn(
+	if _, appendErr := recall.AppendDeliveredTurn(
 		caller, "turn-before-restart", "I prefer detailed explanations", "Understood.", "assistant-message",
-	); err != nil {
-		t.Fatal(err)
+	); appendErr != nil {
+		t.Fatal(appendErr)
 	}
-	if _, err := reviewState.RecordSuccessfulTurn(caller); err != nil {
-		t.Fatal(err)
+	if _, recordErr := reviewState.RecordSuccessfulTurn(caller); recordErr != nil {
+		t.Fatal(recordErr)
 	}
 	_ = curated // created before restart to prove all stores can be reopened together
 
@@ -479,8 +479,8 @@ func TestUnreviewedRecallSurvivesStoreRestartAndCanBeCurated(t *testing.T) {
 		Tools: tools.NewToolRegistry(), CuratedMemory: reopenedCurated, RecallMemory: reopenedRecall,
 		MemoryReviewState: reopenedReview, memoryReviewer: &memoryReviewController{},
 	}
-	if err := al.runMemoryReview(context.Background(), agent, caller); err != nil {
-		t.Fatalf("post-restart review failed: %v", err)
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+		t.Fatalf("post-restart review failed: %v", reviewErr)
 	}
 	entries, err := reopenedCurated.List(memory.CuratedTargetCurrentUser, caller)
 	if err != nil || len(entries) != 1 || entries[0].PreferenceValue != "detailed" {
@@ -503,12 +503,12 @@ func TestRepeatedReviewWithoutNewRecallDoesNotDuplicateMemory(t *testing.T) {
 	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
 		t.Fatal(err)
 	}
-	if err := al.runMemoryReview(context.Background(), agent, caller); err != nil {
-		t.Fatal(err)
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+		t.Fatal(reviewErr)
 	}
 	callsAfterFirst, _, _ := provider.snapshot()
-	if err := al.runMemoryReview(context.Background(), agent, caller); err != nil {
-		t.Fatal(err)
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+		t.Fatal(reviewErr)
 	}
 	callsAfterSecond, _, _ := provider.snapshot()
 	if callsAfterSecond != callsAfterFirst {

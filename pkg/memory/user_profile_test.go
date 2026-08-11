@@ -129,8 +129,8 @@ func TestCompileUserProfileIsBoundedDerivedAndIsolated(t *testing.T) {
 			EvidenceKind: CuratedEvidenceInferred,
 		},
 	}
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, userA, mutations, false); err != nil {
-		t.Fatal(err)
+	if _, applyErr := store.ApplyBatch(CuratedTargetCurrentUser, userA, mutations, false); applyErr != nil {
+		t.Fatal(applyErr)
 	}
 	profile, err := store.CompileUserProfile(userA, UserProfileOptions{MaxChars: 900, MinConfidence: 0.65})
 	if err != nil {
@@ -168,12 +168,12 @@ func TestCompileUserProfileCacheInvalidatesAfterMutation(t *testing.T) {
 	if len(profile1.Communication) != 1 || profile1.Communication[0].Value != "concise" {
 		t.Fatalf("first profile = %#v", profile1)
 	}
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+	if _, applyErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
 		Action: CuratedActionAdd, Content: "Detailed answers now", Type: CuratedTypeCommunicationPreference,
 		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "detailed",
 		Supersedes: first.Applied[0].ID,
-	}}, false); err != nil {
-		t.Fatal(err)
+	}}, false); applyErr != nil {
+		t.Fatal(applyErr)
 	}
 	profile2, _ := store.CompileUserProfile(caller, UserProfileOptions{MaxChars: 500})
 	if len(profile2.Communication) != 1 || profile2.Communication[0].Value != "detailed" {
@@ -183,7 +183,10 @@ func TestCompileUserProfileCacheInvalidatesAfterMutation(t *testing.T) {
 
 func TestRestoredPreferenceReconcilesSameKey(t *testing.T) {
 	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
-	store, err := NewCuratedStore(filepath.Join(t.TempDir(), "curated"), CuratedStoreOptions{Now: func() time.Time { return now }})
+	store, err := NewCuratedStore(
+		filepath.Join(t.TempDir(), "curated"),
+		CuratedStoreOptions{Now: func() time.Time { return now }},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,10 +198,10 @@ func TestRestoredPreferenceReconcilesSameKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+	if _, applyErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
 		Action: CuratedActionArchive, ID: old.Applied[0].ID,
-	}}, false); err != nil {
-		t.Fatal(err)
+	}}, false); applyErr != nil {
+		t.Fatal(applyErr)
 	}
 	now = now.Add(time.Hour)
 	current, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
@@ -208,10 +211,10 @@ func TestRestoredPreferenceReconcilesSameKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+	if _, applyErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
 		Action: CuratedActionRestore, ID: old.Applied[0].ID,
-	}}, false); err != nil {
-		t.Fatal(err)
+	}}, false); applyErr != nil {
+		t.Fatal(applyErr)
 	}
 	oldEntry, _ := store.Inspect(CuratedTargetCurrentUser, caller, old.Applied[0].ID)
 	currentEntry, _ := store.Inspect(CuratedTargetCurrentUser, caller, current.Applied[0].ID)
@@ -245,18 +248,27 @@ func TestStructuredSupersedesRejectsDifferentPreferenceKey(t *testing.T) {
 
 func TestCompileUserProfileCacheExpiresWithMemory(t *testing.T) {
 	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
-	store, err := NewCuratedStore(filepath.Join(t.TempDir(), "curated"), CuratedStoreOptions{Now: func() time.Time { return now }})
+	store, err := NewCuratedStore(
+		filepath.Join(t.TempDir(), "curated"),
+		CuratedStoreOptions{Now: func() time.Time { return now }},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	caller := testCaller("telegram:user-expiry")
 	expires := now.Add(time.Hour)
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
-		Action: CuratedActionAdd, Content: "Temporarily prefers concise answers", Type: CuratedTypeCommunicationPreference,
-		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
-		ExpiresAt: &expires,
-	}}, false); err != nil {
-		t.Fatal(err)
+	if _, applyErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{
+		{
+			Action:          CuratedActionAdd,
+			Content:         "Temporarily prefers concise answers",
+			Type:            CuratedTypeCommunicationPreference,
+			EvidenceKind:    CuratedEvidenceExplicit,
+			PreferenceKey:   "communication.verbosity",
+			PreferenceValue: "concise",
+			ExpiresAt:       &expires,
+		},
+	}, false); applyErr != nil {
+		t.Fatal(applyErr)
 	}
 	profile, err := store.CompileUserProfile(caller, UserProfileOptions{MaxChars: 800, Now: now})
 	if err != nil || len(profile.SourceIDs) != 1 {
@@ -277,11 +289,11 @@ func TestCompileUserProfileSerializedBudgetIsHardBound(t *testing.T) {
 	caller := testCaller("telegram:user-budget")
 	for i := 0; i < 12; i++ {
 		content := "Stable interaction preference number " + string(rune('A'+i)) + " with additional descriptive text"
-		if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		if _, applyErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
 			Action: CuratedActionAdd, Content: content, Type: CuratedTypeCommunicationPreference,
 			EvidenceKind: CuratedEvidenceExplicit,
-		}}, false); err != nil {
-			t.Fatal(err)
+		}}, false); applyErr != nil {
+			t.Fatal(applyErr)
 		}
 	}
 	const maxChars = 600
@@ -313,12 +325,18 @@ func TestCompileUserProfileCustomNowBypassesRealtimeCache(t *testing.T) {
 	}
 	caller := testCaller("telegram:user-asof")
 	expires := base.Add(time.Hour)
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
-		Action: CuratedActionAdd, Content: "Temporarily prefers concise answers", Type: CuratedTypeCommunicationPreference,
-		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
-		ExpiresAt: &expires,
-	}}, false); err != nil {
-		t.Fatal(err)
+	if _, applyErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{
+		{
+			Action:          CuratedActionAdd,
+			Content:         "Temporarily prefers concise answers",
+			Type:            CuratedTypeCommunicationPreference,
+			EvidenceKind:    CuratedEvidenceExplicit,
+			PreferenceKey:   "communication.verbosity",
+			PreferenceValue: "concise",
+			ExpiresAt:       &expires,
+		},
+	}, false); applyErr != nil {
+		t.Fatal(applyErr)
 	}
 
 	// Populate the real-time cache after expiry with an empty profile.
@@ -361,10 +379,10 @@ func TestExplicitRestoreReaffirmsArchivedPreference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+	if _, applyErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
 		Action: CuratedActionArchive, ID: old.Applied[0].ID,
-	}}, false); err != nil {
-		t.Fatal(err)
+	}}, false); applyErr != nil {
+		t.Fatal(applyErr)
 	}
 
 	now = now.Add(time.Hour)
@@ -378,12 +396,12 @@ func TestExplicitRestoreReaffirmsArchivedPreference(t *testing.T) {
 
 	now = now.Add(time.Hour)
 	reaffirmedAt := now
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+	if _, applyErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
 		Action: CuratedActionRestore, ID: old.Applied[0].ID,
 		EvidenceKind: CuratedEvidenceExplicit,
 		Provenance:   Provenance{Source: "user_command"},
-	}}, false); err != nil {
-		t.Fatal(err)
+	}}, false); applyErr != nil {
+		t.Fatal(applyErr)
 	}
 	oldEntry, _ := store.Inspect(CuratedTargetCurrentUser, caller, old.Applied[0].ID)
 	currentEntry, _ := store.Inspect(CuratedTargetCurrentUser, caller, current.Applied[0].ID)

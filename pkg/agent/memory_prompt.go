@@ -214,10 +214,18 @@ func renderCuratedPromptDataWithUsage(
 	usedIDs := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		view := curatedPromptEntry{
-			ID: entry.ID, Content: strings.TrimSpace(entry.Content), Type: entry.EffectiveType(), Status: entry.EffectiveStatus(),
-			Pinned: entry.Pinned, Confidence: entry.EffectiveConfidence(), EvidenceKind: entry.EffectiveEvidenceKind(),
-			PreferenceKey: entry.PreferenceKey, PreferenceValue: entry.PreferenceValue, Supersedes: entry.Supersedes,
-			Source: entry.Provenance.Source, UpdatedAt: entry.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			ID:              entry.ID,
+			Content:         strings.TrimSpace(entry.Content),
+			Type:            entry.EffectiveType(),
+			Status:          entry.EffectiveStatus(),
+			Pinned:          entry.Pinned,
+			Confidence:      entry.EffectiveConfidence(),
+			EvidenceKind:    entry.EffectiveEvidenceKind(),
+			PreferenceKey:   entry.PreferenceKey,
+			PreferenceValue: entry.PreferenceValue,
+			Supersedes:      entry.Supersedes,
+			Source:          entry.Provenance.Source,
+			UpdatedAt:       entry.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		}
 		trial := append(append([]curatedPromptEntry(nil), views...), view)
 		if rendered, ok := render(trial); ok && utf8.RuneCountInString(rendered) <= maxChars {

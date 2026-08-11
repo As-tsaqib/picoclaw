@@ -87,10 +87,16 @@ func TestObservedEvidenceRequiresRepeatedObservations(t *testing.T) {
 		t.Fatalf("single observation retained confirmation: %#v", entry)
 	}
 
-	repeated, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
-		Action: CuratedActionAdd, Content: "Repeatedly asks for copy-paste commands", Type: CuratedTypeWorkflowPreference,
-		EvidenceKind: CuratedEvidenceObserved, EvidenceCount: 2, ObservationCount: 2,
-	}}, false)
+	repeated, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{
+		{
+			Action:           CuratedActionAdd,
+			Content:          "Repeatedly asks for copy-paste commands",
+			Type:             CuratedTypeWorkflowPreference,
+			EvidenceKind:     CuratedEvidenceObserved,
+			EvidenceCount:    2,
+			ObservationCount: 2,
+		},
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

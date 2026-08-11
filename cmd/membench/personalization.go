@@ -164,15 +164,18 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 	const longHorizonTurns = 100
 	for turn := 0; turn < longHorizonTurns; turn++ {
 		query := fmt.Sprintf("temporary unrelated turn %d about weather and lunch", turn)
-		if _, err := store.Retrieve(memory.CuratedTargetCurrentUser, userA, memory.CuratedRetrievalOptions{
+		if _, retrieveErr := store.Retrieve(memory.CuratedTargetCurrentUser, userA, memory.CuratedRetrievalOptions{
 			Query: query, MaxResults: 6, MaxChars: 2_800, PinnedChars: 800,
 			MinimumScore: 0.35, RecencyWeight: 0.25, RecencyHalfLifeDays: 90,
 			StaleAfterDays: 180, FuzzyWeight: 0.75, RecentFallbackCount: 0,
-		}); err != nil {
+		}); retrieveErr != nil {
 			return err
 		}
 	}
-	profileAfterLongHorizon, err := store.CompileUserProfile(userA, memory.UserProfileOptions{MaxChars: 1_200, MinConfidence: 0.65})
+	profileAfterLongHorizon, err := store.CompileUserProfile(
+		userA,
+		memory.UserProfileOptions{MaxChars: 1_200, MinConfidence: 0.65},
+	)
 	if err != nil {
 		return err
 	}
