@@ -1,0 +1,42 @@
+--- a/pkg/agent/steering_test.go
++++ b/pkg/agent/steering_test.go
+@@ -513,7 +513,6 @@
+ 	finalResp := p.finalResp
+ 	if call == 1 && p.firstStarted != nil {
+ 		close(p.firstStarted)
+-		p.firstStarted = nil
+ 	}
+ 	p.mu.Unlock()
+ 
+--- a/pkg/agent/turn_state.go
++++ b/pkg/agent/turn_state.go
+@@ -239,7 +239,7 @@
+ 	mu              sync.RWMutex       // protects mutable fields above
+ 	isFinished      atomic.Bool        // True if parent has finished
+ 	parentEnded     atomic.Bool        // True if parent turn ended gracefully
+-	closeOnce       sync.Once          // Ensures pendingResults channel is closed once
++	closeOnce       sync.Once          // Ensures finishedChan is closed once
+ 	finishedChan    chan struct{}       // Closed when turn finishes (for delivery cancellation)
+ 	gracefulOnce    sync.Once          // Ensures graceful interrupt executes only once
+ 	gracefulFlag    atomic.Bool        // True after graceful interrupt requested
+@@ -797,15 +797,13 @@
+ // SubTurn-related methods
+ // =============================================================================
+ 
+-// Finish marks the turn as finished and closes the pendingResults channel
++// Finish marks the turn as finished and closes the finish signal exactly once.
++// pendingResults is intentionally not closed: asynchronous child delivery can
++// race with Finish(), while Finished() is the safe cancellation signal for
++// producers and consumers. The channel becomes garbage-collectable with the
++// turn state after active references are released.
+ func (ts *turnState) Finish(isHardAbort bool) {
+ 	ts.isFinished.Store(true)
+ 
+-	// Close pendingResults channel exactly once
+ 	ts.closeOnce.Do(func() {
+-		if ts.pendingResults != nil {
+-			close(ts.pendingResults)
+-		}
+ 		ts.mu.Lock()
+ 		if ts.finishedChan == nil {
+ 			ts.finishedChan = make(chan struct{})
