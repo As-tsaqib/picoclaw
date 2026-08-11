@@ -11,7 +11,11 @@ func memoryCommand() Definition {
 		Description: "Inspect and manage curated durable memory",
 		SubCommands: []SubCommand{
 			{Name: "status", Description: "Show memory configuration and capacity", Handler: memoryStatusHandler},
-			{Name: "profile", Description: "Show the compiled private current-user profile", Handler: memoryProfileHandler},
+			{
+				Name:        "profile",
+				Description: "Show the compiled private current-user profile",
+				Handler:     memoryProfileHandler,
+			},
 			{Name: "list", Description: "List current workspace/user entries", Handler: memoryListHandler},
 			{
 				Name: "search", Description: "Search current scoped memory",

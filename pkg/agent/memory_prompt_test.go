@@ -314,20 +314,37 @@ func TestMemoryPromptIncludesCompiledProfileWithoutRetrievalMatch(t *testing.T) 
 	cfg := config.DefaultConfig()
 	cfg.Memory.Retrieval.RecentFallbackCount = 0
 	cfg.Memory.Retrieval.MinimumScore = 9 // force ordinary retrieval to reject it
-	store, err := memory.NewCuratedStore(t.TempDir(), memory.CuratedStoreOptions{WorkspaceCharLimit: 5_000, PerUserCharLimit: 5_000})
+	store, err := memory.NewCuratedStore(
+		t.TempDir(),
+		memory.CuratedStoreOptions{WorkspaceCharLimit: 5_000, PerUserCharLimit: 5_000},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	caller := memory.CallerScope{AgentID: "main", UserKey: "telegram:user-profile", Channel: "telegram", Account: "personal", SessionKey: "topic-a", SessionRef: "session-a"}
-	if _, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, caller, []memory.CuratedMutation{{
-		Action: memory.CuratedActionAdd, Content: "User explicitly prefers Indonesian", Type: memory.CuratedTypeCommunicationPreference,
-		EvidenceKind: memory.CuratedEvidenceExplicit, PreferenceKey: "communication.language", PreferenceValue: "id",
-	}}, false); err != nil {
+	caller := memory.CallerScope{
+		AgentID:    "main",
+		UserKey:    "telegram:user-profile",
+		Channel:    "telegram",
+		Account:    "personal",
+		SessionKey: "topic-a",
+		SessionRef: "session-a",
+	}
+	if _, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, caller, []memory.CuratedMutation{
+		{
+			Action:          memory.CuratedActionAdd,
+			Content:         "User explicitly prefers Indonesian",
+			Type:            memory.CuratedTypeCommunicationPreference,
+			EvidenceKind:    memory.CuratedEvidenceExplicit,
+			PreferenceKey:   "communication.language",
+			PreferenceValue: "id",
+		},
+	}, false); err != nil {
 		t.Fatal(err)
 	}
 	ts := &turnState{agent: &AgentInstance{ID: "main", CuratedMemory: store}, userMessage: "What is a B-tree?"}
 	parts, private := memoryPromptPartsForTurn(ts, cfg, caller)
-	if !private || !promptPartsContain(parts, "<user_profile>") || !promptPartsContain(parts, `"communication.language"`) {
+	if !private || !promptPartsContain(parts, "<user_profile>") ||
+		!promptPartsContain(parts, `"communication.language"`) {
 		t.Fatalf("compiled profile missing from private prompt: %#v", parts)
 	}
 	if len(ts.stagedCuratedUsage()) != 0 {

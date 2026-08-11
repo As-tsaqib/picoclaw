@@ -38,7 +38,11 @@ func configureMemoryCommandRuntime(
 					rt.Config.Memory.Retrieval.EffectiveEngine(),
 					rt.Config.Memory.Retrieval.EffectiveUserShare()*100,
 				),
-				fmt.Sprintf("Compiled user profile: %t (max %d chars)", rt.Config.Memory.Profile.Enabled, rt.Config.Memory.Profile.EffectiveMaxChars()),
+				fmt.Sprintf(
+					"Compiled user profile: %t (max %d chars)",
+					rt.Config.Memory.Profile.Enabled,
+					rt.Config.Memory.Profile.EffectiveMaxChars(),
+				),
 				fmt.Sprintf("Notifications: %s", rt.Config.Memory.EffectiveNotificationMode()),
 			}
 			if workspaceErr == nil {
@@ -265,7 +269,10 @@ func formatUserProfile(profile memory.UserProfileSnapshot) string {
 	if len(lines) == 1 {
 		lines = append(lines, "- (empty)")
 	}
-	lines = append(lines, fmt.Sprintf("Profile size: %d characters; sources: %d", profile.Characters, len(profile.SourceIDs)))
+	lines = append(
+		lines,
+		fmt.Sprintf("Profile size: %d characters; sources: %d", profile.Characters, len(profile.SourceIDs)),
+	)
 	return strings.Join(lines, "\n")
 }
 

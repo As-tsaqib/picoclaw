@@ -675,9 +675,9 @@ func (h *Handler) handleFetchModels(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 
-		models, err := fetchAntigravityModels(ctx)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to fetch models: %v", err), http.StatusBadGateway)
+		models, fetchErr := fetchAntigravityModels(ctx)
+		if fetchErr != nil {
+			http.Error(w, fmt.Sprintf("Failed to fetch models: %v", fetchErr), http.StatusBadGateway)
 			return
 		}
 		catalogModels := make([]CatalogModel, len(models))

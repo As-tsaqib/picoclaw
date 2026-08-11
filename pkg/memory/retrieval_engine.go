@@ -10,7 +10,12 @@ const RetrievalEngineHybridLexical = "hybrid_lexical"
 // dependency-free fallback.
 type RetrievalEngine interface {
 	Name() string
-	Retrieve(store *CuratedStore, target string, caller CallerScope, opts CuratedRetrievalOptions) (CuratedRetrievalResult, error)
+	Retrieve(
+		store *CuratedStore,
+		target string,
+		caller CallerScope,
+		opts CuratedRetrievalOptions,
+	) (CuratedRetrievalResult, error)
 }
 
 type HybridLexicalRetrievalEngine struct{}

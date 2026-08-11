@@ -279,7 +279,8 @@ func (s *CuratedStore) prepareMutations(
 			return nil, ErrCuratedInvalidEvidence
 		}
 		if mutation.PreferenceKey != "" {
-			if !ValidPreferenceKey(mutation.PreferenceKey) || !preferenceKeyAllowedForTarget(target, mutation.PreferenceKey) {
+			if !ValidPreferenceKey(mutation.PreferenceKey) ||
+				!preferenceKeyAllowedForTarget(target, mutation.PreferenceKey) {
 				return nil, ErrCuratedInvalidPreferenceKey
 			}
 			if mutation.PreferenceValue == "" || utf8.RuneCountInString(mutation.PreferenceValue) > 240 {

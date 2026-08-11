@@ -327,16 +327,19 @@ func TestBuildSystemPromptUsesSoulAsIdentityAndUserAsLegacySeed(t *testing.T) {
 	if kernel == nil || kernel.Layer != PromptLayerKernel || kernel.Slot != PromptSlotHierarchy {
 		t.Fatalf("kernel = %#v", kernel)
 	}
-	if soul == nil || soul.Layer != PromptLayerIdentity || soul.Source.ID != PromptSourceSoul || !strings.Contains(soul.Content, "technical precision") {
+	if soul == nil || soul.Layer != PromptLayerIdentity || soul.Source.ID != PromptSourceSoul ||
+		!strings.Contains(soul.Content, "technical precision") {
 		t.Fatalf("soul identity = %#v", soul)
 	}
 	if strings.Contains(soul.Content, "You are PicoClaw, a helpful") {
 		t.Fatalf("generic fallback leaked into explicit SOUL: %q", soul.Content)
 	}
-	if workspace == nil || workspace.Layer != PromptLayerInstruction || !strings.Contains(workspace.Content, "coding assistant") {
+	if workspace == nil || workspace.Layer != PromptLayerInstruction ||
+		!strings.Contains(workspace.Content, "coding assistant") {
 		t.Fatalf("workspace = %#v", workspace)
 	}
-	if legacy == nil || legacy.Layer != PromptLayerContext || legacy.Slot != PromptSlotLegacyUser || !strings.Contains(legacy.Content, "compatibility seed") {
+	if legacy == nil || legacy.Layer != PromptLayerContext || legacy.Slot != PromptSlotLegacyUser ||
+		!strings.Contains(legacy.Content, "compatibility seed") {
 		t.Fatalf("legacy user = %#v", legacy)
 	}
 }

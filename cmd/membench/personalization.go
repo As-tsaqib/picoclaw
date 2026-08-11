@@ -48,11 +48,37 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	userA := memory.CallerScope{AgentID: "main", UserKey: "bench:user-a", Channel: "cli", SessionKey: "bench-a", SessionRef: "bench-a"}
-	userB := memory.CallerScope{AgentID: "main", UserKey: "bench:user-b", Channel: "cli", SessionKey: "bench-b", SessionRef: "bench-b"}
+	userA := memory.CallerScope{
+		AgentID:    "main",
+		UserKey:    "bench:user-a",
+		Channel:    "cli",
+		SessionKey: "bench-a",
+		SessionRef: "bench-a",
+	}
+	userB := memory.CallerScope{
+		AgentID:    "main",
+		UserKey:    "bench:user-b",
+		Channel:    "cli",
+		SessionKey: "bench-b",
+		SessionRef: "bench-b",
+	}
 	first, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, userA, []memory.CuratedMutation{
-		{Action: memory.CuratedActionAdd, Content: "Prefers Indonesian", Type: memory.CuratedTypeCommunicationPreference, EvidenceKind: memory.CuratedEvidenceExplicit, PreferenceKey: "communication.language", PreferenceValue: "id"},
-		{Action: memory.CuratedActionAdd, Content: "Prefers concise explanations", Type: memory.CuratedTypeCommunicationPreference, EvidenceKind: memory.CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "concise"},
+		{
+			Action:          memory.CuratedActionAdd,
+			Content:         "Prefers Indonesian",
+			Type:            memory.CuratedTypeCommunicationPreference,
+			EvidenceKind:    memory.CuratedEvidenceExplicit,
+			PreferenceKey:   "communication.language",
+			PreferenceValue: "id",
+		},
+		{
+			Action:          memory.CuratedActionAdd,
+			Content:         "Prefers concise explanations",
+			Type:            memory.CuratedTypeCommunicationPreference,
+			EvidenceKind:    memory.CuratedEvidenceExplicit,
+			PreferenceKey:   "communication.verbosity",
+			PreferenceValue: "concise",
+		},
 	}, false)
 	if err != nil {
 		return err
@@ -78,10 +104,17 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 	if verbosityID == "" {
 		return fmt.Errorf("benchmark setup missing verbosity preference")
 	}
-	correction, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, userA, []memory.CuratedMutation{{
-		Action: memory.CuratedActionAdd, Content: "Now prefers detailed explanations", Type: memory.CuratedTypeCommunicationPreference,
-		EvidenceKind: memory.CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "detailed", Supersedes: verbosityID,
-	}}, false)
+	correction, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, userA, []memory.CuratedMutation{
+		{
+			Action:          memory.CuratedActionAdd,
+			Content:         "Now prefers detailed explanations",
+			Type:            memory.CuratedTypeCommunicationPreference,
+			EvidenceKind:    memory.CuratedEvidenceExplicit,
+			PreferenceKey:   "communication.verbosity",
+			PreferenceValue: "detailed",
+			Supersedes:      verbosityID,
+		},
+	}, false)
 	if err != nil {
 		return err
 	}
@@ -89,11 +122,18 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	correctionPass := profileHasValue(profile2, "communication.verbosity", "detailed") && !profileHasValue(profile2, "communication.verbosity", "concise")
-	_, err = store.ApplyBatch(memory.CuratedTargetCurrentUser, userA, []memory.CuratedMutation{{
-		Action: memory.CuratedActionAdd, Content: "Recent messages might suggest concise replies", Type: memory.CuratedTypeCommunicationPreference,
-		EvidenceKind: memory.CuratedEvidenceInferred, PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
-	}}, false)
+	correctionPass := profileHasValue(profile2, "communication.verbosity", "detailed") &&
+		!profileHasValue(profile2, "communication.verbosity", "concise")
+	_, err = store.ApplyBatch(memory.CuratedTargetCurrentUser, userA, []memory.CuratedMutation{
+		{
+			Action:          memory.CuratedActionAdd,
+			Content:         "Recent messages might suggest concise replies",
+			Type:            memory.CuratedTypeCommunicationPreference,
+			EvidenceKind:    memory.CuratedEvidenceInferred,
+			PreferenceKey:   "communication.verbosity",
+			PreferenceValue: "concise",
+		},
+	}, false)
 	if err != nil {
 		return err
 	}
@@ -131,16 +171,16 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 	if !privacyPass {
 		report.PrivacyLeakageRate = 1
 	}
-	if err := os.MkdirAll(flagOut, 0o755); err != nil {
-		return err
+	if mkdirErr := os.MkdirAll(flagOut, 0o755); mkdirErr != nil {
+		return mkdirErr
 	}
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(flagOut, "personalization.json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return err
+	if writeErr := os.WriteFile(path, data, 0o644); writeErr != nil {
+		return writeErr
 	}
 	fmt.Printf("%s\n", data)
 	if !correctionPass || !inferencePass || !privacyPass {
@@ -150,7 +190,13 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 }
 
 func profileHasValue(profile memory.UserProfileSnapshot, key, value string) bool {
-	groups := [][]memory.UserProfileField{profile.Identity, profile.Communication, profile.Workflow, profile.Interaction, profile.Boundaries}
+	groups := [][]memory.UserProfileField{
+		profile.Identity,
+		profile.Communication,
+		profile.Workflow,
+		profile.Interaction,
+		profile.Boundaries,
+	}
 	for _, group := range groups {
 		for _, field := range group {
 			if field.Key == key && field.Value == value {

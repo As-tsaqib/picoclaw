@@ -345,7 +345,9 @@ func (al *AgentLoop) buildCommandsRuntime(
 			)
 			caller := callerScopeForTurn(agent.ID, cfg, *opts)
 			flushTimeout := 8 * time.Second
-			if configured := time.Duration(cfg.Memory.BackgroundReview.EffectiveTimeoutSeconds()) * time.Second; configured < flushTimeout {
+			if configured := time.Duration(
+				cfg.Memory.BackgroundReview.EffectiveTimeoutSeconds(),
+			) * time.Second; configured < flushTimeout {
 				flushTimeout = configured
 			}
 			flushCtx, flushCancel := context.WithTimeout(ctx, flushTimeout)

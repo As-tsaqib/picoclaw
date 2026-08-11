@@ -45,10 +45,16 @@ func TestCuratedInferenceCannotOverrideExplicitPreference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inferred, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
-		Action: CuratedActionAdd, Content: "Recent discussion suggests Go may be preferred", Type: CuratedTypeWorkflowPreference,
-		EvidenceKind: CuratedEvidenceInferred, PreferenceKey: "workflow.programming_language", PreferenceValue: "go",
-	}}, false)
+	inferred, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{
+		{
+			Action:          CuratedActionAdd,
+			Content:         "Recent discussion suggests Go may be preferred",
+			Type:            CuratedTypeWorkflowPreference,
+			EvidenceKind:    CuratedEvidenceInferred,
+			PreferenceKey:   "workflow.programming_language",
+			PreferenceValue: "go",
+		},
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,10 +71,14 @@ func TestCuratedInferenceCannotOverrideExplicitPreference(t *testing.T) {
 func TestCuratedInferredMemoryIsNotAutomaticallyConfirmed(t *testing.T) {
 	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
 	caller := testCaller("telegram:user-confidence")
-	result, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
-		Action: CuratedActionAdd, Content: "May prefer examples before theory", Type: CuratedTypeCommunicationPreference,
-		EvidenceKind: CuratedEvidenceInferred,
-	}}, false)
+	result, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{
+		{
+			Action:       CuratedActionAdd,
+			Content:      "May prefer examples before theory",
+			Type:         CuratedTypeCommunicationPreference,
+			EvidenceKind: CuratedEvidenceInferred,
+		},
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,10 +96,34 @@ func TestCompileUserProfileIsBoundedDerivedAndIsolated(t *testing.T) {
 	userA := testCaller("telegram:user-a-profile")
 	userB := testCaller("telegram:user-b-profile")
 	mutations := []CuratedMutation{
-		{Action: CuratedActionAdd, Content: "Prefers Indonesian", Type: CuratedTypeCommunicationPreference, EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.language", PreferenceValue: "id"},
-		{Action: CuratedActionAdd, Content: "Prefers copy-paste-ready commands", Type: CuratedTypeWorkflowPreference, EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "workflow.command_style", PreferenceValue: "copy_paste_ready"},
-		{Action: CuratedActionAdd, Content: "Temporary project branch is experiment/x", Type: CuratedTypeProjectFact, EvidenceKind: CuratedEvidenceExplicit},
-		{Action: CuratedActionAdd, Content: "Might like diagrams", Type: CuratedTypeCommunicationPreference, EvidenceKind: CuratedEvidenceInferred},
+		{
+			Action:          CuratedActionAdd,
+			Content:         "Prefers Indonesian",
+			Type:            CuratedTypeCommunicationPreference,
+			EvidenceKind:    CuratedEvidenceExplicit,
+			PreferenceKey:   "communication.language",
+			PreferenceValue: "id",
+		},
+		{
+			Action:          CuratedActionAdd,
+			Content:         "Prefers copy-paste-ready commands",
+			Type:            CuratedTypeWorkflowPreference,
+			EvidenceKind:    CuratedEvidenceExplicit,
+			PreferenceKey:   "workflow.command_style",
+			PreferenceValue: "copy_paste_ready",
+		},
+		{
+			Action:       CuratedActionAdd,
+			Content:      "Temporary project branch is experiment/x",
+			Type:         CuratedTypeProjectFact,
+			EvidenceKind: CuratedEvidenceExplicit,
+		},
+		{
+			Action:       CuratedActionAdd,
+			Content:      "Might like diagrams",
+			Type:         CuratedTypeCommunicationPreference,
+			EvidenceKind: CuratedEvidenceInferred,
+		},
 	}
 	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, userA, mutations, false); err != nil {
 		t.Fatal(err)
