@@ -555,7 +555,7 @@ func slotPriority(slot PromptSlot) int {
 	case PromptSlotUserProfile:
 		return 750
 	case PromptSlotLegacyUser:
-		return 720
+		return 685
 	case PromptSlotMemory:
 		return 700
 	case PromptSlotOutput:

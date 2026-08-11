@@ -1,8 +1,12 @@
 package memory
 
 import (
+	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 func TestCuratedExplicitPreferenceSupersedesOlderValue(t *testing.T) {
@@ -128,7 +132,7 @@ func TestCompileUserProfileIsBoundedDerivedAndIsolated(t *testing.T) {
 	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, userA, mutations, false); err != nil {
 		t.Fatal(err)
 	}
-	profile, err := store.CompileUserProfile(userA, UserProfileOptions{MaxChars: 500, MinConfidence: 0.65})
+	profile, err := store.CompileUserProfile(userA, UserProfileOptions{MaxChars: 900, MinConfidence: 0.65})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +142,7 @@ func TestCompileUserProfileIsBoundedDerivedAndIsolated(t *testing.T) {
 	if len(profile.Workflow) != 1 || profile.Workflow[0].Value != "copy_paste_ready" {
 		t.Fatalf("workflow profile = %#v", profile.Workflow)
 	}
-	if len(profile.SourceIDs) != 2 || profile.Characters > 500 {
+	if len(profile.SourceIDs) != 2 || profile.Characters > 900 {
 		t.Fatalf("profile bounds/source ids = %#v", profile)
 	}
 	other, err := store.CompileUserProfile(userB, UserProfileOptions{MaxChars: 500})
@@ -174,5 +178,125 @@ func TestCompileUserProfileCacheInvalidatesAfterMutation(t *testing.T) {
 	profile2, _ := store.CompileUserProfile(caller, UserProfileOptions{MaxChars: 500})
 	if len(profile2.Communication) != 1 || profile2.Communication[0].Value != "detailed" {
 		t.Fatalf("cache did not invalidate: %#v", profile2)
+	}
+}
+
+func TestRestoredPreferenceReconcilesSameKey(t *testing.T) {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	store, err := NewCuratedStore(filepath.Join(t.TempDir(), "curated"), CuratedStoreOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := testCaller("telegram:user-restore")
+	old, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Prefers concise responses", Type: CuratedTypeCommunicationPreference,
+		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
+	}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionArchive, ID: old.Applied[0].ID,
+	}}, false); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	current, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Prefers detailed responses", Type: CuratedTypeCommunicationPreference,
+		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "detailed",
+	}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionRestore, ID: old.Applied[0].ID,
+	}}, false); err != nil {
+		t.Fatal(err)
+	}
+	oldEntry, _ := store.Inspect(CuratedTargetCurrentUser, caller, old.Applied[0].ID)
+	currentEntry, _ := store.Inspect(CuratedTargetCurrentUser, caller, current.Applied[0].ID)
+	if oldEntry.EffectiveStatus() == CuratedStatusActive && currentEntry.EffectiveStatus() == CuratedStatusActive {
+		t.Fatalf("restore produced two active values: old=%#v current=%#v", oldEntry, currentEntry)
+	}
+	if currentEntry.EffectiveStatus() != CuratedStatusActive || currentEntry.PreferenceValue != "detailed" {
+		t.Fatalf("newer confirmed preference lost after restore: %#v", currentEntry)
+	}
+}
+
+func TestStructuredSupersedesRejectsDifferentPreferenceKey(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
+	caller := testCaller("telegram:user-key-safety")
+	language, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Prefers Indonesian", Type: CuratedTypeCommunicationPreference,
+		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.language", PreferenceValue: "id",
+	}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Prefers detailed answers", Type: CuratedTypeCommunicationPreference,
+		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "detailed",
+		Supersedes: language.Applied[0].ID,
+	}}, false)
+	if !errors.Is(err, ErrCuratedInvalidPreferenceKey) {
+		t.Fatalf("cross-key supersedes error = %v, want ErrCuratedInvalidPreferenceKey", err)
+	}
+}
+
+func TestCompileUserProfileCacheExpiresWithMemory(t *testing.T) {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	store, err := NewCuratedStore(filepath.Join(t.TempDir(), "curated"), CuratedStoreOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := testCaller("telegram:user-expiry")
+	expires := now.Add(time.Hour)
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Temporarily prefers concise answers", Type: CuratedTypeCommunicationPreference,
+		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
+		ExpiresAt: &expires,
+	}}, false); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := store.CompileUserProfile(caller, UserProfileOptions{MaxChars: 800, Now: now})
+	if err != nil || len(profile.SourceIDs) != 1 {
+		t.Fatalf("initial profile = %#v, %v", profile, err)
+	}
+	now = now.Add(2 * time.Hour)
+	expired, err := store.CompileUserProfile(caller, UserProfileOptions{MaxChars: 800, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(expired.SourceIDs) != 0 {
+		t.Fatalf("expired preference survived profile cache: %#v", expired)
+	}
+}
+
+func TestCompileUserProfileSerializedBudgetIsHardBound(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 20_000, 20_000)
+	caller := testCaller("telegram:user-budget")
+	for i := 0; i < 12; i++ {
+		content := "Stable interaction preference number " + string(rune('A'+i)) + " with additional descriptive text"
+		if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+			Action: CuratedActionAdd, Content: content, Type: CuratedTypeCommunicationPreference,
+			EvidenceKind: CuratedEvidenceExplicit,
+		}}, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const maxChars = 600
+	profile, err := store.CompileUserProfile(caller, UserProfileOptions{MaxChars: maxChars})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := utf8.RuneCount(data); got > maxChars {
+		t.Fatalf("serialized profile chars = %d, exceeds %d: %s", got, maxChars, data)
+	}
+	if profile.Characters != utf8.RuneCount(data) {
+		t.Fatalf("profile Characters = %d, actual serialized = %d", profile.Characters, utf8.RuneCount(data))
 	}
 }

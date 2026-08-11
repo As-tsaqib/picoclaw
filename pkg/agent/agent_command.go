@@ -351,8 +351,10 @@ func (al *AgentLoop) buildCommandsRuntime(
 				flushTimeout = configured
 			}
 			flushCtx, flushCancel := context.WithTimeout(ctx, flushTimeout)
-			if err := al.flushMemoryReview(flushCtx, agent, caller); err != nil && flushCtx.Err() == nil {
+			if err := al.flushMemoryReview(flushCtx, agent, caller); err != nil {
 				logger.WarnCF("memory", "Pre-clear memory flush failed", safeMemoryLogFields(err))
+				flushCancel()
+				return fmt.Errorf("memory flush before clear failed; history was not cleared")
 			}
 			flushCancel()
 			if err := al.contextManager.Clear(ctx, opts.SessionKey); err != nil {

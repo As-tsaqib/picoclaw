@@ -359,3 +359,16 @@ func TestBuildSystemPromptFallsBackToPicoClawIdentityWithoutSoul(t *testing.T) {
 	}
 	t.Fatal("identity.soul part missing")
 }
+
+func TestEmptySoulFallsBackToBuiltInIdentity(t *testing.T) {
+	tmpDir := setupWorkspace(t, map[string]string{
+		"AGENT.md": "# Agent\nFollow workspace instructions.",
+		"SOUL.md":  " \n\t\n",
+	})
+	defer cleanupWorkspace(t, tmpDir)
+	cb := NewContextBuilder(tmpDir)
+	prompt := cb.BuildSystemPromptWithCache()
+	if !strings.Contains(prompt, "You are PicoClaw, a helpful, practical, lightweight personal AI assistant.") {
+		t.Fatalf("empty SOUL.md did not use built-in fallback identity: %q", prompt)
+	}
+}

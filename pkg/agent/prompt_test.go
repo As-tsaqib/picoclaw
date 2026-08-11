@@ -454,3 +454,18 @@ func TestContextBuilder_CollectsRegisteredPromptContributors(t *testing.T) {
 		t.Fatalf("system prompt missing contributor content: %q", messages[0].Content)
 	}
 }
+
+func TestRenderPromptPartsLegacy_MemoryPrecedesLegacyUserSeed(t *testing.T) {
+	parts := []PromptPart{
+		{ID: "legacy.user", Layer: PromptLayerContext, Slot: PromptSlotLegacyUser, Source: PromptSource{ID: PromptSourceLegacyUser}, Content: "legacy-user"},
+		{ID: "memory.current", Layer: PromptLayerContext, Slot: PromptSlotMemory, Source: PromptSource{ID: PromptSourceCuratedMemory}, Content: "current-memory"},
+		{ID: "summary", Layer: PromptLayerContext, Slot: PromptSlotSummary, Source: PromptSource{ID: PromptSourceSummary}, Content: "summary"},
+	}
+	got := renderPromptPartsLegacy(parts)
+	memoryAt := strings.Index(got, "current-memory")
+	legacyAt := strings.Index(got, "legacy-user")
+	summaryAt := strings.Index(got, "summary")
+	if memoryAt < 0 || legacyAt < 0 || summaryAt < 0 || !(memoryAt < legacyAt && legacyAt < summaryAt) {
+		t.Fatalf("prompt precedence = %q, want memory > legacy USER.md > summary", got)
+	}
+}

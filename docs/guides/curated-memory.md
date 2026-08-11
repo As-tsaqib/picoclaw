@@ -83,11 +83,11 @@ workspace information and redacted status.
 
 For a trusted direct chat, PicoClaw compiles a bounded `UserProfileSnapshot` from active curated current-user memory. This profile is always available to prompt assembly, so stable interaction preferences do not depend on retrieval luck. It contains only profile-relevant identity/communication/workflow/interaction fields and source memory IDs; project and episodic details remain query-retrieved.
 
-The snapshot is a cache, **not another source of truth**. It is rebuilt automatically when the underlying structured memory revision changes. Low-confidence inference is excluded by default, while explicit user preferences remain eligible. The default profile budget is 1,200 characters. Private profiles are never loaded into shared/group prompts.
+The snapshot is a cache, **not another source of truth**. It is rebuilt automatically when the underlying structured memory revision changes and cache validity also stops at the earliest relevant memory expiry, so expired preferences cannot survive through a stale profile cache. Low-confidence inference is excluded by default, while explicit user preferences remain eligible. The default profile budget is 1,200 serialized characters. Private profiles are never loaded into shared/group prompts.
 
 Structured preference keys make corrections deterministic. For example, a newer explicit `communication.verbosity=detailed` supersedes an older active `communication.verbosity=concise`; a weak inferred value cannot displace an explicit preference.
 
-Evidence authority is intentionally different: direct user statements are `explicit`, repeated behavioral evidence may be `observed`, and cautious model conclusions are `inferred`. An inferred entry is not automatically confirmed simply because the curator created it.
+Evidence authority is intentionally different: direct user statements are `explicit`, repeated behavioral evidence may be `observed`, and cautious model conclusions are `inferred`. `observed` requires at least two observations; a single observation is conservatively downgraded to inference. Inferred confidence is capped below profile eligibility, and neither observed nor inferred entries retain direct-user confirmation timestamps. An inferred entry is not automatically confirmed simply because the curator created it.
 
 ### What can be remembered
 
@@ -173,7 +173,7 @@ topic, resumes the most recent relevant one from `next_step`, and asks for
 clarification when several are equally plausible. Completed or archived work
 is not resumed accidentally.
 
-Before `/clear` or `/reset` discards session recall, PicoClaw performs a bounded synchronous flush of still-unreviewed delivered turns when background memory review is enabled. Then `/clear` and its `/reset` alias clear the current session history/summary,
+Before `/clear` or `/reset` discards session recall, PicoClaw performs a bounded synchronous flush of still-unreviewed delivered turns when background memory review is enabled. The operation is fail-closed: if that bounded flush fails or times out, history is left intact and the user can retry instead of silently losing unreviewed durable information. After a successful flush, `/clear` and its `/reset` alias clear the current session history/summary,
 current-session recall records, and its reviewer cursor. They discard
 undelivered checkpoint mutations but preserve committed checkpoints, curated
 memory, `MEMORY.md`, daily notes, and every unrelated session/topic. Starting
