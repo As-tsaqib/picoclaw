@@ -1,0 +1,101 @@
+name: Personalization Final Apply
+
+on:
+  push:
+    branches:
+      - fix/personalized-memory-v2-audit
+    paths:
+      - .github/workflows/personalization-final-apply.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-validate-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+
+      - name: Apply final hardening patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          for patch in .github/patches/personalization-final-*.patch; do
+            git apply --check "$patch"
+            git apply "$patch"
+          done
+          gofmt -w \
+            cmd/membench/personalization.go \
+            pkg/agent/agent_command.go \
+            pkg/agent/agent_test.go \
+            pkg/agent/context_manager_test.go \
+            pkg/agent/memory_commands.go \
+            pkg/agent/memory_delivery_test.go \
+            pkg/agent/memory_prompt.go \
+            pkg/agent/memory_prompt_test.go \
+            pkg/agent/memory_reviewer_test.go \
+            pkg/channels/manager.go \
+            pkg/commands/cmd_clear.go \
+            pkg/commands/memory_command_test.go \
+            pkg/memory/curated_store.go \
+            pkg/memory/user_profile.go \
+            pkg/memory/user_profile_test.go
+          git diff --check
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Generate
+        run: go generate ./...
+
+      - name: Targeted personalization tests
+        run: go test -count=1 -tags goolm,stdjson ./pkg/memory ./pkg/agent ./pkg/tools ./pkg/commands ./pkg/channels ./cmd/membench
+
+      - name: Full Go test suite
+        run: go test -count=1 -tags goolm,stdjson ./...
+
+      - name: Focused race suite
+        run: go test -race -count=1 -tags goolm,stdjson ./pkg/memory ./pkg/agent ./pkg/tools ./pkg/channels
+
+      - name: Personalization benchmark
+        run: go run -tags goolm,stdjson ./cmd/membench personalization --out /tmp/personalization-bench
+
+      - name: Upload benchmark
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: personalization-final-benchmark
+          path: /tmp/personalization-bench/personalization.json
+          if-no-files-found: ignore
+
+      - name: Commit validated source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            cmd/membench/personalization.go \
+            pkg/agent/agent_command.go \
+            pkg/agent/agent_test.go \
+            pkg/agent/context_manager_test.go \
+            pkg/agent/memory_commands.go \
+            pkg/agent/memory_delivery_test.go \
+            pkg/agent/memory_prompt.go \
+            pkg/agent/memory_prompt_test.go \
+            pkg/agent/memory_reviewer_test.go \
+            pkg/channels/manager.go \
+            pkg/commands/cmd_clear.go \
+            pkg/commands/memory_command_test.go \
+            pkg/memory/curated_store.go \
+            pkg/memory/user_profile.go \
+            pkg/memory/user_profile_test.go
+          git commit -m "fix: complete personalized memory v2 hardening"
+          git push origin HEAD:fix/personalized-memory-v2-audit
