@@ -1,0 +1,91 @@
+name: Fix Personalization Lint
+
+on:
+  push:
+    branches:
+      - feat/personalized-memory-v2
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.2.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+
+      - name: Fix shadow diagnostics
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              "cmd/membench/personalization.go": [
+                  (
+                      'if err := os.MkdirAll(flagOut, 0o755); err != nil {\n\t\treturn err\n\t}',
+                      'if mkdirErr := os.MkdirAll(flagOut, 0o755); mkdirErr != nil {\n\t\treturn mkdirErr\n\t}',
+                  ),
+                  (
+                      'if err := os.WriteFile(path, data, 0o644); err != nil {\n\t\treturn err\n\t}',
+                      'if writeErr := os.WriteFile(path, data, 0o644); writeErr != nil {\n\t\treturn writeErr\n\t}',
+                  ),
+              ],
+              "pkg/providers/oauth/antigravity_provider.go": [
+                  (
+                      'if err := json.Unmarshal(body, &loadResp); err != nil {\n\t\treturn "", err\n\t}',
+                      'if unmarshalErr := json.Unmarshal(body, &loadResp); unmarshalErr != nil {\n\t\treturn "", unmarshalErr\n\t}',
+                  ),
+              ],
+              "web/backend/api/models.go": [
+                  (
+                      'models, err := fetchAntigravityModels(ctx)\n\t\tif err != nil {\n\t\t\thttp.Error(w, fmt.Sprintf("Failed to fetch models: %v", err), http.StatusBadGateway)',
+                      'models, fetchErr := fetchAntigravityModels(ctx)\n\t\tif fetchErr != nil {\n\t\t\thttp.Error(w, fmt.Sprintf("Failed to fetch models: %v", fetchErr), http.StatusBadGateway)',
+                  ),
+              ],
+          }
+
+          for filename, pairs in replacements.items():
+              path = Path(filename)
+              text = path.read_text()
+              for old, new in pairs:
+                  if old not in text:
+                      raise SystemExit(f"expected lint-fix pattern missing in {filename}")
+                  text = text.replace(old, new, 1)
+              path.write_text(text)
+          PY
+
+      - name: Run go generate
+        run: go generate ./...
+
+      - name: Apply repository formatters
+        continue-on-error: true
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.2.0
+        with:
+          version: v2.10.1
+          args: --fix --build-tags=goolm,stdjson
+
+      - name: Commit lint fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cmd pkg web
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "No lint changes to commit"
+            exit 0
+          fi
+          git commit -m "style: satisfy repository lint checks"
+          git push origin HEAD:feat/personalized-memory-v2
