@@ -22,7 +22,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat .personalization-patch.00 .personalization-patch.01 .personalization-patch.02 .personalization-patch.03 \
+          cat .personalization-patch.00a .personalization-patch.00b .personalization-patch.01 .personalization-patch.02 .personalization-patch.03 \
             | base64 -d | gzip -d > /tmp/personalization.patch
           patch --dry-run -p2 < /tmp/personalization.patch
           patch -s -p2 < /tmp/personalization.patch
