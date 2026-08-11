@@ -33,6 +33,7 @@ jobs:
             pkg/agent/agent_command.go \
             pkg/agent/agent_test.go \
             pkg/agent/context_manager_test.go \
+            pkg/agent/hooks_test.go \
             pkg/agent/memory_commands.go \
             pkg/agent/memory_delivery_test.go \
             pkg/agent/memory_prompt.go \
@@ -103,6 +104,7 @@ jobs:
             pkg/agent/agent_command.go \
             pkg/agent/agent_test.go \
             pkg/agent/context_manager_test.go \
+            pkg/agent/hooks_test.go \
             pkg/agent/memory_commands.go \
             pkg/agent/memory_delivery_test.go \
             pkg/agent/memory_prompt.go \
