@@ -83,7 +83,7 @@ func TestFailedDeliveryDiscardsCheckpointProgress(t *testing.T) {
 	}
 }
 
-func TestCuratedLastUsedAdvancesOnlyAfterSuccessfulDelivery(t *testing.T) {
+func TestCuratedLastPresentedAdvancesOnlyAfterSuccessfulDelivery(t *testing.T) {
 	al, agent, caller := newMemoryReviewerHarness(t, &mockProvider{})
 	result, err := agent.CuratedMemory.ApplyBatch(
 		memory.CuratedTargetCurrentUser,
@@ -108,8 +108,8 @@ func TestCuratedLastUsedAdvancesOnlyAfterSuccessfulDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inspect after failed delivery: %v", err)
 	}
-	if entry.LastUsedAt != nil {
-		t.Fatalf("failed delivery advanced LastUsedAt: %#v", entry.LastUsedAt)
+	if entry.LastPresentedAt != nil {
+		t.Fatalf("failed delivery advanced LastPresentedAt: %#v", entry.LastPresentedAt)
 	}
 
 	delivery.turnID = "turn-memory-usage-delivered"
@@ -118,8 +118,8 @@ func TestCuratedLastUsedAdvancesOnlyAfterSuccessfulDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inspect after successful delivery: %v", err)
 	}
-	if entry.LastUsedAt == nil {
-		t.Fatal("successful delivery did not advance LastUsedAt")
+	if entry.LastPresentedAt == nil {
+		t.Fatal("successful delivery did not advance LastPresentedAt")
 	}
 }
 

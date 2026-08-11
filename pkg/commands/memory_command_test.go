@@ -7,9 +7,10 @@ import (
 
 func TestMemoryAndCheckpointCommandsDispatchRuntimeControls(t *testing.T) {
 	runtime := &Runtime{
-		MemoryStatus: func() string { return "memory status" },
-		MemoryList:   func() (string, error) { return "memory list", nil },
-		MemorySearch: func(query string) (string, error) { return "searched " + query, nil },
+		MemoryStatus:  func() string { return "memory status" },
+		MemoryProfile: func() (string, error) { return "user profile", nil },
+		MemoryList:    func() (string, error) { return "memory list", nil },
+		MemorySearch:  func(query string) (string, error) { return "searched " + query, nil },
 		MemoryEdit: func(id, content string) (string, error) {
 			return "edited " + id + " to " + content, nil
 		},
@@ -31,6 +32,7 @@ func TestMemoryAndCheckpointCommandsDispatchRuntimeControls(t *testing.T) {
 		want    string
 	}{
 		{"/memory status", "memory status"},
+		{"/memory profile", "user profile"},
 		{"/memory list", "memory list"},
 		{"/memory search Go workflow", "searched Go workflow"},
 		{"/memory edit mem_0000000000000000 concise replies", "edited mem_0000000000000000 to concise replies"},

@@ -54,11 +54,18 @@ func TestRenderPromptPartsLegacy_UsesLayerAndSlotOrder(t *testing.T) {
 			Content: "runtime",
 		},
 		{
-			ID:      "kernel.identity",
+			ID:      "kernel.policy",
 			Layer:   PromptLayerKernel,
-			Slot:    PromptSlotIdentity,
+			Slot:    PromptSlotHierarchy,
 			Source:  PromptSource{ID: PromptSourceKernel},
 			Content: "kernel",
+		},
+		{
+			ID:      "identity.soul",
+			Layer:   PromptLayerIdentity,
+			Slot:    PromptSlotIdentity,
+			Source:  PromptSource{ID: PromptSourceSoul},
+			Content: "soul",
 		},
 		{
 			ID:      "capability.skill",
@@ -77,7 +84,7 @@ func TestRenderPromptPartsLegacy_UsesLayerAndSlotOrder(t *testing.T) {
 	}
 
 	got := renderPromptPartsLegacy(parts)
-	want := strings.Join([]string{"kernel", "workspace", "skill", "runtime"}, "\n\n---\n\n")
+	want := strings.Join([]string{"kernel", "soul", "workspace", "skill", "runtime"}, "\n\n---\n\n")
 	if got != want {
 		t.Fatalf("renderPromptPartsLegacy() = %q, want %q", got, want)
 	}
@@ -125,9 +132,9 @@ func TestBuildMessagesFromPrompt_AttachesInternalPromptMetadata(t *testing.T) {
 		t.Fatalf("system parts len = %d, want at least 3", len(system.SystemParts))
 	}
 	if system.SystemParts[0].PromptLayer != string(PromptLayerKernel) ||
-		system.SystemParts[0].PromptSlot != string(PromptSlotIdentity) ||
+		system.SystemParts[0].PromptSlot != string(PromptSlotHierarchy) ||
 		system.SystemParts[0].PromptSource != string(PromptSourceKernel) {
-		t.Fatalf("static system metadata = %#v, want kernel identity", system.SystemParts[0])
+		t.Fatalf("static system metadata = %#v, want immutable kernel policy", system.SystemParts[0])
 	}
 
 	var hasRuntime, hasSummary bool

@@ -5,16 +5,17 @@ and correctness boundary, not only an implementation detail.
 
 | Layer | Answers | Scope and ownership |
 | --- | --- | --- |
-| `AGENT.md` and `SOUL.md` | Who the agent is and how it behaves | Stable, administrator-controlled personality; memory and evolution never edit these files |
+| Immutable kernel | Which security/privacy/tool rules can never be weakened | Runtime-owned; higher authority than personality or memory |
+| `SOUL.md` | Who the agent is and how it naturally communicates | Authoritative personality/identity when present; generic PicoClaw identity is fallback only |
+| `AGENT.md` | What this workspace/agent should do | Stable operator/workspace instructions |
+| Compiled user profile | Who the current trusted user is and how to interact with them | Small derived view of private `current_user` curated memory |
 | Session history | What was said recently | One allocated session or Telegram topic |
 | Session summary | What older context in this session means | The same session or topic only |
 | Curated memory | Which selective facts remain useful | Non-personal workspace facts or one trusted canonical user |
 | Task checkpoints | Where temporary work stopped | One session or topic; never a user profile |
 | Skills and evolution | How a repeatable procedure should be performed | Agent/workspace procedural knowledge; never personal semantic memory |
 
-`USER.md` remains workspace-wide static context and is not a private profile.
-The existing `workspace/memory/MEMORY.md` and recent daily notes continue to
-enter prompts as manual workspace context. Structured memory lives separately
+`USER.md` is now explicitly a legacy/operator seed or default, not the live authoritative profile. A newer explicit structured user preference always wins when the two conflict. The existing `workspace/memory/MEMORY.md` and recent daily notes continue to enter prompts as manual **non-private workspace** context. Structured memory lives separately
 under `workspace/memory/structured/` and does not rewrite or migrate those
 legacy files.
 
@@ -52,12 +53,13 @@ update timestamps, and these lifecycle fields:
 - `status`: `active`, `superseded`, or `archived`;
 - `pinned`: whether a compact fact is eligible regardless of the current query;
 - `confidence` from greater than zero through one;
-- `supersedes` for an explicit correction;
-- optional verification, usage, archive, and expiry timestamps.
+- `evidence_kind`: `explicit`, `observed`, `inferred`, or the migration-only `legacy`;
+- optional `evidence_count` / `observation_count`;
+- optional stable `preference_key` / `preference_value` for deterministic preference changes;
+- `supersedes` for corrections/history;
+- confirmation, presentation, archive, and expiry timestamps.
 
-Old structured entries without these fields still load. They behave as active
-`other` entries with full effective confidence, and a read does not rewrite the
-store merely to add defaults.
+The store schema is versioned and old structured entries remain readable. Legacy non-reviewer records retain compatibility authority; old background-review records are conservatively treated as inferred rather than silently becoming user-confirmed facts. Reads normalize old fields in memory without requiring users to wipe their store.
 
 Workspace memory is for non-personal facts shared by sessions in the same
 agent workspace, such as project conventions, environment details, build
@@ -77,16 +79,25 @@ cannot read or mutate it. Private current-user listing and mutation commands
 are available only in a safe direct chat. Shared chats expose at most safe
 workspace information and redacted status.
 
+## Compiled current-user profile
+
+For a trusted direct chat, PicoClaw compiles a bounded `UserProfileSnapshot` from active curated current-user memory. This profile is always available to prompt assembly, so stable interaction preferences do not depend on retrieval luck. It contains only profile-relevant identity/communication/workflow/interaction fields and source memory IDs; project and episodic details remain query-retrieved.
+
+The snapshot is a cache, **not another source of truth**. It is rebuilt automatically when the underlying structured memory revision changes. Low-confidence inference is excluded by default, while explicit user preferences remain eligible. The default profile budget is 1,200 characters. Private profiles are never loaded into shared/group prompts.
+
+Structured preference keys make corrections deterministic. For example, a newer explicit `communication.verbosity=detailed` supersedes an older active `communication.verbosity=concise`; a weak inferred value cannot displace an explicit preference.
+
+Evidence authority is intentionally different: direct user statements are `explicit`, repeated behavioral evidence may be `observed`, and cautious model conclusions are `inferred`. An inferred entry is not automatically confirmed simply because the curator created it.
+
 ### What can be remembered
 
-The agent should save compact durable information after an explicit “remember
-this” request, a stable preference, a correction, a durable environment fact,
-a project convention, or a reliable workflow lesson.
+The agent should save compact durable information after an explicit “remember this” request, a stable preference, a correction, a durable environment fact, a project convention, or a reliable workflow lesson. Strong explicit preference/correction language can trigger an early bounded curator pass instead of waiting for the normal interval; the normal model-facing `memory_manage` path remains semantic and is not limited to English keywords.
 
 It must not save:
 
 - API keys, passwords, tokens, cookies, credentials, or private keys;
 - raw logs, large tool output, entire conversations, or temporary paths/errors;
+- unsupported psychological/sensitive labels inferred from conversational style;
 - unverified assumptions or instructions copied from untrusted external data;
 - task progress, which belongs in a checkpoint;
 - private user facts in workspace memory.
@@ -100,8 +111,7 @@ written with owner-only permissions.
 
 ## Query-aware retrieval
 
-Normal prompt assembly does not inject the whole structured store. For each
-turn, PicoClaw retrieves:
+Normal prompt assembly does not inject the whole structured store. For each turn, PicoClaw builds a compact retrieval query from the current message plus bounded session summary/recent user turns, then retrieves:
 
 1. bounded active pinned entries;
 2. top query-relevant active workspace entries;
@@ -109,17 +119,12 @@ turn, PicoClaw retrieves:
 4. only the configured recent fallback when the message has no meaningful
    lexical tokens.
 
-Workspace and current-user result/character budgets remain separate. Archived,
-superseded, and expired entries are excluded. Scoring is deterministic for a
-fixed timestamp and combines normalized token overlap, BM25-like rarity,
-prefix/trigram similarity, type and correction priority, confidence, recency,
-previous delivered use, and a stale penalty. It works locally without a vector
+Workspace and current-user result/character budgets remain separate and configurable. In direct personal chats the default retrieval budget favors current-user memory (70%) while retaining 30% for workspace facts; the compact profile has its own fixed budget. Archived,
+superseded, and expired entries are excluded. Scoring is deterministic for a fixed timestamp and combines normalized token overlap, BM25-like rarity, prefix/trigram similarity, structured preference terms, type/correction priority, evidence/confidence, type-aware recency, confirmation, a small presentation signal, and staleness. Stable identity/communication preferences decay much more slowly than episodic facts. It works locally without a vector
 database or embedding provider and supports ordinary Indonesian and English
 tokens.
 
-`last_used_at` is staged during prompt assembly and written only after the
-authoritative final response is delivered. Failed or partial delivery leaves it
-unchanged. Setting `memory.retrieval.enabled` to `false` retains the older
+`last_presented_at` is staged during prompt assembly and written only after the authoritative final response is delivered. It receives only a small ranking bonus because “shown to the model” is not proof of usefulness. Legacy `last_used_at` remains readable for compatibility. Failed or partial delivery leaves presentation state unchanged. Setting `memory.retrieval.enabled` to `false` retains the older
 bounded active-entry behavior.
 
 All rendered memory is bounded JSON-like reference data inside explicit
@@ -168,7 +173,7 @@ topic, resumes the most recent relevant one from `next_step`, and asks for
 clarification when several are equally plausible. Completed or archived work
 is not resumed accidentally.
 
-`/clear` and its `/reset` alias clear the current session history/summary,
+Before `/clear` or `/reset` discards session recall, PicoClaw performs a bounded synchronous flush of still-unreviewed delivered turns when background memory review is enabled. Then `/clear` and its `/reset` alias clear the current session history/summary,
 current-session recall records, and its reviewer cursor. They discard
 undelivered checkpoint mutations but preserve committed checkpoints, curated
 memory, `MEMORY.md`, daily notes, and every unrelated session/topic. Starting
@@ -197,6 +202,7 @@ private shared-chat operations never reveal their content.
 Memory commands are:
 
 - `/memory status`
+- `/memory profile` (trusted direct chat only)
 - `/memory list`
 - `/memory search QUERY`
 - `/memory edit ID CONTENT`
@@ -244,7 +250,12 @@ creates evolution drafts without applying them automatically:
       "provider": "",
       "model": "",
       "timeout_seconds": 30,
-      "max_iterations": 2
+      "max_iterations": 3
+    },
+    "profile": {
+      "enabled": true,
+      "max_chars": 1200,
+      "min_confidence": 0.65
     },
     "retrieval": {
       "enabled": true,
@@ -252,7 +263,8 @@ creates evolution drafts without applying them automatically:
       "max_workspace_results": 6,
       "max_user_results": 6,
       "max_total_chars": 4000,
-      "pinned_char_budget": 1200
+      "pinned_char_budget": 1200,
+      "user_share": 0.70
     },
     "recall": {
       "mode": "user_recall",
@@ -283,7 +295,7 @@ calls. Monitor provider usage before enabling them on high-volume agents.
 
 ## Limitations and troubleshooting
 
-Memory is selective, and lexical retrieval can miss paraphrases. A curator can
+Memory is selective. Default retrieval deliberately remains lightweight and local; compact profile fields and contextual query construction improve personalization, but deep semantic paraphrases can still be missed without an optional future semantic reranker. A curator can
 correctly decide that nothing is durable enough to save. Capacity, retention,
 model judgment, failed reviews, and explicit deletion also affect recall;
 PicoClaw cannot guarantee perfect memory.

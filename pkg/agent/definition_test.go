@@ -300,3 +300,62 @@ func cleanupWorkspace(t *testing.T, path string) {
 		t.Fatalf("failed to clean up workspace %s: %v", path, err)
 	}
 }
+
+func TestBuildSystemPromptUsesSoulAsIdentityAndUserAsLegacySeed(t *testing.T) {
+	tmpDir := setupWorkspace(t, map[string]string{
+		"AGENT.md": "# Agent\nOperate as a coding assistant.",
+		"SOUL.md":  "# Soul\nSpeak with deliberate technical precision.",
+		"USER.md":  "# User\nPrefers detailed answers.",
+	})
+	defer cleanupWorkspace(t, tmpDir)
+	cb := NewContextBuilder(tmpDir)
+	parts := cb.BuildSystemPromptParts()
+	var kernel, soul, workspace, legacy *PromptPart
+	for i := range parts {
+		part := &parts[i]
+		switch part.ID {
+		case "kernel.policy":
+			kernel = part
+		case "identity.soul":
+			soul = part
+		case "instruction.workspace":
+			workspace = part
+		case "context.user.legacy_seed":
+			legacy = part
+		}
+	}
+	if kernel == nil || kernel.Layer != PromptLayerKernel || kernel.Slot != PromptSlotHierarchy {
+		t.Fatalf("kernel = %#v", kernel)
+	}
+	if soul == nil || soul.Layer != PromptLayerIdentity || soul.Source.ID != PromptSourceSoul ||
+		!strings.Contains(soul.Content, "technical precision") {
+		t.Fatalf("soul identity = %#v", soul)
+	}
+	if strings.Contains(soul.Content, "You are PicoClaw, a helpful") {
+		t.Fatalf("generic fallback leaked into explicit SOUL: %q", soul.Content)
+	}
+	if workspace == nil || workspace.Layer != PromptLayerInstruction ||
+		!strings.Contains(workspace.Content, "coding assistant") {
+		t.Fatalf("workspace = %#v", workspace)
+	}
+	if legacy == nil || legacy.Layer != PromptLayerContext || legacy.Slot != PromptSlotLegacyUser ||
+		!strings.Contains(legacy.Content, "compatibility seed") {
+		t.Fatalf("legacy user = %#v", legacy)
+	}
+}
+
+func TestBuildSystemPromptFallsBackToPicoClawIdentityWithoutSoul(t *testing.T) {
+	tmpDir := setupWorkspace(t, map[string]string{"AGENT.md": "# Agent\nOperate safely."})
+	defer cleanupWorkspace(t, tmpDir)
+	cb := NewContextBuilder(tmpDir)
+	parts := cb.BuildSystemPromptParts()
+	for _, part := range parts {
+		if part.ID == "identity.soul" {
+			if !strings.Contains(part.Content, "You are PicoClaw") {
+				t.Fatalf("fallback identity missing: %q", part.Content)
+			}
+			return
+		}
+	}
+	t.Fatal("identity.soul part missing")
+}

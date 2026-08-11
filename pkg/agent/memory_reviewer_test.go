@@ -237,12 +237,12 @@ func TestMemoryReviewerTriggersAtIntervalAndOnlyOneRuns(t *testing.T) {
 	}
 	al, agent, caller := newMemoryReviewerHarness(t, provider)
 	appendReviewerTurn(t, agent, caller, "turn-1")
-	al.recordAndMaybeReviewMemory(agent, caller, 1)
+	al.recordAndMaybeReviewMemory(agent, caller, 1, "ordinary message")
 	if calls, _, _ := provider.snapshot(); calls != 0 {
 		t.Fatalf("review triggered before interval: %d calls", calls)
 	}
 	appendReviewerTurn(t, agent, caller, "turn-2")
-	al.recordAndMaybeReviewMemory(agent, caller, 2)
+	al.recordAndMaybeReviewMemory(agent, caller, 2, "ordinary message")
 	select {
 	case <-provider.started:
 	case <-time.After(2 * time.Second):
@@ -366,4 +366,39 @@ func containsAny(value string, needles ...string) bool {
 		}
 	}
 	return false
+}
+
+func TestHighSalienceMemoryHintsAreMultilingual(t *testing.T) {
+	for _, value := range []string{
+		"From now on I prefer detailed answers",
+		"Mulai sekarang saya lebih suka jawaban singkat",
+		"تذكر أنني أفضل الشرح المختصر",
+	} {
+		if !isHighSalienceMemoryText(value) {
+			t.Fatalf("high-salience preference not detected: %q", value)
+		}
+	}
+	if isHighSalienceMemoryText("What is the weather today?") {
+		t.Fatal("ordinary transient question treated as high-salience memory")
+	}
+}
+
+func TestMemoryReviewerHighSalienceCanTriggerBeforeInterval(t *testing.T) {
+	provider := &scriptedMemoryReviewProvider{started: make(chan struct{}), finished: make(chan struct{}), block: true}
+	al, agent, caller := newMemoryReviewerHarness(t, provider)
+	appendReviewerTurn(t, agent, caller, "turn-1")
+	al.recordAndMaybeReviewMemory(agent, caller, 1, "Mulai sekarang saya lebih suka jawaban singkat")
+	select {
+	case <-provider.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("high-salience preference did not trigger early review")
+	}
+	al.cancelMemoryReviewForLiveTurn(agent, processOptions{Dispatch: DispatchRequest{
+		InboundContext: &bus.InboundContext{Channel: "telegram", ChatID: caller.ChatID, SenderID: "user-a"},
+	}})
+	select {
+	case <-provider.finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("high-salience reviewer did not stop")
+	}
 }

@@ -67,7 +67,7 @@ func (s *CuratedStore) Retrieve(
 	queryCounts := lexicalTokenCounts(opts.Query)
 	documentFrequency := make(map[string]int)
 	for _, entry := range eligible {
-		for token := range lexicalTokenCounts(entry.Content) {
+		for token := range lexicalTokenCounts(curatedSearchText(entry)) {
 			documentFrequency[token]++
 		}
 	}
@@ -155,7 +155,7 @@ func curatedRelevanceScore(
 	opts CuratedRetrievalOptions,
 	now time.Time,
 ) float64 {
-	content := lexicalTokenCounts(entry.Content)
+	content := lexicalTokenCounts(curatedSearchText(entry))
 	queryTotal := 0
 	bm25 := 0.0
 	matched := 0
@@ -176,7 +176,7 @@ func curatedRelevanceScore(
 	}
 	fuzzy := 0.0
 	if len(query) > 0 && opts.FuzzyWeight > 0 {
-		fuzzy = trigramSimilarity(strings.Join(sortedTokenKeys(query), " "), strings.ToLower(entry.Content))
+		fuzzy = trigramSimilarity(strings.Join(sortedTokenKeys(query), " "), strings.ToLower(curatedSearchText(entry)))
 	}
 	if len(query) > 0 && matched == 0 && fuzzy < 0.08 {
 		return -1
@@ -186,29 +186,85 @@ func curatedRelevanceScore(
 	if ageDays < 0 {
 		ageDays = 0
 	}
-	recency := math.Pow(0.5, ageDays/opts.RecencyHalfLifeDays) * opts.RecencyWeight
+	halfLife := curatedTypeRecencyHalfLife(entry.EffectiveType(), opts.RecencyHalfLifeDays)
+	recency := math.Pow(0.5, ageDays/halfLife) * opts.RecencyWeight
 	stalePenalty := 0.0
-	if ageDays > opts.StaleAfterDays {
-		// Old facts remain retrievable when they are a strong lexical match, but
-		// they should not outrank a recently verified equivalent merely because
-		// they have the same type or historical usage signal.
-		stalePenalty = math.Min(0.75, 0.25*(ageDays/opts.StaleAfterDays))
+	staleAfter := curatedTypeStaleThreshold(entry.EffectiveType(), opts.StaleAfterDays)
+	if staleAfter > 0 && ageDays > staleAfter {
+		stalePenalty = math.Min(0.75, 0.25*(ageDays/staleAfter))
 	}
-	usage := 0.0
-	if entry.LastUsedAt != nil {
-		usedAgeDays := now.Sub(entry.LastUsedAt.UTC()).Hours() / 24
-		if usedAgeDays < 0 {
-			usedAgeDays = 0
+	presentation := 0.0
+	presentedAt := entry.LastPresentedAt
+	if presentedAt == nil {
+		presentedAt = entry.LastUsedAt // compatibility with v1 stores
+	}
+	if presentedAt != nil {
+		presentedAgeDays := now.Sub(presentedAt.UTC()).Hours() / 24
+		if presentedAgeDays < 0 {
+			presentedAgeDays = 0
 		}
-		usage = 0.12 * math.Pow(0.5, usedAgeDays/30)
+		presentation = 0.03 * math.Pow(0.5, presentedAgeDays/30)
+	}
+	confirmation := 0.0
+	if confirmedAt := entry.EffectiveLastConfirmedAt(); confirmedAt != nil {
+		confirmedAgeDays := now.Sub(confirmedAt.UTC()).Hours() / 24
+		if confirmedAgeDays < 0 {
+			confirmedAgeDays = 0
+		}
+		confirmation = 0.10 * math.Pow(0.5, confirmedAgeDays/180)
 	}
 	typeBonus := curatedTypeScore(entry.EffectiveType())
 	confidence := 0.15 * entry.EffectiveConfidence()
+	evidence := 0.04 * float64(entry.EvidenceAuthority())
 	pinnedBonus := 0.0
 	if entry.Pinned {
 		pinnedBonus = 2
 	}
-	return bm25 + (overlap * 2) + (fuzzy * opts.FuzzyWeight) + recency + usage + typeBonus + confidence + pinnedBonus - stalePenalty
+	return bm25 + (overlap * 2) + (fuzzy * opts.FuzzyWeight) + recency + presentation + confirmation + typeBonus + confidence + evidence + pinnedBonus - stalePenalty
+}
+
+func curatedSearchText(entry CuratedEntry) string {
+	parts := []string{entry.Content}
+	if key := NormalizePreferenceKey(entry.PreferenceKey); key != "" {
+		parts = append(parts, strings.ReplaceAll(key, ".", " "), entry.PreferenceValue)
+	}
+	return strings.Join(parts, " ")
+}
+
+func curatedTypeRecencyHalfLife(entryType string, fallback float64) float64 {
+	if fallback <= 0 {
+		fallback = 90
+	}
+	switch entryType {
+	case CuratedTypeIdentity, CuratedTypeCommunicationPreference, CuratedTypeCorrection:
+		return fallback * 8
+	case CuratedTypeWorkflowPreference, CuratedTypeRelationship:
+		return fallback * 3
+	case CuratedTypeEnvironment:
+		return fallback * 1.5
+	case CuratedTypeEpisodicFact:
+		return math.Max(14, fallback*0.35)
+	default:
+		return fallback
+	}
+}
+
+func curatedTypeStaleThreshold(entryType string, fallback float64) float64 {
+	if fallback <= 0 {
+		fallback = 180
+	}
+	switch entryType {
+	case CuratedTypeIdentity, CuratedTypeCommunicationPreference, CuratedTypeCorrection:
+		return 0 // stable until explicitly superseded/expired
+	case CuratedTypeWorkflowPreference, CuratedTypeRelationship:
+		return fallback * 3
+	case CuratedTypeEnvironment:
+		return fallback * 1.5
+	case CuratedTypeEpisodicFact:
+		return math.Max(30, fallback*0.5)
+	default:
+		return fallback
+	}
 }
 
 func curatedTypeScore(entryType string) float64 {

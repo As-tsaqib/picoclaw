@@ -17,6 +17,13 @@ var curatedTypes = map[string]struct{}{
 	CuratedTypeOther:                   {},
 }
 
+var curatedEvidenceKinds = map[string]struct{}{
+	CuratedEvidenceExplicit: {},
+	CuratedEvidenceObserved: {},
+	CuratedEvidenceInferred: {},
+	CuratedEvidenceLegacy:   {},
+}
+
 func NormalizeCuratedType(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if _, ok := curatedTypes[value]; ok {
@@ -50,6 +57,40 @@ func ValidCuratedStatus(value string) bool {
 	}
 }
 
+func NormalizeEvidenceKind(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if _, ok := curatedEvidenceKinds[value]; ok {
+		return value
+	}
+	return ""
+}
+
+func ValidEvidenceKind(value string) bool {
+	_, ok := curatedEvidenceKinds[strings.ToLower(strings.TrimSpace(value))]
+	return ok
+}
+
+func NormalizePreferenceKey(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func ValidPreferenceKey(value string) bool {
+	value = NormalizePreferenceKey(value)
+	if value == "" || len(value) > 96 {
+		return false
+	}
+	for i, r := range value {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			continue
+		}
+		if i > 0 && (r == '.' || r == '_' || r == '-') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func (entry CuratedEntry) EffectiveType() string {
 	return NormalizeCuratedType(entry.Type)
 }
@@ -58,14 +99,62 @@ func (entry CuratedEntry) EffectiveStatus() string {
 	return NormalizeCuratedStatus(entry.Status)
 }
 
+func (entry CuratedEntry) EffectiveEvidenceKind() string {
+	if value := NormalizeEvidenceKind(entry.EvidenceKind); value != "" {
+		return value
+	}
+	// Legacy records predate evidence semantics. Background-review provenance
+	// is conservatively treated as inference; other persisted records retain
+	// legacy authority so upgrades do not silently weaken established memory.
+	if strings.EqualFold(strings.TrimSpace(entry.Provenance.Source), "background_review") {
+		return CuratedEvidenceInferred
+	}
+	return CuratedEvidenceLegacy
+}
+
+func DefaultConfidenceForEvidence(evidence string) float64 {
+	switch NormalizeEvidenceKind(evidence) {
+	case CuratedEvidenceExplicit:
+		return 1.0
+	case CuratedEvidenceObserved:
+		return 0.72
+	case CuratedEvidenceInferred:
+		return 0.45
+	default:
+		return 1.0
+	}
+}
+
 func (entry CuratedEntry) EffectiveConfidence() float64 {
-	if entry.Confidence <= 0 {
-		return 1
+	if entry.Confidence > 0 {
+		if entry.Confidence > 1 {
+			return 1
+		}
+		return entry.Confidence
 	}
-	if entry.Confidence > 1 {
+	return DefaultConfidenceForEvidence(entry.EffectiveEvidenceKind())
+}
+
+func (entry CuratedEntry) EvidenceAuthority() int {
+	switch entry.EffectiveEvidenceKind() {
+	case CuratedEvidenceExplicit:
+		return 4
+	case CuratedEvidenceLegacy:
+		return 3
+	case CuratedEvidenceObserved:
+		return 2
+	case CuratedEvidenceInferred:
 		return 1
+	default:
+		return 0
 	}
-	return entry.Confidence
+}
+
+func (entry CuratedEntry) EffectiveLastConfirmedAt() *time.Time {
+	if entry.LastConfirmedAt != nil {
+		return entry.LastConfirmedAt
+	}
+	return entry.LastVerifiedAt
 }
 
 func (entry CuratedEntry) PromptEligible(now time.Time) bool {
@@ -91,9 +180,38 @@ func curatedTypeAllowedForTarget(target, entryType string) bool {
 	}
 }
 
+func preferenceKeyAllowedForTarget(target, key string) bool {
+	if strings.TrimSpace(key) == "" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(target), CuratedTargetCurrentUser)
+}
+
 func normalizedCuratedEntry(entry CuratedEntry) CuratedEntry {
 	entry.Type = entry.EffectiveType()
 	entry.Status = entry.EffectiveStatus()
-	entry.Confidence = entry.EffectiveConfidence()
+
+	rawEvidence := NormalizeEvidenceKind(entry.EvidenceKind)
+	legacyBackgroundInference := rawEvidence == "" &&
+		strings.EqualFold(strings.TrimSpace(entry.Provenance.Source), "background_review")
+	entry.EvidenceKind = entry.EffectiveEvidenceKind()
+	if legacyBackgroundInference {
+		// V1 background-review records were historically stored as confidence=1
+		// and auto-verified even though they could be model inference. On upgrade,
+		// reinterpret only this known-unsafe legacy provenance conservatively.
+		entry.Confidence = DefaultConfidenceForEvidence(CuratedEvidenceInferred)
+		entry.LastConfirmedAt = nil
+		entry.LastVerifiedAt = nil
+	} else {
+		entry.Confidence = entry.EffectiveConfidence()
+	}
+	entry.PreferenceKey = NormalizePreferenceKey(entry.PreferenceKey)
+	entry.PreferenceValue = strings.TrimSpace(entry.PreferenceValue)
+	if entry.EvidenceCount < 0 {
+		entry.EvidenceCount = 0
+	}
+	if entry.ObservationCount < 0 {
+		entry.ObservationCount = 0
+	}
 	return entry
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/memory"
+	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
 func TestMemoryPromptUsesBoundedWorkspaceCurrentUserAndCurrentTopicCheckpoint(t *testing.T) {
@@ -292,11 +293,11 @@ func TestMemoryPromptRetrievalDisabledPreservesBoundedLegacySelection(t *testing
 
 func TestCuratedPromptBudgetsRemainSeparateByTarget(t *testing.T) {
 	retrieval := config.MemoryRetrievalConfig{MaxTotalChars: 101}
-	if workspace := curatedPromptCharBudget(retrieval, memory.CuratedTargetWorkspace); workspace != 50 {
-		t.Fatalf("workspace budget = %d, want 50", workspace)
+	if workspace := curatedPromptCharBudget(retrieval, memory.CuratedTargetWorkspace); workspace != 31 {
+		t.Fatalf("workspace budget = %d, want 31", workspace)
 	}
-	if user := curatedPromptCharBudget(retrieval, memory.CuratedTargetCurrentUser); user != 51 {
-		t.Fatalf("user budget = %d, want 51", user)
+	if user := curatedPromptCharBudget(retrieval, memory.CuratedTargetCurrentUser); user != 70 {
+		t.Fatalf("user budget = %d, want 70", user)
 	}
 }
 
@@ -307,4 +308,64 @@ func promptPartsContain(parts []PromptPart, value string) bool {
 		}
 	}
 	return false
+}
+
+func TestMemoryPromptIncludesCompiledProfileWithoutRetrievalMatch(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Memory.Retrieval.RecentFallbackCount = 0
+	cfg.Memory.Retrieval.MinimumScore = 9 // force ordinary retrieval to reject it
+	store, err := memory.NewCuratedStore(
+		t.TempDir(),
+		memory.CuratedStoreOptions{WorkspaceCharLimit: 5_000, PerUserCharLimit: 5_000},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := memory.CallerScope{
+		AgentID:    "main",
+		UserKey:    "telegram:user-profile",
+		Channel:    "telegram",
+		Account:    "personal",
+		SessionKey: "topic-a",
+		SessionRef: "session-a",
+	}
+	if _, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, caller, []memory.CuratedMutation{
+		{
+			Action:          memory.CuratedActionAdd,
+			Content:         "User explicitly prefers Indonesian",
+			Type:            memory.CuratedTypeCommunicationPreference,
+			EvidenceKind:    memory.CuratedEvidenceExplicit,
+			PreferenceKey:   "communication.language",
+			PreferenceValue: "id",
+		},
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	ts := &turnState{agent: &AgentInstance{ID: "main", CuratedMemory: store}, userMessage: "What is a B-tree?"}
+	parts, private := memoryPromptPartsForTurn(ts, cfg, caller)
+	if !private || !promptPartsContain(parts, "<user_profile>") ||
+		!promptPartsContain(parts, `"communication.language"`) {
+		t.Fatalf("compiled profile missing from private prompt: %#v", parts)
+	}
+	if len(ts.stagedCuratedUsage()) != 0 {
+		t.Fatalf("always-on profile must not create presentation feedback: %#v", ts.stagedCuratedUsage())
+	}
+}
+
+func TestCuratedRetrievalQueryUsesSummaryAndRecentUserTurns(t *testing.T) {
+	ts := &turnState{
+		userMessage:         "lanjut yang tadi",
+		restorePointSummary: "We are configuring an OpenWrt WireGuard interface.",
+		restorePointHistory: []providers.Message{
+			{Role: "user", Content: "Set the firewall zone for WireGuard."},
+			{Role: "assistant", Content: "Use a dedicated wg zone."},
+			{Role: "user", Content: "Show the second approach."},
+		},
+	}
+	query := curatedRetrievalQuery(ts)
+	for _, expected := range []string{"lanjut yang tadi", "OpenWrt WireGuard", "second approach", "firewall zone"} {
+		if !strings.Contains(query, expected) {
+			t.Fatalf("retrieval query missing %q: %q", expected, query)
+		}
+	}
 }

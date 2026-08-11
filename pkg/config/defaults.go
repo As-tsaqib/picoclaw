@@ -58,6 +58,11 @@ func DefaultConfig() *Config {
 				TimeoutSeconds: DefaultMemoryReviewTimeout,
 				MaxIterations:  DefaultMemoryReviewIterations,
 			},
+			Profile: MemoryProfileConfig{
+				Enabled:       true,
+				MaxChars:      DefaultMemoryProfileChars,
+				MinConfidence: DefaultMemoryProfileMinScore,
+			},
 			Retrieval: MemoryRetrievalConfig{
 				Enabled:             true,
 				Engine:              MemoryRetrievalHybridLexical,
@@ -70,6 +75,7 @@ func DefaultConfig() *Config {
 				RecencyHalfLifeDays: DefaultMemoryRecencyHalfLife,
 				FuzzyWeight:         DefaultMemoryFuzzyWeight,
 				RecentFallbackCount: DefaultMemoryRecentFallback,
+				UserShare:           DefaultMemoryUserShare,
 			},
 			Lifecycle: MemoryLifecycleConfig{
 				ArchivedRetentionDays: DefaultMemoryArchivedRetention,

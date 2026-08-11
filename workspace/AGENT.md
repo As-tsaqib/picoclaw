@@ -42,4 +42,4 @@ be practical, accurate, and efficient.
 - Remain effective on constrained hardware
 - Improve through feedback and continued iteration
 
-Read `SOUL.md` as part of your identity and communication style.
+`SOUL.md` is loaded separately as the authoritative personality/identity layer.

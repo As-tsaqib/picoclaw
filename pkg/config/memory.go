@@ -25,7 +25,7 @@ const (
 	DefaultPerUserMemoryCharLimit   = 8_000
 	DefaultMemoryReviewInterval     = 10
 	DefaultMemoryReviewTimeout      = 30
-	DefaultMemoryReviewIterations   = 2
+	DefaultMemoryReviewIterations   = 3
 	DefaultMemoryRecallResults      = 5
 	DefaultMemoryRecallChars        = 4_000
 	DefaultMemoryRecallRecords      = 2_000
@@ -35,6 +35,9 @@ const (
 	DefaultMemoryWorkspaceResults   = 6
 	DefaultMemoryUserResults        = 6
 	DefaultMemoryRetrievalChars     = 4_000
+	DefaultMemoryProfileChars       = 1_200
+	DefaultMemoryProfileMinScore    = 0.65
+	DefaultMemoryUserShare          = 0.70
 	DefaultMemoryPinnedChars        = 1_200
 	DefaultMemoryMinRelevance       = 0.35
 	DefaultMemoryRecencyWeight      = 0.25
@@ -52,6 +55,7 @@ const (
 	MaxCheckpointContextChars = 20_000
 	MaxMemoryRetrievalResults = 50
 	MaxMemoryRetrievalChars   = 20_000
+	MaxMemoryProfileChars     = 4_000
 	MaxMemoryPinnedChars      = 10_000
 	MaxMemoryLifecycleDays    = 3_650
 )
@@ -68,10 +72,17 @@ type MemoryConfig struct {
 	ApprovalMode       string                 `json:"approval_mode,omitempty"        env:"PICOCLAW_MEMORY_APPROVAL_MODE"`
 	Notifications      string                 `json:"notifications,omitempty"        env:"PICOCLAW_MEMORY_NOTIFICATIONS"`
 	BackgroundReview   MemoryReviewConfig     `json:"background_review,omitempty"`
+	Profile            MemoryProfileConfig    `json:"profile,omitempty"`
 	Retrieval          MemoryRetrievalConfig  `json:"retrieval,omitempty"`
 	Lifecycle          MemoryLifecycleConfig  `json:"lifecycle,omitempty"`
 	Recall             MemoryRecallConfig     `json:"recall,omitempty"`
 	Checkpoints        MemoryCheckpointConfig `json:"checkpoints,omitempty"`
+}
+
+type MemoryProfileConfig struct {
+	Enabled       bool    `json:"enabled"`
+	MaxChars      int     `json:"max_chars,omitempty"`
+	MinConfidence float64 `json:"min_confidence,omitempty"`
 }
 
 type MemoryRetrievalConfig struct {
@@ -86,6 +97,7 @@ type MemoryRetrievalConfig struct {
 	RecencyHalfLifeDays int     `json:"recency_half_life_days,omitempty"`
 	FuzzyWeight         float64 `json:"fuzzy_weight,omitempty"`
 	RecentFallbackCount int     `json:"recent_fallback_count,omitempty"`
+	UserShare           float64 `json:"user_share,omitempty"`
 }
 
 type MemoryLifecycleConfig struct {
@@ -176,6 +188,20 @@ func (c MemoryConfig) ShouldStageMemoryWrite(background bool) bool {
 	}
 }
 
+func (c MemoryProfileConfig) EffectiveMaxChars() int {
+	return boundedPositive(c.MaxChars, DefaultMemoryProfileChars, MaxMemoryProfileChars)
+}
+
+func (c MemoryProfileConfig) EffectiveMinConfidence() float64 {
+	if c.MinConfidence <= 0 {
+		return DefaultMemoryProfileMinScore
+	}
+	if c.MinConfidence > 1 {
+		return 1
+	}
+	return c.MinConfidence
+}
+
 func (c MemoryRetrievalConfig) EffectiveEngine() string {
 	if strings.EqualFold(strings.TrimSpace(c.Engine), MemoryRetrievalHybridLexical) {
 		return MemoryRetrievalHybridLexical
@@ -231,6 +257,19 @@ func (c MemoryRetrievalConfig) EffectiveFuzzyWeight() float64 {
 		return 5
 	}
 	return c.FuzzyWeight
+}
+
+func (c MemoryRetrievalConfig) EffectiveUserShare() float64 {
+	if c.UserShare <= 0 {
+		return DefaultMemoryUserShare
+	}
+	if c.UserShare < 0.5 {
+		return 0.5
+	}
+	if c.UserShare > 0.9 {
+		return 0.9
+	}
+	return c.UserShare
 }
 
 func (c MemoryRetrievalConfig) EffectiveRecentFallbackCount() int {
@@ -418,6 +457,15 @@ func (c MemoryConfig) Validate() error {
 		"memory.checkpoints.completed_retention_days",
 		c.Checkpoints.CompletedRetentionDays,
 	)
+	if c.Profile.MaxChars != 0 {
+		bounded("memory.profile.max_chars", c.Profile.MaxChars, MaxMemoryProfileChars)
+	}
+	if c.Profile.MinConfidence < 0 || c.Profile.MinConfidence > 1 {
+		validationErrors = append(validationErrors, "memory.profile.min_confidence must be between 0 and 1")
+	}
+	if c.Retrieval.UserShare != 0 && (c.Retrieval.UserShare < 0.5 || c.Retrieval.UserShare > 0.9) {
+		validationErrors = append(validationErrors, "memory.retrieval.user_share must be between 0.5 and 0.9")
+	}
 	if !strings.EqualFold(strings.TrimSpace(c.Retrieval.Engine), MemoryRetrievalHybridLexical) {
 		validationErrors = append(validationErrors, "memory.retrieval.engine must be hybrid_lexical")
 	}

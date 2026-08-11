@@ -33,9 +33,15 @@ func configureMemoryCommandRuntime(
 				),
 				fmt.Sprintf("Approval mode: %s", rt.Config.Memory.EffectiveApprovalMode()),
 				fmt.Sprintf(
-					"Query-aware retrieval: %t (%s)",
+					"Query-aware retrieval: %t (%s, user share %.0f%%)",
 					rt.Config.Memory.Retrieval.Enabled,
 					rt.Config.Memory.Retrieval.EffectiveEngine(),
+					rt.Config.Memory.Retrieval.EffectiveUserShare()*100,
+				),
+				fmt.Sprintf(
+					"Compiled user profile: %t (max %d chars)",
+					rt.Config.Memory.Profile.Enabled,
+					rt.Config.Memory.Profile.EffectiveMaxChars(),
 				),
 				fmt.Sprintf("Notifications: %s", rt.Config.Memory.EffectiveNotificationMode()),
 			}
@@ -53,6 +59,22 @@ func configureMemoryCommandRuntime(
 				}
 			}
 			return strings.Join(lines, "\n")
+		}
+		rt.MemoryProfile = func() (string, error) {
+			if caller.GroupID != "" {
+				return "", memory.ErrPrivateContextRequired
+			}
+			if !rt.Config.Memory.Profile.Enabled {
+				return "Compiled user profile is disabled.", nil
+			}
+			profile, err := agent.CuratedMemory.CompileUserProfile(caller, memory.UserProfileOptions{
+				MaxChars:      rt.Config.Memory.Profile.EffectiveMaxChars(),
+				MinConfidence: rt.Config.Memory.Profile.EffectiveMinConfidence(),
+			})
+			if err != nil {
+				return "", err
+			}
+			return formatUserProfile(profile), nil
 		}
 		rt.MemoryList = func() (string, error) {
 			workspace, err := agent.CuratedMemory.List(memory.CuratedTargetWorkspace, caller)
@@ -91,7 +113,8 @@ func configureMemoryCommandRuntime(
 			}
 			_, err = agent.CuratedMemory.ApplyBatch(target, caller, []memory.CuratedMutation{{
 				Action: memory.CuratedActionReplace, ID: id, Content: content,
-				Provenance: memory.Provenance{Source: "user_command"},
+				EvidenceKind: memory.CuratedEvidenceExplicit,
+				Provenance:   memory.Provenance{Source: "user_command"},
 			}}, false)
 			if err != nil {
 				return "", err
@@ -217,6 +240,40 @@ func configureMemoryCommandRuntime(
 			return fmt.Sprintf("Archived checkpoint %s (%s).", checkpoint.Title, checkpoint.ID), nil
 		}
 	}
+}
+
+func formatUserProfile(profile memory.UserProfileSnapshot) string {
+	lines := []string{"Current-user compiled profile:"}
+	appendFields := func(title string, fields []memory.UserProfileField) {
+		if len(fields) == 0 {
+			return
+		}
+		lines = append(lines, title+":")
+		for _, field := range fields {
+			value := strings.TrimSpace(field.Value)
+			if value == "" {
+				value = strings.TrimSpace(field.Content)
+			}
+			value = truncateMemoryCommandText(memory.RedactMemoryText(value), 480)
+			lines = append(lines, fmt.Sprintf(
+				"- %s = %s [%s, confidence %.2f, source %s]",
+				field.Key, value, field.EvidenceKind, field.Confidence, field.SourceID,
+			))
+		}
+	}
+	appendFields("Identity", profile.Identity)
+	appendFields("Communication", profile.Communication)
+	appendFields("Workflow", profile.Workflow)
+	appendFields("Interaction", profile.Interaction)
+	appendFields("Boundaries", profile.Boundaries)
+	if len(lines) == 1 {
+		lines = append(lines, "- (empty)")
+	}
+	lines = append(
+		lines,
+		fmt.Sprintf("Profile size: %d characters; sources: %d", profile.Characters, len(profile.SourceIDs)),
+	)
+	return strings.Join(lines, "\n")
 }
 
 func formatMemoryStats(stats memory.CuratedStats) string {

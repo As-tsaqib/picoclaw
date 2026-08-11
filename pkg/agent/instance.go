@@ -71,6 +71,7 @@ type AgentInstance struct {
 type memoryReviewController struct {
 	mu     sync.Mutex
 	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 // NewAgentInstance creates an agent instance from config.

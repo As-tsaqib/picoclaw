@@ -11,6 +11,11 @@ func memoryCommand() Definition {
 		Description: "Inspect and manage curated durable memory",
 		SubCommands: []SubCommand{
 			{Name: "status", Description: "Show memory configuration and capacity", Handler: memoryStatusHandler},
+			{
+				Name:        "profile",
+				Description: "Show the compiled private current-user profile",
+				Handler:     memoryProfileHandler,
+			},
 			{Name: "list", Description: "List current workspace/user entries", Handler: memoryListHandler},
 			{
 				Name: "search", Description: "Search current scoped memory",
@@ -107,6 +112,17 @@ func memoryStatusHandler(_ context.Context, req Request, rt *Runtime) error {
 		return req.Reply(unavailableMsg)
 	}
 	return req.Reply(rt.MemoryStatus())
+}
+
+func memoryProfileHandler(_ context.Context, req Request, rt *Runtime) error {
+	if rt == nil || rt.MemoryProfile == nil {
+		return req.Reply(unavailableMsg)
+	}
+	response, err := rt.MemoryProfile()
+	if err != nil {
+		return req.Reply("Failed to show user profile: " + err.Error())
+	}
+	return req.Reply(response)
 }
 
 func memoryListHandler(_ context.Context, req Request, rt *Runtime) error {

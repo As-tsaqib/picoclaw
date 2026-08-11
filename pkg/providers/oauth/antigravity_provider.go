@@ -12,10 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/sipeed/picoclaw/pkg/auth"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers/common"
-	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -468,7 +469,7 @@ func createAntigravityTokenSource() func() (string, string, error) {
 		// Refresh if needed
 		needsRefresh := !cred.ExpiresAt.IsZero() && time.Now().Add(antigravityRefreshSkew).After(cred.ExpiresAt)
 		if needsRefresh && cred.RefreshToken != "" {
-			result, refreshErr, _ := antigravityRefreshGroup.Do(cred.RefreshToken, func() (interface{}, error) {
+			result, refreshErr, _ := antigravityRefreshGroup.Do(cred.RefreshToken, func() (any, error) {
 				current, err := auth.GetCredential("google-antigravity")
 				if err != nil {
 					return nil, fmt.Errorf("loading current credentials: %w", err)
@@ -568,8 +569,8 @@ func FetchAntigravityProjectID(accessToken string) (string, error) {
 	}
 
 	var loadResp map[string]any
-	if err := json.Unmarshal(body, &loadResp); err != nil {
-		return "", err
+	if unmarshalErr := json.Unmarshal(body, &loadResp); unmarshalErr != nil {
+		return "", unmarshalErr
 	}
 
 	projectID := extractCloudAICompanionProject(loadResp)

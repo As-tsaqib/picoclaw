@@ -65,6 +65,7 @@ type Runtime struct {
 	ReloadConfig       func() error
 	StopActiveTurn     func() (StopResult, error)
 	MemoryStatus       func() string
+	MemoryProfile      func() (string, error)
 	MemoryList         func() (string, error)
 	MemorySearch       func(query string) (string, error)
 	MemoryEdit         func(id, content string) (string, error)

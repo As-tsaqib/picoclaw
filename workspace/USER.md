@@ -1,21 +1,18 @@
-# User
+# User Seed / Defaults
 
-Information about the user goes here.
+This file is optional operator-provided seed context for the user experience.
+It is **not** the live long-term user profile and should not contain private
+personal data on shared workspaces.
 
-## Preferences
+Current explicit structured user preferences and corrections always override
+conflicting values in this file.
 
-- Communication style: (casual/formal)
-- Timezone: (your timezone)
-- Language: (your preferred language)
+## Safe Defaults
 
-## Personal Information
+- Preferred language: (optional default)
+- Communication style: (optional default)
+- Explanation depth: (optional default)
+- Formatting preference: (optional default)
 
-- Name: (optional)
-- Location: (optional)
-- Occupation: (optional)
-
-## Learning Goals
-
-- What the user wants to learn from AI
-- Preferred interaction style
-- Areas of interest
+For durable personal preferences learned during conversation, use PicoClaw's
+private `current_user` curated memory instead of editing this file.
