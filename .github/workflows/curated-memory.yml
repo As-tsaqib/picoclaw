@@ -110,6 +110,27 @@ jobs:
       - name: Run frontend lint
         run: pnpm lint
 
+      - name: Format feature frontend sources for handoff
+        run: >-
+          pnpm exec prettier --write
+          src/components/config/config-page.tsx
+          src/components/config/config-sections.tsx
+          src/components/config/form-model.ts
+          src/components/config/memory-evolution-management.tsx
+          tests/form-model.test.ts
+
+      - name: Upload remotely formatted frontend sources
+        uses: actions/upload-artifact@v7
+        with:
+          name: contextual-memory-formatted-frontend
+          if-no-files-found: error
+          path: |
+            web/frontend/src/components/config/config-page.tsx
+            web/frontend/src/components/config/config-sections.tsx
+            web/frontend/src/components/config/form-model.ts
+            web/frontend/src/components/config/memory-evolution-management.tsx
+            web/frontend/tests/form-model.test.ts
+
       - name: Check frontend formatting
         run: >-
           pnpm exec prettier --check
