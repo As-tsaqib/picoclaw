@@ -1,0 +1,296 @@
+--- a/pkg/memory/user_profile.go
++++ b/pkg/memory/user_profile.go
+@@ -77,6 +77,7 @@
+ 	if opts.MinConfidence > 1 {
+ 		opts.MinConfidence = 1
+ 	}
++	useCache := opts.Now.IsZero()
+ 	if opts.Now.IsZero() {
+ 		opts.Now = s.now()
+ 	}
+@@ -106,12 +107,14 @@
+ 		}
+ 	}
+ 
+-	if cached, ok := s.profileCache.Load(path); ok {
+-		item, valid := cached.(cachedUserProfile)
+-		cacheTimeValid := item.ValidUntil.IsZero() || now.Before(item.ValidUntil)
+-		if valid && cacheTimeValid && item.Revision == profileRevision && item.MaxChars == opts.MaxChars &&
+-			item.MinScore == opts.MinConfidence {
+-			return cloneUserProfileSnapshot(item.Snapshot), nil
++	if useCache {
++		if cached, ok := s.profileCache.Load(path); ok {
++			item, valid := cached.(cachedUserProfile)
++			cacheTimeValid := item.ValidUntil.IsZero() || now.Before(item.ValidUntil)
++			if valid && cacheTimeValid && item.Revision == profileRevision && item.MaxChars == opts.MaxChars &&
++				item.MinScore == opts.MinConfidence {
++				return cloneUserProfileSnapshot(item.Snapshot), nil
++			}
+ 		}
+ 	}
+ 
+@@ -175,13 +178,15 @@
+ 		snapshot = candidateSnapshot
+ 	}
+ 
+-	s.profileCache.Store(path, cachedUserProfile{
+-		Revision:   profileRevision,
+-		MaxChars:   opts.MaxChars,
+-		MinScore:   opts.MinConfidence,
+-		ValidUntil: validUntil,
+-		Snapshot:   cloneUserProfileSnapshot(snapshot),
+-	})
++	if useCache {
++		s.profileCache.Store(path, cachedUserProfile{
++			Revision:   profileRevision,
++			MaxChars:   opts.MaxChars,
++			MinScore:   opts.MinConfidence,
++			ValidUntil: validUntil,
++			Snapshot:   cloneUserProfileSnapshot(snapshot),
++		})
++	}
+ 	return snapshot, nil
+ }
+ 
+--- a/pkg/memory/curated_store.go
++++ b/pkg/memory/curated_store.go
+@@ -620,6 +620,26 @@
+ 			entries[idx].ArchivedAt = nil
+ 			entries[idx].UpdatedAt = now
+ 			entries[idx].Provenance = mutation.Provenance
++			// Restoring a structured preference may also be a deliberate
++			// reaffirmation. Only apply an evidence override when the caller
++			// supplied one; background/generic restores otherwise preserve the
++			// original authority and confirmation time.
++			if NormalizePreferenceKey(entries[idx].PreferenceKey) != "" && strings.TrimSpace(mutation.EvidenceKind) != "" {
++				entries[idx].EvidenceKind = NormalizeEvidenceKind(mutation.EvidenceKind)
++				confidence := DefaultConfidenceForEvidence(entries[idx].EvidenceKind)
++				if mutation.Confidence != nil {
++					confidence = *mutation.Confidence
++				}
++				entries[idx].Confidence = normalizeConfidenceForEvidence(entries[idx].EvidenceKind, confidence)
++				if entries[idx].EvidenceKind == CuratedEvidenceExplicit {
++					confirmed := now
++					entries[idx].LastConfirmedAt = &confirmed
++					entries[idx].LastVerifiedAt = &confirmed
++				} else {
++					entries[idx].LastConfirmedAt = nil
++					entries[idx].LastVerifiedAt = nil
++				}
++			}
+ 			entries[idx] = normalizedCuratedEntry(entries[idx])
+ 			reconcilePreferenceKey(entries, mutation.ID, now)
+ 			if current, ok := curatedEntryByID(entries, mutation.ID); ok {
+--- a/pkg/memory/user_profile_test.go
++++ b/pkg/memory/user_profile_test.go
+@@ -300,3 +300,100 @@
+ 		t.Fatalf("profile Characters = %d, actual serialized = %d", profile.Characters, utf8.RuneCount(data))
+ 	}
+ }
++
++func TestCompileUserProfileCustomNowBypassesRealtimeCache(t *testing.T) {
++	base := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
++	now := base
++	store, err := NewCuratedStore(
++		filepath.Join(t.TempDir(), "curated"),
++		CuratedStoreOptions{Now: func() time.Time { return now }},
++	)
++	if err != nil {
++		t.Fatal(err)
++	}
++	caller := testCaller("telegram:user-asof")
++	expires := base.Add(time.Hour)
++	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
++		Action: CuratedActionAdd, Content: "Temporarily prefers concise answers", Type: CuratedTypeCommunicationPreference,
++		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
++		ExpiresAt: &expires,
++	}}, false); err != nil {
++		t.Fatal(err)
++	}
++
++	// Populate the real-time cache after expiry with an empty profile.
++	now = base.Add(2 * time.Hour)
++	realtime, err := store.CompileUserProfile(caller, UserProfileOptions{MaxChars: 800})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(realtime.SourceIDs) != 0 {
++		t.Fatalf("expired real-time profile = %#v, want empty", realtime)
++	}
++
++	// A historical/as-of query must not reuse the real-time cache.
++	historical, err := store.CompileUserProfile(caller, UserProfileOptions{
++		MaxChars: 800,
++		Now:      base.Add(30 * time.Minute),
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(historical.Communication) != 1 || historical.Communication[0].Value != "concise" {
++		t.Fatalf("historical profile reused real-time cache: %#v", historical)
++	}
++}
++
++func TestExplicitRestoreReaffirmsArchivedPreference(t *testing.T) {
++	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
++	store, err := NewCuratedStore(
++		filepath.Join(t.TempDir(), "curated"),
++		CuratedStoreOptions{Now: func() time.Time { return now }},
++	)
++	if err != nil {
++		t.Fatal(err)
++	}
++	caller := testCaller("telegram:user-explicit-restore")
++	old, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
++		Action: CuratedActionAdd, Content: "Prefers concise responses", Type: CuratedTypeCommunicationPreference,
++		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
++	}}, false)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
++		Action: CuratedActionArchive, ID: old.Applied[0].ID,
++	}}, false); err != nil {
++		t.Fatal(err)
++	}
++
++	now = now.Add(time.Hour)
++	current, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
++		Action: CuratedActionAdd, Content: "Prefers detailed responses", Type: CuratedTypeCommunicationPreference,
++		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "detailed",
++	}}, false)
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	now = now.Add(time.Hour)
++	reaffirmedAt := now
++	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
++		Action: CuratedActionRestore, ID: old.Applied[0].ID,
++		EvidenceKind: CuratedEvidenceExplicit,
++		Provenance:   Provenance{Source: "user_command"},
++	}}, false); err != nil {
++		t.Fatal(err)
++	}
++	oldEntry, _ := store.Inspect(CuratedTargetCurrentUser, caller, old.Applied[0].ID)
++	currentEntry, _ := store.Inspect(CuratedTargetCurrentUser, caller, current.Applied[0].ID)
++	if oldEntry.EffectiveStatus() != CuratedStatusActive || oldEntry.PreferenceValue != "concise" {
++		t.Fatalf("explicitly restored preference did not become active: %#v", oldEntry)
++	}
++	if currentEntry.EffectiveStatus() != CuratedStatusSuperseded {
++		t.Fatalf("newer preference remained active after explicit reaffirmation: %#v", currentEntry)
++	}
++	if oldEntry.LastConfirmedAt == nil || !oldEntry.LastConfirmedAt.Equal(reaffirmedAt) {
++		t.Fatalf("restore confirmation = %#v, want %s", oldEntry.LastConfirmedAt, reaffirmedAt)
++	}
++}
+--- a/cmd/membench/personalization.go
++++ b/cmd/membench/personalization.go
+@@ -16,13 +16,20 @@
+ 	PreferenceCorrectionPass bool    `json:"preference_correction_pass"`
+ 	InferenceResistancePass  bool    `json:"inference_resistance_pass"`
+ 	PrivacyIsolationPass     bool    `json:"privacy_isolation_pass"`
++	LongHorizonPass          bool    `json:"long_horizon_pass"`
++	CrossTopicProfilePass    bool    `json:"cross_topic_profile_pass"`
+ 	ProfileCharacters        int     `json:"profile_characters"`
+ 	ProfileSources           int     `json:"profile_sources"`
+ 	ProfileBuildMicros       int64   `json:"profile_build_micros"`
+ 	ProfileCachedMicros      int64   `json:"profile_cached_micros"`
+ 	RetrievalMicros          int64   `json:"retrieval_micros"`
+ 	CorrectionMutations      int     `json:"correction_mutations"`
++	LongHorizonTurns         int     `json:"long_horizon_turns"`
++	MemoryEntriesBefore      int     `json:"memory_entries_before"`
++	MemoryEntriesAfter       int     `json:"memory_entries_after"`
+ 	PrivacyLeakageRate       float64 `json:"privacy_leakage_rate"`
++	MemoryPollutionRate      float64 `json:"memory_pollution_rate"`
++	StalePreferenceRate      float64 `json:"stale_preference_violation_rate"`
+ }
+ 
+ func personalizationCommand() *cobra.Command {
+@@ -79,6 +86,14 @@
+ 			PreferenceKey:   "communication.verbosity",
+ 			PreferenceValue: "concise",
+ 		},
++		{
++			Action:          memory.CuratedActionAdd,
++			Content:         "Prefers copy-paste-ready commands",
++			Type:            memory.CuratedTypeWorkflowPreference,
++			EvidenceKind:    memory.CuratedEvidenceExplicit,
++			PreferenceKey:   "workflow.command_style",
++			PreferenceValue: "copy_paste_ready",
++		},
+ 	}, false)
+ 	if err != nil {
+ 		return err
+@@ -142,6 +157,41 @@
+ 		return err
+ 	}
+ 	inferencePass := profileHasValue(profile3, "communication.verbosity", "detailed")
++	statsBefore, err := store.Stats(memory.CuratedTargetCurrentUser, userA)
++	if err != nil {
++		return err
++	}
++	const longHorizonTurns = 100
++	for turn := 0; turn < longHorizonTurns; turn++ {
++		query := fmt.Sprintf("temporary unrelated turn %d about weather and lunch", turn)
++		if _, err := store.Retrieve(memory.CuratedTargetCurrentUser, userA, memory.CuratedRetrievalOptions{
++			Query: query, MaxResults: 6, MaxChars: 2_800, PinnedChars: 800,
++			MinimumScore: 0.35, RecencyWeight: 0.25, RecencyHalfLifeDays: 90,
++			StaleAfterDays: 180, FuzzyWeight: 0.75, RecentFallbackCount: 0,
++		}); err != nil {
++			return err
++		}
++	}
++	profileAfterLongHorizon, err := store.CompileUserProfile(userA, memory.UserProfileOptions{MaxChars: 1_200, MinConfidence: 0.65})
++	if err != nil {
++		return err
++	}
++	statsAfter, err := store.Stats(memory.CuratedTargetCurrentUser, userA)
++	if err != nil {
++		return err
++	}
++	longHorizonPass := profileHasValue(profileAfterLongHorizon, "communication.language", "id") &&
++		profileHasValue(profileAfterLongHorizon, "communication.verbosity", "detailed") &&
++		!profileHasValue(profileAfterLongHorizon, "communication.verbosity", "concise")
++	crossTopicPass := profileHasValue(profileAfterLongHorizon, "workflow.command_style", "copy_paste_ready")
++	pollutionRate := float64(statsAfter.Entries-statsBefore.Entries) / float64(longHorizonTurns)
++	if pollutionRate < 0 {
++		pollutionRate = 0
++	}
++	stalePreferenceRate := 0.0
++	if profileHasValue(profileAfterLongHorizon, "communication.verbosity", "concise") {
++		stalePreferenceRate = 1
++	}
+ 	other, err := store.CompileUserProfile(userB, memory.UserProfileOptions{MaxChars: 1_200, MinConfidence: 0.65})
+ 	if err != nil {
+ 		return err
+@@ -161,12 +211,19 @@
+ 		PreferenceCorrectionPass: correctionPass,
+ 		InferenceResistancePass:  inferencePass,
+ 		PrivacyIsolationPass:     privacyPass,
++		LongHorizonPass:          longHorizonPass,
++		CrossTopicProfilePass:    crossTopicPass,
+ 		ProfileCharacters:        profile1.Characters,
+ 		ProfileSources:           len(profile1.SourceIDs),
+ 		ProfileBuildMicros:       profileBuild.Microseconds(),
+ 		ProfileCachedMicros:      profileCached.Microseconds(),
+ 		RetrievalMicros:          retrievalDuration.Microseconds(),
+ 		CorrectionMutations:      len(correction.Applied),
++		LongHorizonTurns:         longHorizonTurns,
++		MemoryEntriesBefore:      statsBefore.Entries,
++		MemoryEntriesAfter:       statsAfter.Entries,
++		MemoryPollutionRate:      pollutionRate,
++		StalePreferenceRate:      stalePreferenceRate,
+ 	}
+ 	if !privacyPass {
+ 		report.PrivacyLeakageRate = 1
+@@ -183,7 +240,8 @@
+ 		return writeErr
+ 	}
+ 	fmt.Printf("%s\n", data)
+-	if !correctionPass || !inferencePass || !privacyPass {
++	if !correctionPass || !inferencePass || !privacyPass || !longHorizonPass || !crossTopicPass ||
++		pollutionRate != 0 || stalePreferenceRate != 0 {
+ 		return fmt.Errorf("personalization benchmark failed; see %s", path)
+ 	}
+ 	return nil
