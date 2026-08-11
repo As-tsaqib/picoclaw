@@ -173,11 +173,13 @@ topic, resumes the most recent relevant one from `next_step`, and asks for
 clarification when several are equally plausible. Completed or archived work
 is not resumed accidentally.
 
-Before `/clear` or `/reset` discards session recall, PicoClaw performs a bounded synchronous flush of still-unreviewed delivered turns when background memory review is enabled. The operation is fail-closed: if that bounded flush fails or times out, history is left intact and the user can retry instead of silently losing unreviewed durable information. After a successful flush, `/clear` and its `/reset` alias clear the current session history/summary,
+Before `/clear`, `/reset`, or `/new` discards session recall, PicoClaw performs a bounded synchronous flush of still-unreviewed delivered turns when background memory review is enabled. The operation is fail-closed: if that bounded flush fails or times out, history is left intact and the user can retry instead of silently losing unreviewed durable information. After a successful flush, all three reset commands clear the current session history/summary,
 current-session recall records, and its reviewer cursor. They discard
 undelivered checkpoint mutations but preserve committed checkpoints, curated
 memory, `MEMORY.md`, daily notes, and every unrelated session/topic. Starting
 or switching Telegram topics selects a separate session and deletes nothing.
+
+Context compression does not delete the durable recall store, so still-unreviewed delivered turns remain available to the curator after compaction. Recall and review-state stores are persisted as well, which means a process restart does not require a shutdown-time model call to preserve unreviewed turns; they can be curated after the process starts again.
 
 ## Approval and notifications
 
