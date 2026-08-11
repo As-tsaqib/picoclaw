@@ -1,5 +1,6 @@
 name: Personalization Final Apply
 # One-shot audit validator; removed after the validated source commit lands.
+# Final concurrency-patch rerun.
 
 on:
   push:
