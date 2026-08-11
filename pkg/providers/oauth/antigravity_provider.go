@@ -15,6 +15,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/auth"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers/common"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -24,6 +25,13 @@ const (
 	antigravityXGoogClient  = "google-cloud-sdk vscode_cloudshelleditor/0.1"
 	antigravityVersion      = "1.15.8"
 )
+
+const (
+	antigravityDailyBaseURL = "https://daily-cloudcode-pa.googleapis.com"
+	antigravityRefreshSkew  = 50 * time.Minute
+)
+
+var antigravityRefreshGroup singleflight.Group
 
 // AntigravityProvider implements LLMProvider using Google's Cloud Code Assist (Antigravity) API.
 // This provider authenticates via Google OAuth and provides access to models like Claude and Gemini
@@ -99,9 +107,7 @@ func (p *AntigravityProvider) Chat(
 
 	// Headers matching the pi-ai SDK antigravity format
 	clientMetadata, _ := json.Marshal(map[string]string{
-		"ideType":    "IDE_UNSPECIFIED",
-		"platform":   "PLATFORM_UNSPECIFIED",
-		"pluginType": "GEMINI",
+		"ideType": "ANTIGRAVITY",
 	})
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
@@ -460,18 +466,46 @@ func createAntigravityTokenSource() func() (string, string, error) {
 		}
 
 		// Refresh if needed
-		if cred.NeedsRefresh() && cred.RefreshToken != "" {
-			oauthCfg := auth.GoogleAntigravityOAuthConfig()
-			refreshed, err := auth.RefreshAccessToken(cred, oauthCfg)
-			if err != nil {
-				return "", "", fmt.Errorf("refreshing token: %w", err)
+		needsRefresh := !cred.ExpiresAt.IsZero() && time.Now().Add(antigravityRefreshSkew).After(cred.ExpiresAt)
+		if needsRefresh && cred.RefreshToken != "" {
+			result, refreshErr, _ := antigravityRefreshGroup.Do(cred.RefreshToken, func() (interface{}, error) {
+				current, err := auth.GetCredential("google-antigravity")
+				if err != nil {
+					return nil, fmt.Errorf("loading current credentials: %w", err)
+				}
+				if current != nil {
+					if current.RefreshToken != cred.RefreshToken {
+						return current, nil
+					}
+					cred = current
+				}
+
+				stillNeedsRefresh := !cred.ExpiresAt.IsZero() &&
+					time.Now().Add(antigravityRefreshSkew).After(cred.ExpiresAt)
+				if !stillNeedsRefresh {
+					return cred, nil
+				}
+
+				oauthCfg := auth.GoogleAntigravityOAuthConfig()
+				refreshed, err := auth.RefreshAccessToken(cred, oauthCfg)
+				if err != nil {
+					return nil, err
+				}
+				refreshed.Email = cred.Email
+				if refreshed.ProjectID == "" {
+					refreshed.ProjectID = cred.ProjectID
+				}
+				if err := auth.SetCredential("google-antigravity", refreshed); err != nil {
+					return nil, fmt.Errorf("saving refreshed token: %w", err)
+				}
+				return refreshed, nil
+			})
+			if refreshErr != nil {
+				return "", "", fmt.Errorf("refreshing token: %w", refreshErr)
 			}
-			refreshed.Email = cred.Email
-			if refreshed.ProjectID == "" {
-				refreshed.ProjectID = cred.ProjectID
-			}
-			if err := auth.SetCredential("google-antigravity", refreshed); err != nil {
-				return "", "", fmt.Errorf("saving refreshed token: %w", err)
+			refreshed, ok := result.(*auth.AuthCredential)
+			if !ok || refreshed == nil {
+				return "", "", fmt.Errorf("refreshing token: invalid singleflight result")
 			}
 			cred = refreshed
 		}
@@ -487,15 +521,14 @@ func createAntigravityTokenSource() func() (string, string, error) {
 			// Try to fetch project ID from API
 			fetchedID, err := FetchAntigravityProjectID(cred.AccessToken)
 			if err != nil {
-				logger.WarnCF("provider.antigravity", "Could not fetch project ID, using fallback", map[string]any{
+				logger.WarnCF("provider.antigravity", "Could not fetch project ID from loadCodeAssist", map[string]any{
 					"error": err.Error(),
 				})
-				projectID = "rising-fact-p41fc" // Default fallback (same as OpenCode)
-			} else {
-				projectID = fetchedID
-				cred.ProjectID = projectID
-				_ = auth.SetCredential("google-antigravity", cred)
+				return "", "", fmt.Errorf("antigravity: project ID discovery failed: %w", err)
 			}
+			projectID = fetchedID
+			cred.ProjectID = projectID
+			_ = auth.SetCredential("google-antigravity", cred)
 		}
 
 		return cred.AccessToken, projectID, nil
@@ -506,9 +539,7 @@ func createAntigravityTokenSource() func() (string, string, error) {
 func FetchAntigravityProjectID(accessToken string) (string, error) {
 	reqBody, _ := json.Marshal(map[string]any{
 		"metadata": map[string]any{
-			"ideType":    "IDE_UNSPECIFIED",
-			"platform":   "PLATFORM_UNSPECIFIED",
-			"pluginType": "GEMINI",
+			"ideType": "ANTIGRAVITY",
 		},
 	})
 
@@ -536,18 +567,155 @@ func FetchAntigravityProjectID(accessToken string) (string, error) {
 		return "", fmt.Errorf("loadCodeAssist failed: %s", string(body))
 	}
 
-	var result struct {
-		CloudAICompanionProject string `json:"cloudaicompanionProject"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
+	var loadResp map[string]any
+	if err := json.Unmarshal(body, &loadResp); err != nil {
 		return "", err
 	}
 
-	if result.CloudAICompanionProject == "" {
-		return "", fmt.Errorf("no project ID in loadCodeAssist response")
+	projectID := extractCloudAICompanionProject(loadResp)
+	if projectID != "" {
+		return projectID, nil
 	}
 
-	return result.CloudAICompanionProject, nil
+	// Project ID not found — attempt onboarding for new accounts
+	tierID := extractDefaultTierID(loadResp)
+	onboardedID, err := OnboardUser(accessToken, tierID)
+	if err != nil {
+		return "", fmt.Errorf("onboardUser failed: %w", err)
+	}
+	if onboardedID == "" {
+		return "", fmt.Errorf("no project ID from loadCodeAssist or onboardUser")
+	}
+	return onboardedID, nil
+}
+
+// extractCloudAICompanionProject extracts the project ID from a loadCodeAssist response.
+func extractCloudAICompanionProject(data map[string]any) string {
+	if data == nil {
+		return ""
+	}
+	for _, key := range []string{"cloudaicompanionProject", "projectId", "project"} {
+		switch value := data[key].(type) {
+		case string:
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		case map[string]any:
+			if id, ok := value["id"].(string); ok {
+				if trimmed := strings.TrimSpace(id); trimmed != "" {
+					return trimmed
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// extractDefaultTierID extracts the default tier ID from a loadCodeAssist response.
+func extractDefaultTierID(loadResp map[string]any) string {
+	if tiers, ok := loadResp["allowedTiers"].([]any); ok {
+		for _, rawTier := range tiers {
+			tier, ok := rawTier.(map[string]any)
+			if !ok {
+				continue
+			}
+			isDefault, ok := tier["isDefault"].(bool)
+			if !ok || !isDefault {
+				continue
+			}
+			if id, ok := tier["id"].(string); ok {
+				if trimmed := strings.TrimSpace(id); trimmed != "" {
+					return trimmed
+				}
+			}
+		}
+	}
+	if currentTier, ok := loadResp["currentTier"].(map[string]any); ok {
+		if id, ok := currentTier["id"].(string); ok {
+			if trimmed := strings.TrimSpace(id); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return "free-tier"
+}
+
+// OnboardUser attempts to provision a Cloud Code Assist project for a new user
+// by polling the onboardUser endpoint until the operation completes.
+func OnboardUser(accessToken, tierID string) (string, error) {
+	logger.DebugCF("provider.antigravity", "Onboarding user", map[string]any{
+		"tier_id": tierID,
+	})
+
+	reqBody, _ := json.Marshal(map[string]any{
+		"tier_id": tierID,
+		"metadata": map[string]string{
+			"ide_type":    "ANTIGRAVITY",
+			"ide_version": antigravityVersion,
+			"ide_name":    "antigravity",
+		},
+	})
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	const maxAttempts = 5
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		logger.DebugCF("provider.antigravity", "onboardUser polling", map[string]any{
+			"attempt": attempt,
+			"max":     maxAttempts,
+		})
+
+		req, err := http.NewRequest(
+			"POST",
+			antigravityDailyBaseURL+"/v1internal:onboardUser",
+			bytes.NewReader(reqBody),
+		)
+		if err != nil {
+			return "", fmt.Errorf("creating onboardUser request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", fmt.Sprintf("%s/%s", antigravityUserAgent, antigravityVersion))
+		req.Header.Set("X-Goog-Api-Client", antigravityXGoogClient)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("onboardUser request failed: %w", err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if err != nil {
+			return "", fmt.Errorf("reading onboardUser response: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("onboardUser HTTP %d: %s", resp.StatusCode, truncateString(string(body), 200))
+		}
+
+		var data map[string]any
+		if err := json.Unmarshal(body, &data); err != nil {
+			return "", fmt.Errorf("decoding onboardUser response: %w", err)
+		}
+
+		if done, ok := data["done"].(bool); ok && done {
+			if responseData, ok := data["response"].(map[string]any); ok {
+				projectID := extractCloudAICompanionProject(responseData)
+				if projectID != "" {
+					logger.DebugCF("provider.antigravity", "Onboarding succeeded", map[string]any{
+						"project_id": projectID,
+					})
+					return projectID, nil
+				}
+			}
+			return "", fmt.Errorf("onboardUser completed but no project ID in response")
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+
+	return "", fmt.Errorf("onboardUser did not complete after %d attempts", maxAttempts)
 }
 
 // FetchAntigravityModels fetches available models from the Cloud Code Assist API.

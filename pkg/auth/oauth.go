@@ -440,11 +440,16 @@ func RefreshAccessToken(cred *AuthCredential, cfg OAuthProviderConfig) (*AuthCre
 		return nil, fmt.Errorf("no refresh token available")
 	}
 
+	isGoogle := strings.Contains(strings.ToLower(cfg.Issuer), "accounts.google.com") ||
+		(cfg.TokenURL != "" && strings.Contains(cfg.TokenURL, "googleapis.com"))
+
 	data := url.Values{
 		"client_id":     {cfg.ClientID},
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {cred.RefreshToken},
-		"scope":         {"openid profile email"},
+	}
+	if !isGoogle {
+		data.Set("scope", "openid profile email")
 	}
 	if cfg.ClientSecret != "" {
 		data.Set("client_secret", cfg.ClientSecret)

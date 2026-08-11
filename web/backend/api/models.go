@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/audio/asr"
+	"github.com/sipeed/picoclaw/pkg/auth"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -669,6 +670,31 @@ func (h *Handler) handleFetchModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	normalizedProvider := providers.NormalizeProvider(req.Provider)
+	if normalizedProvider == "antigravity" {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		models, err := fetchAntigravityModels(ctx)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to fetch models: %v", err), http.StatusBadGateway)
+			return
+		}
+		catalogModels := make([]CatalogModel, len(models))
+		for i, m := range models {
+			catalogModels[i] = CatalogModel{ID: m.ID, OwnedBy: m.OwnedBy}
+		}
+		if saveErr := SaveCatalog(req.Provider, "", "", catalogModels); saveErr != nil {
+			logger.Warnf("Failed to save model catalog: %v", saveErr)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"models": models,
+			"total":  len(models),
+		})
+		return
+	}
+
 	if apiBase == "" {
 		apiBase = providers.DefaultAPIBaseForProtocol(req.Provider)
 	}
@@ -750,11 +776,59 @@ func fetchUpstreamModels(ctx context.Context, provider, apiBase, apiKey string) 
 	case "nearai":
 		fetchURL = apiBase + "/model/list"
 		return fetchNearAIModels(ctx, fetchURL, apiKey)
+	case "antigravity":
+		return fetchAntigravityModels(ctx)
 	default:
 		// OpenAI-compatible: /v1/models
 		fetchURL = apiBase + "/models"
 		return fetchOpenAICompatibleModels(ctx, fetchURL, apiKey)
 	}
+}
+
+func fetchAntigravityModels(_ context.Context) ([]upstreamModel, error) {
+	cred, err := auth.GetCredential("google-antigravity")
+	if err != nil {
+		return nil, fmt.Errorf("loading antigravity credentials: %w", err)
+	}
+	if cred == nil {
+		return nil, fmt.Errorf("not logged in to antigravity. Use OAuth login first")
+	}
+
+	if cred.NeedsRefresh() && cred.RefreshToken != "" {
+		oauthCfg := auth.GoogleAntigravityOAuthConfig()
+		refreshed, refreshErr := auth.RefreshAccessToken(cred, oauthCfg)
+		if refreshErr == nil {
+			refreshed.Email = cred.Email
+			if refreshed.ProjectID == "" {
+				refreshed.ProjectID = cred.ProjectID
+			}
+			_ = auth.SetCredential("google-antigravity", refreshed)
+			cred = refreshed
+		}
+	}
+
+	projectID := cred.ProjectID
+	if projectID == "" {
+		return nil, fmt.Errorf("no project ID stored. Try logging in again")
+	}
+
+	agModels, err := providers.FetchAntigravityModels(cred.AccessToken, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching antigravity models: %w", err)
+	}
+
+	models := make([]upstreamModel, 0, len(agModels))
+	for _, m := range agModels {
+		owned := "google"
+		if m.IsExhausted {
+			owned = "google (quota exhausted)"
+		}
+		models = append(models, upstreamModel{
+			ID:      m.ID,
+			OwnedBy: owned,
+		})
+	}
+	return models, nil
 }
 
 func fetchNearAIModels(ctx context.Context, fetchURL, apiKey string) ([]upstreamModel, error) {
@@ -1089,6 +1163,8 @@ func probeModelConnectivity(m *config.ModelConfig) bool {
 		return probeCommandAvailable("claude")
 	case "codex-cli":
 		return probeCommandAvailable("codex")
+	case "antigravity":
+		return probeAntigravityConnectivity()
 	default:
 		// For remote providers (OpenAI, Anthropic, Gemini, DeepSeek, etc.),
 		// make a real GET /models request to verify connectivity and credentials.
@@ -1097,4 +1173,33 @@ func probeModelConnectivity(m *config.ModelConfig) bool {
 		}
 		return false
 	}
+}
+
+func probeAntigravityConnectivity() bool {
+	cred, err := auth.GetCredential("google-antigravity")
+	if err != nil || cred == nil {
+		return false
+	}
+	if cred.IsExpired() {
+		if cred.RefreshToken == "" {
+			return false
+		}
+		oauthCfg := auth.GoogleAntigravityOAuthConfig()
+		refreshed, refreshErr := auth.RefreshAccessToken(cred, oauthCfg)
+		if refreshErr != nil {
+			return false
+		}
+		refreshed.Email = cred.Email
+		if refreshed.ProjectID == "" {
+			refreshed.ProjectID = cred.ProjectID
+		}
+		_ = auth.SetCredential("google-antigravity", refreshed)
+		cred = refreshed
+	}
+	if cred.ProjectID == "" {
+		return false
+	}
+
+	_, err = providers.FetchAntigravityModels(cred.AccessToken, cred.ProjectID)
+	return err == nil
 }

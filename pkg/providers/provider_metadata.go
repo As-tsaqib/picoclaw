@@ -292,6 +292,7 @@ var modelProviderOptionsByName = map[string]ModelProviderOption{
 		EmptyAPIKeyAllowed:  true,
 		CreateAllowed:       true,
 		DefaultModelAllowed: true,
+		SupportsFetch:       true,
 		DefaultAuthMethod:   "oauth",
 		AuthMethodLocked:    true,
 		Priority:            54,
