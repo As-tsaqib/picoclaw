@@ -136,6 +136,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup pnpm
@@ -164,7 +165,31 @@ jobs:
         run: pnpm lint
 
       - name: Check frontend formatting
-        run: pnpm format
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -d '' -t changed_paths < <(
+            git -C ../.. diff \
+              --name-only \
+              --diff-filter=ACMR \
+              -z \
+              refs/remotes/origin/main...HEAD \
+              -- web/frontend
+          )
+          prettier_files=()
+          for changed_path in "${changed_paths[@]}"; do
+            relative_path="${changed_path#web/frontend/}"
+            case "$relative_path" in
+              *.cjs|*.css|*.html|*.js|*.json|*.jsx|*.md|*.mjs|*.ts|*.tsx|*.yaml|*.yml)
+                prettier_files+=("$relative_path")
+                ;;
+            esac
+          done
+          if (( ${#prettier_files[@]} == 0 )); then
+            echo "No changed frontend text files require Prettier validation."
+          else
+            pnpm exec prettier --check -- "${prettier_files[@]}"
+          fi
 
       - name: Build frontend
         run: pnpm build

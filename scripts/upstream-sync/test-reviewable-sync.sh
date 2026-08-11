@@ -476,10 +476,12 @@ test_invalid_tag_is_rejected() {
 {"tag_name":"v1.2.3$(touch-pwned)","draft":false,"prerelease":false,"html_url":"https://example.invalid"}
 JSON
 
-  if invoke_sync; then
+  invalid_log="$fixture_dir/invalid-tag.log"
+  if invoke_sync > "$invalid_log" 2>&1; then
     fail_test 'invalid tag unexpectedly succeeded'
   fi
 
+  assert_contains "$invalid_log" 'release tag is invalid' 'invalid tag failure was not reported'
   assert_ref_missing "$fork_bare" 'refs/heads/sync/upstream-v1.2.3$(touch-pwned)' 'invalid tag created a branch'
   assert_equal '0' "$(cat "$pr_create_count")" 'invalid tag created a PR'
   assert_equal '0' "$(cat "$issue_create_count")" 'invalid tag created an issue'
