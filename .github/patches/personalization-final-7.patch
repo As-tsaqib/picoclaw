@@ -1,6 +1,6 @@
 --- a/pkg/agent/agent_test.go
 +++ b/pkg/agent/agent_test.go
-@@ -3387,11 +3387,11 @@
+@@ -3387,10 +3387,10 @@
  		},
  		Content: "/new",
  	})
