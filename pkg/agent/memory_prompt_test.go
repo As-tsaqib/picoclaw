@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/memory"
@@ -367,5 +369,51 @@ func TestCuratedRetrievalQueryUsesSummaryAndRecentUserTurns(t *testing.T) {
 		if !strings.Contains(query, expected) {
 			t.Fatalf("retrieval query missing %q: %q", expected, query)
 		}
+	}
+}
+
+func TestRenderCuratedPromptDataHardBoundsSerializedPayload(t *testing.T) {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	entries := []memory.CuratedEntry{
+		{
+			ID:              "mem_0000000000000001",
+			Content:         strings.Repeat("Detailed preference context ", 20),
+			Type:            memory.CuratedTypeCommunicationPreference,
+			Status:          memory.CuratedStatusActive,
+			EvidenceKind:    memory.CuratedEvidenceExplicit,
+			Confidence:      1,
+			PreferenceKey:   "communication.verbosity",
+			PreferenceValue: "detailed",
+			Provenance:      memory.Provenance{Source: "user_command"},
+			UpdatedAt:       now,
+		},
+		{
+			ID:              "mem_0000000000000002",
+			Content:         strings.Repeat("Copy paste command style ", 16),
+			Type:            memory.CuratedTypeWorkflowPreference,
+			Status:          memory.CuratedStatusActive,
+			EvidenceKind:    memory.CuratedEvidenceExplicit,
+			Confidence:      1,
+			PreferenceKey:   "workflow.command_style",
+			PreferenceValue: "copy_paste_ready",
+			Provenance:      memory.Provenance{Source: "user_command"},
+			UpdatedAt:       now,
+		},
+	}
+	const maxChars = 520
+	content, ids := renderCuratedPromptDataWithUsage("current_user", entries, maxChars)
+	if content == "" || len(ids) == 0 {
+		t.Fatalf("bounded renderer dropped all entries: content=%q ids=%v", content, ids)
+	}
+	if got := utf8.RuneCountInString(content); got > maxChars {
+		t.Fatalf("serialized curated prompt chars = %d, exceeds %d: %s", got, maxChars, content)
+	}
+	for _, id := range ids {
+		if !strings.Contains(content, id) {
+			t.Fatalf("usage id %q was marked rendered but is absent from payload: %s", id, content)
+		}
+	}
+	if tiny, tinyIDs := renderCuratedPromptDataWithUsage("current_user", entries, 20); tiny != "" || len(tinyIDs) != 0 {
+		t.Fatalf("tiny budget should render nothing, got content=%q ids=%v", tiny, tinyIDs)
 	}
 }

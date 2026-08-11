@@ -331,36 +331,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 		}
 
 		rt.ClearHistory = func() error {
-			if opts == nil {
-				return fmt.Errorf("process options not available")
-			}
-			// /clear can arrive before any turn has persisted session scope
-			// metadata (runAgentLoop records it per turn), so record it here to
-			// let the ContextManager resolve which agent owns the session.
-			ensureSessionMetadata(
-				agent.Sessions,
-				opts.Dispatch.SessionKey,
-				opts.Dispatch.SessionScope,
-				opts.Dispatch.SessionAliases,
-			)
-			caller := callerScopeForTurn(agent.ID, cfg, *opts)
-			flushTimeout := 8 * time.Second
-			if configured := time.Duration(
-				cfg.Memory.BackgroundReview.EffectiveTimeoutSeconds(),
-			) * time.Second; configured < flushTimeout {
-				flushTimeout = configured
-			}
-			flushCtx, flushCancel := context.WithTimeout(ctx, flushTimeout)
-			if err := al.flushMemoryReview(flushCtx, agent, caller); err != nil {
-				logger.WarnCF("memory", "Pre-clear memory flush failed", safeMemoryLogFields(err))
-				flushCancel()
-				return fmt.Errorf("memory flush before clear failed; history was not cleared")
-			}
-			flushCancel()
-			if err := al.contextManager.Clear(ctx, opts.SessionKey); err != nil {
-				return err
-			}
-			return clearSessionMemoryState(agent, caller)
+			return al.clearHistoryWithMemoryFlush(ctx, agent, opts)
 		}
 
 		rt.AskSideQuestion = func(ctx context.Context, question string) (string, error) {
@@ -389,6 +360,53 @@ func (al *AgentLoop) buildCommandsRuntime(
 	}
 	configureMemoryCommandRuntime(rt, agent, opts, al)
 	return rt
+}
+
+func (al *AgentLoop) clearHistoryWithMemoryFlush(
+	ctx context.Context,
+	agent *AgentInstance,
+	opts *processOptions,
+) error {
+	if al == nil || agent == nil {
+		return fmt.Errorf("agent runtime is unavailable")
+	}
+	if opts == nil {
+		return fmt.Errorf("process options not available")
+	}
+	cfg := al.GetConfig()
+	if cfg == nil {
+		return fmt.Errorf("config not loaded")
+	}
+	if al.contextManager == nil {
+		return fmt.Errorf("context manager not initialized")
+	}
+
+	// /clear, /reset, and /new can arrive before any turn has persisted
+	// session scope metadata (runAgentLoop records it per turn), so record it
+	// here to let the ContextManager resolve which agent owns the session.
+	ensureSessionMetadata(
+		agent.Sessions,
+		opts.Dispatch.SessionKey,
+		opts.Dispatch.SessionScope,
+		opts.Dispatch.SessionAliases,
+	)
+	caller := callerScopeForTurn(agent.ID, cfg, *opts)
+	flushTimeout := 8 * time.Second
+	if configured := time.Duration(
+		cfg.Memory.BackgroundReview.EffectiveTimeoutSeconds(),
+	) * time.Second; configured < flushTimeout {
+		flushTimeout = configured
+	}
+	flushCtx, flushCancel := context.WithTimeout(ctx, flushTimeout)
+	defer flushCancel()
+	if err := al.flushMemoryReview(flushCtx, agent, caller); err != nil {
+		logger.WarnCF("memory", "Pre-clear memory flush failed", safeMemoryLogFields(err))
+		return fmt.Errorf("memory flush before clear failed; history was not cleared: %w", err)
+	}
+	if err := al.contextManager.Clear(ctx, opts.Dispatch.SessionKey); err != nil {
+		return err
+	}
+	return clearSessionMemoryState(agent, caller)
 }
 
 func summarizeMCPToolParameters(schema any) []commands.MCPToolParameterInfo {

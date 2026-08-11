@@ -14,6 +14,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -873,4 +874,54 @@ func testConfig(t *testing.T) *config.Config {
 func newCMTestAgentLoop(cfg *config.Config) *AgentLoop {
 	msgBus := bus.NewMessageBus()
 	return NewAgentLoop(cfg, msgBus, &simpleMockProvider{response: "test"})
+}
+
+func TestLegacyCompactPreservesUnreviewedRecall(t *testing.T) {
+	cfg := testConfig(t)
+	al := newCMTestAgentLoop(cfg)
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("expected default agent")
+	}
+	recall, err := memory.NewRecallStore(filepath.Join(t.TempDir(), "recall"), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.RecallMemory = recall
+	caller := memory.CallerScope{
+		AgentID: agent.ID, UserKey: "telegram:user-a", Channel: "telegram", Account: "personal",
+		SessionKey: "compact-recall", SessionRef: memorySessionRef("compact-recall"),
+	}
+	if _, err := recall.AppendDeliveredTurn(
+		caller,
+		"turn-pref",
+		"Mulai sekarang saya lebih suka jawaban ringkas",
+		"Baik.",
+		"assistant-message",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	history := []providers.Message{
+		{Role: "user", Content: "msg 1"}, {Role: "assistant", Content: "resp 1"},
+		{Role: "user", Content: "msg 2"}, {Role: "assistant", Content: "resp 2"},
+		{Role: "user", Content: "msg 3"}, {Role: "assistant", Content: "resp 3"},
+	}
+	agent.Sessions.SetHistory(caller.SessionKey, history)
+	if err := al.contextManager.Compact(context.Background(), &CompactRequest{
+		SessionKey: caller.SessionKey,
+		Reason:     ContextCompressReasonRetry,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(agent.Sessions.GetHistory(caller.SessionKey)); got >= len(history) {
+		t.Fatalf("context was not compacted: got %d messages", got)
+	}
+	records, latest, err := recall.RecordsAfter(caller, 0, 4_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || latest == 0 || records[0].Content != "Mulai sekarang saya lebih suka jawaban ringkas" {
+		t.Fatalf("unreviewed durable recall was changed by context compaction: %#v latest=%d", records, latest)
+	}
 }

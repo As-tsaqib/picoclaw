@@ -300,3 +300,100 @@ func TestCompileUserProfileSerializedBudgetIsHardBound(t *testing.T) {
 		t.Fatalf("profile Characters = %d, actual serialized = %d", profile.Characters, utf8.RuneCount(data))
 	}
 }
+
+func TestCompileUserProfileCustomNowBypassesRealtimeCache(t *testing.T) {
+	base := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	now := base
+	store, err := NewCuratedStore(
+		filepath.Join(t.TempDir(), "curated"),
+		CuratedStoreOptions{Now: func() time.Time { return now }},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := testCaller("telegram:user-asof")
+	expires := base.Add(time.Hour)
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Temporarily prefers concise answers", Type: CuratedTypeCommunicationPreference,
+		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
+		ExpiresAt: &expires,
+	}}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Populate the real-time cache after expiry with an empty profile.
+	now = base.Add(2 * time.Hour)
+	realtime, err := store.CompileUserProfile(caller, UserProfileOptions{MaxChars: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(realtime.SourceIDs) != 0 {
+		t.Fatalf("expired real-time profile = %#v, want empty", realtime)
+	}
+
+	// A historical/as-of query must not reuse the real-time cache.
+	historical, err := store.CompileUserProfile(caller, UserProfileOptions{
+		MaxChars: 800,
+		Now:      base.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(historical.Communication) != 1 || historical.Communication[0].Value != "concise" {
+		t.Fatalf("historical profile reused real-time cache: %#v", historical)
+	}
+}
+
+func TestExplicitRestoreReaffirmsArchivedPreference(t *testing.T) {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	store, err := NewCuratedStore(
+		filepath.Join(t.TempDir(), "curated"),
+		CuratedStoreOptions{Now: func() time.Time { return now }},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := testCaller("telegram:user-explicit-restore")
+	old, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Prefers concise responses", Type: CuratedTypeCommunicationPreference,
+		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
+	}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionArchive, ID: old.Applied[0].ID,
+	}}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(time.Hour)
+	current, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Prefers detailed responses", Type: CuratedTypeCommunicationPreference,
+		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "detailed",
+	}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(time.Hour)
+	reaffirmedAt := now
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionRestore, ID: old.Applied[0].ID,
+		EvidenceKind: CuratedEvidenceExplicit,
+		Provenance:   Provenance{Source: "user_command"},
+	}}, false); err != nil {
+		t.Fatal(err)
+	}
+	oldEntry, _ := store.Inspect(CuratedTargetCurrentUser, caller, old.Applied[0].ID)
+	currentEntry, _ := store.Inspect(CuratedTargetCurrentUser, caller, current.Applied[0].ID)
+	if oldEntry.EffectiveStatus() != CuratedStatusActive || oldEntry.PreferenceValue != "concise" {
+		t.Fatalf("explicitly restored preference did not become active: %#v", oldEntry)
+	}
+	if currentEntry.EffectiveStatus() != CuratedStatusSuperseded {
+		t.Fatalf("newer preference remained active after explicit reaffirmation: %#v", currentEntry)
+	}
+	if oldEntry.LastConfirmedAt == nil || !oldEntry.LastConfirmedAt.Equal(reaffirmedAt) {
+		t.Fatalf("restore confirmation = %#v, want %s", oldEntry.LastConfirmedAt, reaffirmedAt)
+	}
+}

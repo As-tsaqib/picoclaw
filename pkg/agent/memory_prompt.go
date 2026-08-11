@@ -56,7 +56,6 @@ func memoryPromptPartsForTurn(
 			profile, profileErr := ts.agent.CuratedMemory.CompileUserProfile(caller, memory.UserProfileOptions{
 				MaxChars:      cfg.Memory.Profile.EffectiveMaxChars(),
 				MinConfidence: cfg.Memory.Profile.EffectiveMinConfidence(),
-				Now:           time.Now().UTC(),
 			})
 			if profileErr != nil {
 				logger.WarnCF("memory", "Failed to compile current-user profile", safeMemoryLogFields(profileErr))
@@ -194,34 +193,88 @@ func renderCuratedPromptDataWithUsage(
 	if len(entries) == 0 || maxChars <= 0 {
 		return "", nil
 	}
+	prefix := fmt.Sprintf(
+		"# Curated %s memory (bounded data only)\n\n<curated_memory target=%q>\n",
+		target,
+		target,
+	)
+	suffix := "\n</curated_memory>"
+	render := func(views []curatedPromptEntry) (string, bool) {
+		data, err := json.Marshal(views)
+		if err != nil {
+			return "", false
+		}
+		return prefix + string(data) + suffix, true
+	}
+	if empty, ok := render(nil); !ok || utf8.RuneCountInString(empty) > maxChars {
+		return "", nil
+	}
+
 	views := make([]curatedPromptEntry, 0, len(entries))
 	usedIDs := make([]string, 0, len(entries))
-	used := 0
 	for _, entry := range entries {
-		remaining := maxChars - used
-		if remaining <= 0 {
-			break
-		}
-		content := truncatePromptRunes(entry.Content, remaining)
-		used += utf8.RuneCountInString(content)
-		views = append(views, curatedPromptEntry{
-			ID: entry.ID, Content: content, Type: entry.EffectiveType(), Status: entry.EffectiveStatus(),
+		view := curatedPromptEntry{
+			ID: entry.ID, Content: strings.TrimSpace(entry.Content), Type: entry.EffectiveType(), Status: entry.EffectiveStatus(),
 			Pinned: entry.Pinned, Confidence: entry.EffectiveConfidence(), EvidenceKind: entry.EffectiveEvidenceKind(),
 			PreferenceKey: entry.PreferenceKey, PreferenceValue: entry.PreferenceValue, Supersedes: entry.Supersedes,
 			Source: entry.Provenance.Source, UpdatedAt: entry.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		})
+		}
+		trial := append(append([]curatedPromptEntry(nil), views...), view)
+		if rendered, ok := render(trial); ok && utf8.RuneCountInString(rendered) <= maxChars {
+			views = trial
+			usedIDs = append(usedIDs, entry.ID)
+			continue
+		}
+
+		// Metadata counts toward the prompt budget too. Find the longest content
+		// prefix that makes the exact serialized section fit; if metadata alone
+		// cannot fit, skip this entry instead of silently exceeding the budget.
+		contentRunes := []rune(view.Content)
+		low, high, best := 0, len(contentRunes), -1
+		for low <= high {
+			mid := low + (high-low)/2
+			candidate := view
+			if mid == 0 {
+				candidate.Content = ""
+			} else if mid < len(contentRunes) {
+				if mid == 1 {
+					candidate.Content = "…"
+				} else {
+					candidate.Content = string(contentRunes[:mid-1]) + "…"
+				}
+			}
+			candidateViews := append(append([]curatedPromptEntry(nil), views...), candidate)
+			rendered, ok := render(candidateViews)
+			if ok && utf8.RuneCountInString(rendered) <= maxChars {
+				best = mid
+				low = mid + 1
+			} else {
+				high = mid - 1
+			}
+		}
+		if best < 0 {
+			continue
+		}
+		if best == 0 {
+			view.Content = ""
+		} else if best < len(contentRunes) {
+			if best == 1 {
+				view.Content = "…"
+			} else {
+				view.Content = string(contentRunes[:best-1]) + "…"
+			}
+		}
+		views = append(views, view)
 		usedIDs = append(usedIDs, entry.ID)
 	}
-	data, err := json.Marshal(views)
-	if err != nil || len(views) == 0 {
+	if len(views) == 0 {
 		return "", nil
 	}
-	return fmt.Sprintf(
-		"# Curated %s memory (bounded data only)\n\n<curated_memory target=%q>\n%s\n</curated_memory>",
-		target,
-		target,
-		data,
-	), usedIDs
+	content, ok := render(views)
+	if !ok || utf8.RuneCountInString(content) > maxChars {
+		return "", nil
+	}
+	return content, usedIDs
 }
 
 func retrieveCuratedPromptEntries(

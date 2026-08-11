@@ -133,9 +133,16 @@ func configureMemoryCommandRuntime(
 			default:
 				return "", memory.ErrCuratedInvalidAction
 			}
-			_, err = agent.CuratedMemory.ApplyBatch(target, caller, []memory.CuratedMutation{{
+			mutation := memory.CuratedMutation{
 				Action: action, ID: id, Provenance: memory.Provenance{Source: "user_command"},
-			}}, false)
+			}
+			if action == memory.CuratedActionRestore {
+				// A direct restore is an explicit user reaffirmation for structured
+				// preference entries. The store ignores this evidence override for
+				// non-preference entries.
+				mutation.EvidenceKind = memory.CuratedEvidenceExplicit
+			}
+			_, err = agent.CuratedMemory.ApplyBatch(target, caller, []memory.CuratedMutation{mutation}, false)
 			if err != nil {
 				return "", err
 			}

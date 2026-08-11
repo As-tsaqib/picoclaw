@@ -77,6 +77,7 @@ func (s *CuratedStore) CompileUserProfile(
 	if opts.MinConfidence > 1 {
 		opts.MinConfidence = 1
 	}
+	useCache := opts.Now.IsZero()
 	if opts.Now.IsZero() {
 		opts.Now = s.now()
 	}
@@ -106,12 +107,14 @@ func (s *CuratedStore) CompileUserProfile(
 		}
 	}
 
-	if cached, ok := s.profileCache.Load(path); ok {
-		item, valid := cached.(cachedUserProfile)
-		cacheTimeValid := item.ValidUntil.IsZero() || now.Before(item.ValidUntil)
-		if valid && cacheTimeValid && item.Revision == profileRevision && item.MaxChars == opts.MaxChars &&
-			item.MinScore == opts.MinConfidence {
-			return cloneUserProfileSnapshot(item.Snapshot), nil
+	if useCache {
+		if cached, ok := s.profileCache.Load(path); ok {
+			item, valid := cached.(cachedUserProfile)
+			cacheTimeValid := item.ValidUntil.IsZero() || now.Before(item.ValidUntil)
+			if valid && cacheTimeValid && item.Revision == profileRevision && item.MaxChars == opts.MaxChars &&
+				item.MinScore == opts.MinConfidence {
+				return cloneUserProfileSnapshot(item.Snapshot), nil
+			}
 		}
 	}
 
@@ -175,13 +178,15 @@ func (s *CuratedStore) CompileUserProfile(
 		snapshot = candidateSnapshot
 	}
 
-	s.profileCache.Store(path, cachedUserProfile{
-		Revision:   profileRevision,
-		MaxChars:   opts.MaxChars,
-		MinScore:   opts.MinConfidence,
-		ValidUntil: validUntil,
-		Snapshot:   cloneUserProfileSnapshot(snapshot),
-	})
+	if useCache {
+		s.profileCache.Store(path, cachedUserProfile{
+			Revision:   profileRevision,
+			MaxChars:   opts.MaxChars,
+			MinScore:   opts.MinConfidence,
+			ValidUntil: validUntil,
+			Snapshot:   cloneUserProfileSnapshot(snapshot),
+		})
+	}
 	return snapshot, nil
 }
 

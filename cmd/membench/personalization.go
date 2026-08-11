@@ -16,13 +16,20 @@ type personalizationBenchReport struct {
 	PreferenceCorrectionPass bool    `json:"preference_correction_pass"`
 	InferenceResistancePass  bool    `json:"inference_resistance_pass"`
 	PrivacyIsolationPass     bool    `json:"privacy_isolation_pass"`
+	LongHorizonPass          bool    `json:"long_horizon_pass"`
+	CrossTopicProfilePass    bool    `json:"cross_topic_profile_pass"`
 	ProfileCharacters        int     `json:"profile_characters"`
 	ProfileSources           int     `json:"profile_sources"`
 	ProfileBuildMicros       int64   `json:"profile_build_micros"`
 	ProfileCachedMicros      int64   `json:"profile_cached_micros"`
 	RetrievalMicros          int64   `json:"retrieval_micros"`
 	CorrectionMutations      int     `json:"correction_mutations"`
+	LongHorizonTurns         int     `json:"long_horizon_turns"`
+	MemoryEntriesBefore      int     `json:"memory_entries_before"`
+	MemoryEntriesAfter       int     `json:"memory_entries_after"`
 	PrivacyLeakageRate       float64 `json:"privacy_leakage_rate"`
+	MemoryPollutionRate      float64 `json:"memory_pollution_rate"`
+	StalePreferenceRate      float64 `json:"stale_preference_violation_rate"`
 }
 
 func personalizationCommand() *cobra.Command {
@@ -78,6 +85,14 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 			EvidenceKind:    memory.CuratedEvidenceExplicit,
 			PreferenceKey:   "communication.verbosity",
 			PreferenceValue: "concise",
+		},
+		{
+			Action:          memory.CuratedActionAdd,
+			Content:         "Prefers copy-paste-ready commands",
+			Type:            memory.CuratedTypeWorkflowPreference,
+			EvidenceKind:    memory.CuratedEvidenceExplicit,
+			PreferenceKey:   "workflow.command_style",
+			PreferenceValue: "copy_paste_ready",
 		},
 	}, false)
 	if err != nil {
@@ -142,6 +157,41 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	inferencePass := profileHasValue(profile3, "communication.verbosity", "detailed")
+	statsBefore, err := store.Stats(memory.CuratedTargetCurrentUser, userA)
+	if err != nil {
+		return err
+	}
+	const longHorizonTurns = 100
+	for turn := 0; turn < longHorizonTurns; turn++ {
+		query := fmt.Sprintf("temporary unrelated turn %d about weather and lunch", turn)
+		if _, err := store.Retrieve(memory.CuratedTargetCurrentUser, userA, memory.CuratedRetrievalOptions{
+			Query: query, MaxResults: 6, MaxChars: 2_800, PinnedChars: 800,
+			MinimumScore: 0.35, RecencyWeight: 0.25, RecencyHalfLifeDays: 90,
+			StaleAfterDays: 180, FuzzyWeight: 0.75, RecentFallbackCount: 0,
+		}); err != nil {
+			return err
+		}
+	}
+	profileAfterLongHorizon, err := store.CompileUserProfile(userA, memory.UserProfileOptions{MaxChars: 1_200, MinConfidence: 0.65})
+	if err != nil {
+		return err
+	}
+	statsAfter, err := store.Stats(memory.CuratedTargetCurrentUser, userA)
+	if err != nil {
+		return err
+	}
+	longHorizonPass := profileHasValue(profileAfterLongHorizon, "communication.language", "id") &&
+		profileHasValue(profileAfterLongHorizon, "communication.verbosity", "detailed") &&
+		!profileHasValue(profileAfterLongHorizon, "communication.verbosity", "concise")
+	crossTopicPass := profileHasValue(profileAfterLongHorizon, "workflow.command_style", "copy_paste_ready")
+	pollutionRate := float64(statsAfter.Entries-statsBefore.Entries) / float64(longHorizonTurns)
+	if pollutionRate < 0 {
+		pollutionRate = 0
+	}
+	stalePreferenceRate := 0.0
+	if profileHasValue(profileAfterLongHorizon, "communication.verbosity", "concise") {
+		stalePreferenceRate = 1
+	}
 	other, err := store.CompileUserProfile(userB, memory.UserProfileOptions{MaxChars: 1_200, MinConfidence: 0.65})
 	if err != nil {
 		return err
@@ -161,12 +211,19 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 		PreferenceCorrectionPass: correctionPass,
 		InferenceResistancePass:  inferencePass,
 		PrivacyIsolationPass:     privacyPass,
+		LongHorizonPass:          longHorizonPass,
+		CrossTopicProfilePass:    crossTopicPass,
 		ProfileCharacters:        profile1.Characters,
 		ProfileSources:           len(profile1.SourceIDs),
 		ProfileBuildMicros:       profileBuild.Microseconds(),
 		ProfileCachedMicros:      profileCached.Microseconds(),
 		RetrievalMicros:          retrievalDuration.Microseconds(),
 		CorrectionMutations:      len(correction.Applied),
+		LongHorizonTurns:         longHorizonTurns,
+		MemoryEntriesBefore:      statsBefore.Entries,
+		MemoryEntriesAfter:       statsAfter.Entries,
+		MemoryPollutionRate:      pollutionRate,
+		StalePreferenceRate:      stalePreferenceRate,
 	}
 	if !privacyPass {
 		report.PrivacyLeakageRate = 1
@@ -183,7 +240,8 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 		return writeErr
 	}
 	fmt.Printf("%s\n", data)
-	if !correctionPass || !inferencePass || !privacyPass {
+	if !correctionPass || !inferencePass || !privacyPass || !longHorizonPass || !crossTopicPass ||
+		pollutionRate != 0 || stalePreferenceRate != 0 {
 		return fmt.Errorf("personalization benchmark failed; see %s", path)
 	}
 	return nil

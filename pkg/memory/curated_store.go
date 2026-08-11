@@ -620,6 +620,26 @@ func applyCuratedMutations(
 			entries[idx].ArchivedAt = nil
 			entries[idx].UpdatedAt = now
 			entries[idx].Provenance = mutation.Provenance
+			// Restoring a structured preference may also be a deliberate
+			// reaffirmation. Only apply an evidence override when the caller
+			// supplied one; background/generic restores otherwise preserve the
+			// original authority and confirmation time.
+			if NormalizePreferenceKey(entries[idx].PreferenceKey) != "" && strings.TrimSpace(mutation.EvidenceKind) != "" {
+				entries[idx].EvidenceKind = NormalizeEvidenceKind(mutation.EvidenceKind)
+				confidence := DefaultConfidenceForEvidence(entries[idx].EvidenceKind)
+				if mutation.Confidence != nil {
+					confidence = *mutation.Confidence
+				}
+				entries[idx].Confidence = normalizeConfidenceForEvidence(entries[idx].EvidenceKind, confidence)
+				if entries[idx].EvidenceKind == CuratedEvidenceExplicit {
+					confirmed := now
+					entries[idx].LastConfirmedAt = &confirmed
+					entries[idx].LastVerifiedAt = &confirmed
+				} else {
+					entries[idx].LastConfirmedAt = nil
+					entries[idx].LastVerifiedAt = nil
+				}
+			}
 			entries[idx] = normalizedCuratedEntry(entries[idx])
 			reconcilePreferenceKey(entries, mutation.ID, now)
 			if current, ok := curatedEntryByID(entries, mutation.ID); ok {
