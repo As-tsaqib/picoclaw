@@ -97,7 +97,10 @@ func (t *MemoryManageTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"action": map[string]any{
 				"type": "string",
-				"enum": []string{"add", "replace", "remove", "pin", "unpin", "archive", "restore", "inspect", "list", "search", "batch"},
+				"enum": []string{
+					"add", "replace", "remove", "pin", "unpin", "archive",
+					"restore", "inspect", "list", "search", "batch",
+				},
 			},
 			"target": map[string]any{
 				"type": "string",

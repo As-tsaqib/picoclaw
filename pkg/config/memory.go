@@ -384,7 +384,10 @@ func (c MemoryConfig) Validate() error {
 		switch strings.ToLower(strings.TrimSpace(c.ApprovalMode)) {
 		case MemoryApprovalOff, MemoryApprovalBackgroundOnly, MemoryApprovalAllWrites:
 		default:
-			validationErrors = append(validationErrors, "memory.approval_mode must be off, background_only, or all_writes")
+			validationErrors = append(
+				validationErrors,
+				"memory.approval_mode must be off, background_only, or all_writes",
+			)
 		}
 	}
 	positive("memory.background_review.interval", c.BackgroundReview.Interval)

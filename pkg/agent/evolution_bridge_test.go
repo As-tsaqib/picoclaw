@@ -447,23 +447,68 @@ func TestEvolutionBridge_IgnoresFailedInternalReviewerCronAndSubagentTurns(t *te
 		Status: TurnEndStatusCompleted, Workspace: workspace,
 		UserMessage: "repeatable workflow", FinalContent: "delivered result",
 	}
+	failedPayload := basePayload
+	failedPayload.Status = TurnEndStatusError
+	noHistoryPayload := basePayload
+	noHistoryPayload.NoHistory = true
+	suppressedPayload := basePayload
+	suppressedPayload.SuppressLearning = true
+	subagentPayload := basePayload
+	subagentPayload.Depth = 1
 	tests := []struct {
 		name    string
 		scope   runtimeevents.Scope
 		parent  string
 		payload TurnEndPayload
 	}{
-		{name: "failed", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "user"}, payload: func() TurnEndPayload { value := basePayload; value.Status = TurnEndStatusError; return value }()},
-		{name: "no history", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "user"}, payload: func() TurnEndPayload { value := basePayload; value.NoHistory = true; return value }()},
-		{name: "reviewer or internal suppression", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "worker"}, payload: func() TurnEndPayload { value := basePayload; value.SuppressLearning = true; return value }()},
-		{name: "subagent depth", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "user"}, payload: func() TurnEndPayload { value := basePayload; value.Depth = 1; return value }()},
-		{name: "subagent parent", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "user"}, parent: "parent-turn", payload: basePayload},
-		{name: "cli internal channel", scope: runtimeevents.Scope{Channel: "cli", SenderID: "user"}, payload: basePayload},
-		{name: "system internal channel", scope: runtimeevents.Scope{Channel: "system", SenderID: "worker"}, payload: basePayload},
-		{name: "subagent internal channel", scope: runtimeevents.Scope{Channel: "subagent", SenderID: "user"}, payload: basePayload},
-		{name: "cron sender", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "cron"}, payload: basePayload},
-		{name: "heartbeat sender", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "heartbeat"}, payload: basePayload},
-		{name: "system sender", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "system"}, payload: basePayload},
+		{
+			name: "failed", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "user"},
+			payload: failedPayload,
+		},
+		{
+			name: "no history", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "user"},
+			payload: noHistoryPayload,
+		},
+		{
+			name:    "reviewer or internal suppression",
+			scope:   runtimeevents.Scope{Channel: "telegram", SenderID: "worker"},
+			payload: suppressedPayload,
+		},
+		{
+			name: "subagent depth", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "user"},
+			payload: subagentPayload,
+		},
+		{
+			name: "subagent parent", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "user"},
+			parent: "parent-turn", payload: basePayload,
+		},
+		{
+			name: "cli internal channel", scope: runtimeevents.Scope{Channel: "cli", SenderID: "user"},
+			payload: basePayload,
+		},
+		{
+			name:    "system internal channel",
+			scope:   runtimeevents.Scope{Channel: "system", SenderID: "worker"},
+			payload: basePayload,
+		},
+		{
+			name:    "subagent internal channel",
+			scope:   runtimeevents.Scope{Channel: "subagent", SenderID: "user"},
+			payload: basePayload,
+		},
+		{
+			name: "cron sender", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "cron"},
+			payload: basePayload,
+		},
+		{
+			name:    "heartbeat sender",
+			scope:   runtimeevents.Scope{Channel: "telegram", SenderID: "heartbeat"},
+			payload: basePayload,
+		},
+		{
+			name: "system sender", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "system"},
+			payload: basePayload,
+		},
 	}
 	for index, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -697,6 +742,8 @@ func TestEvolutionBridge_DraftModeAutomaticallyRunsColdPathAndCreatesDraftFile(t
 func TestEvolutionBridge_DraftModeDoesNotRunColdPathForHeartbeat(t *testing.T) {
 	tmpDir := t.TempDir()
 	seedReadyRule(t, tmpDir)
+	taskRecordsPath := filepath.Join(tmpDir, "state", "evolution", "task-records.jsonl")
+	initialTaskCount := countEvolutionTaskRecords(t, taskRecordsPath)
 
 	al := newEvolutionTestLoop(t, tmpDir, config.EvolutionConfig{
 		Enabled: true,
@@ -715,7 +762,13 @@ func TestEvolutionBridge_DraftModeDoesNotRunColdPathForHeartbeat(t *testing.T) {
 	}
 
 	time.Sleep(150 * time.Millisecond)
-	assertNotExists(t, filepath.Join(tmpDir, "state", "evolution", "task-records.jsonl"))
+	if got := countEvolutionTaskRecords(t, taskRecordsPath); got != initialTaskCount {
+		t.Fatalf(
+			"heartbeat task record count = %d, want unchanged %d",
+			got,
+			initialTaskCount,
+		)
+	}
 	assertNotExists(t, filepath.Join(tmpDir, "state", "evolution", "skill-drafts.json"))
 }
 

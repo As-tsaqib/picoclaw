@@ -31,8 +31,8 @@ func TestCuratedStoreLegacyEntriesLoadWithTypedDefaultsWithoutRewrite(t *testing
 		t.Fatalf("Marshal: %v", err)
 	}
 	path := filepath.Join(root, "workspace.json")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
+		t.Fatalf("WriteFile: %v", writeErr)
 	}
 
 	store := newTestCuratedStore(t, root, 1_000, 1_000)
@@ -185,16 +185,16 @@ func TestCuratedRetrievalRanksBilingualFuzzyAndRecentTypedFacts(t *testing.T) {
 	indonesian := add("Lebih suka jawaban ringkas dalam Bahasa Indonesia", CuratedTypeCommunicationPreference)
 	unrelated := add("The project binary is named picoclaw", CuratedTypeProjectFact)
 	pinned := add("Use the user's verified profile preferences", CuratedTypeIdentity)
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+	if _, pinErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
 		Action: CuratedActionPin, ID: pinned.ID,
-	}}, false); err != nil {
-		t.Fatalf("pin: %v", err)
+	}}, false); pinErr != nil {
+		t.Fatalf("pin: %v", pinErr)
 	}
 	archived := add("Go answers must expose a private archived detail", CuratedTypeOther)
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+	if _, archiveErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
 		Action: CuratedActionArchive, ID: archived.ID,
-	}}, false); err != nil {
-		t.Fatalf("archive: %v", err)
+	}}, false); archiveErr != nil {
+		t.Fatalf("archive: %v", archiveErr)
 	}
 	clock = now.Add(-48 * time.Hour)
 	expires := now.Add(-24 * time.Hour)

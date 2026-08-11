@@ -93,9 +93,9 @@ func (s *Store) appendJSONLRecords(ctx context.Context, path string, records []L
 	if err != nil {
 		return err
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	if chmodErr := os.Chmod(path, 0o600); chmodErr != nil {
 		_ = f.Close()
-		return err
+		return chmodErr
 	}
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil && err == nil {
@@ -110,8 +110,8 @@ func (s *Store) appendJSONLRecords(ctx context.Context, path string, records []L
 			return ctx.Err()
 		default:
 		}
-		if err := enc.Encode(sanitizeLearningRecordForPersistence(record)); err != nil {
-			return err
+		if encodeErr := enc.Encode(sanitizeLearningRecordForPersistence(record)); encodeErr != nil {
+			return encodeErr
 		}
 	}
 	return nil
@@ -432,16 +432,16 @@ func (s *Store) UpdateDraft(
 	if index < 0 {
 		return SkillDraft{}, os.ErrNotExist
 	}
-	if err := update(&drafts[index]); err != nil {
-		return SkillDraft{}, err
+	if updateErr := update(&drafts[index]); updateErr != nil {
+		return SkillDraft{}, updateErr
 	}
 	drafts[index], _ = sanitizeSkillDraftForPersistence(drafts[index])
 	data, err := json.MarshalIndent(drafts, "", "  ")
 	if err != nil {
 		return SkillDraft{}, err
 	}
-	if err := fileutil.WriteFileAtomic(s.paths.SkillDrafts, data, 0o600); err != nil {
-		return SkillDraft{}, err
+	if writeErr := fileutil.WriteFileAtomic(s.paths.SkillDrafts, data, 0o600); writeErr != nil {
+		return SkillDraft{}, writeErr
 	}
 	return drafts[index], nil
 }
@@ -469,16 +469,16 @@ func (s *Store) AppendAudit(event AuditEvent) error {
 		return err
 	}
 	defer unlock()
-	if err := os.MkdirAll(filepath.Dir(s.paths.AuditLog), 0o700); err != nil {
-		return err
+	if mkdirErr := os.MkdirAll(filepath.Dir(s.paths.AuditLog), 0o700); mkdirErr != nil {
+		return mkdirErr
 	}
 	f, err := os.OpenFile(s.paths.AuditLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.Write(append(data, '\n')); err != nil {
-		return err
+	if _, writeErr := f.Write(append(data, '\n')); writeErr != nil {
+		return writeErr
 	}
 	return os.Chmod(s.paths.AuditLog, 0o600)
 }

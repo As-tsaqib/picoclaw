@@ -49,10 +49,28 @@ func TestEvolutionConfigValidationEnumsSchedulesAndBounds(t *testing.T) {
 	}{
 		{name: "mode", mutate: func(cfg *EvolutionConfig) { cfg.Mode = "autonomous" }},
 		{name: "apply policy", mutate: func(cfg *EvolutionConfig) { cfg.ApplyPolicy = "always" }},
-		{name: "scrubbing required", mutate: func(cfg *EvolutionConfig) { cfg.Enabled = true; cfg.PrivateDataScrubbing = false }},
+		{
+			name: "scrubbing required",
+			mutate: func(cfg *EvolutionConfig) {
+				cfg.Enabled = true
+				cfg.PrivateDataScrubbing = false
+			},
+		},
 		{name: "trigger", mutate: func(cfg *EvolutionConfig) { cfg.ColdPathTrigger = "hourly" }},
-		{name: "scheduled time required", mutate: func(cfg *EvolutionConfig) { cfg.ColdPathTrigger = "scheduled"; cfg.ColdPathTimes = nil }},
-		{name: "scheduled time format", mutate: func(cfg *EvolutionConfig) { cfg.ColdPathTrigger = "scheduled"; cfg.ColdPathTimes = []string{"24:00"} }},
+		{
+			name: "scheduled time required",
+			mutate: func(cfg *EvolutionConfig) {
+				cfg.ColdPathTrigger = "scheduled"
+				cfg.ColdPathTimes = nil
+			},
+		},
+		{
+			name: "scheduled time format",
+			mutate: func(cfg *EvolutionConfig) {
+				cfg.ColdPathTrigger = "scheduled"
+				cfg.ColdPathTimes = []string{"24:00"}
+			},
+		},
 		{name: "minimum tasks", mutate: func(cfg *EvolutionConfig) { cfg.MinTaskCount = 1 }},
 		{name: "success ratio", mutate: func(cfg *EvolutionConfig) { cfg.MinSuccessRatio = 1.1 }},
 		{name: "draft timeout", mutate: func(cfg *EvolutionConfig) { cfg.DraftTimeoutSeconds = 301 }},

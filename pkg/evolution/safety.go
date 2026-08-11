@@ -13,7 +13,10 @@ import (
 var evolutionSecretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(?:sk-live-|sk_test_)[a-z0-9_-]+`),
 	regexp.MustCompile(`(?i)-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----`),
-	regexp.MustCompile(`(?i)\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|password|passwd|cookie|authorization)\s*[:=]\s*["']?[^\s"']{4,}`),
+	regexp.MustCompile(
+		`(?i)\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|` +
+			`client[_ -]?secret|password|passwd|cookie|authorization)\s*[:=]\s*["']?[^\s"']{4,}`,
+	),
 	regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/=-]{8,}`),
 	regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),
 	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9_]{20,}\b`),
@@ -26,13 +29,34 @@ var evolutionSecretPatterns = []*regexp.Regexp{
 var evolutionPIIPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b`),
 	regexp.MustCompile(`(?i)(?:\+?\d[\d .()-]{7,}\d)`),
-	regexp.MustCompile(`(?i)\b(?:my name is|nama saya|call me|panggil saya|my timezone is|zona waktu saya|i prefer|saya lebih suka|my role is|jabatan saya)\b[^\n.!?]{0,160}`),
-	regexp.MustCompile(`(?i)\b(?:user|pengguna)\s+[a-z0-9][a-z0-9._-]{0,39}\s+(?:prefers?|likes?|wants?|lebih suka|menyukai|ingin)\b[^\n.!?]{0,160}`),
-	regexp.MustCompile(`\b[A-Z][A-Za-z'’-]{1,39}(?:\s+[A-Z][A-Za-z'’-]{1,39}){0,2}\s+(?:prefers?|likes?|wants?|lebih suka|menyukai|ingin)\b[^\n.!?]{0,160}`),
-	regexp.MustCompile(`(?i)\b(?:the user|this user|pengguna ini|user tersebut|he|she|dia|beliau)\s+(?:prefers?|likes?|wants?|lebih suka|menyukai|ingin)\b[^\n.!?]{0,160}`),
-	regexp.MustCompile(`(?i)\b(?:user|pengguna)\s+[a-z0-9][a-z0-9._-]{0,39}\s+(?:lives|works|is located|tinggal|berdomisili|berada|bekerja)\b[^\n.!?]{0,160}`),
-	regexp.MustCompile(`\b[A-Z][A-Za-z'’-]{1,39}(?:\s+[A-Z][A-Za-z'’-]{1,39}){0,2}\s+(?:lives|works as|is located|tinggal|berdomisili|berada|bekerja sebagai)\b[^\n.!?]{0,160}`),
-	regexp.MustCompile(`(?i)\b(?:telegram|discord|slack|whatsapp|account|user)[ _-]?(?:id|handle)\s*[:=]\s*[@a-z0-9._-]+`),
+	regexp.MustCompile(
+		`(?i)\b(?:my name is|nama saya|call me|panggil saya|my timezone is|zona waktu saya|` +
+			`i prefer|saya lebih suka|my role is|jabatan saya)\b[^\n.!?]{0,160}`,
+	),
+	regexp.MustCompile(
+		`(?i)\b(?:user|pengguna)\s+[a-z0-9][a-z0-9._-]{0,39}\s+` +
+			`(?:prefers?|likes?|wants?|lebih suka|menyukai|ingin)\b[^\n.!?]{0,160}`,
+	),
+	regexp.MustCompile(
+		`\b[A-Z][A-Za-z'’-]{1,39}(?:\s+[A-Z][A-Za-z'’-]{1,39}){0,2}\s+` +
+			`(?:prefers?|likes?|wants?|lebih suka|menyukai|ingin)\b[^\n.!?]{0,160}`,
+	),
+	regexp.MustCompile(
+		`(?i)\b(?:the user|this user|pengguna ini|user tersebut|he|she|dia|beliau)\s+` +
+			`(?:prefers?|likes?|wants?|lebih suka|menyukai|ingin)\b[^\n.!?]{0,160}`,
+	),
+	regexp.MustCompile(
+		`(?i)\b(?:user|pengguna)\s+[a-z0-9][a-z0-9._-]{0,39}\s+` +
+			`(?:lives|works|is located|tinggal|berdomisili|berada|bekerja)\b[^\n.!?]{0,160}`,
+	),
+	regexp.MustCompile(
+		`\b[A-Z][A-Za-z'’-]{1,39}(?:\s+[A-Z][A-Za-z'’-]{1,39}){0,2}\s+` +
+			`(?:lives|works as|is located|tinggal|berdomisili|berada|bekerja sebagai)\b[^\n.!?]{0,160}`,
+	),
+	regexp.MustCompile(
+		`(?i)\b(?:telegram|discord|slack|whatsapp|account|user)[ _-]?` +
+			`(?:id|handle)\s*[:=]\s*[@a-z0-9._-]+`,
+	),
 	regexp.MustCompile(`(?i)@[a-z0-9_]{3,32}\b`),
 }
 
@@ -347,20 +371,26 @@ func ReviewDraftWithPolicy(draft SkillDraft, maxChars int) DraftReviewResult {
 
 func sanitizeSkillDraftForPersistence(draft SkillDraft) (SkillDraft, []string) {
 	findings := make([]string, 0, 8)
+	originalTarget := strings.TrimSpace(draft.TargetSkillName)
 	draft.HumanSummary, findings = appendScrubFindings(draft.HumanSummary, findings)
 	draft.BodyOrPatch, findings = appendScrubFindings(draft.BodyOrPatch, findings)
 	draft.IntendedUseCases, findings = scrubEvolutionTextSlice(draft.IntendedUseCases, findings)
 	draft.PreferredEntryPath, findings = scrubEvolutionTextSlice(draft.PreferredEntryPath, findings)
 	draft.AvoidPatterns, findings = scrubEvolutionTextSlice(draft.AvoidPatterns, findings)
-	draft.MatchedSkillRefs, findings = scrubEvolutionTextSlice(draft.MatchedSkillRefs, findings)
+	draft.MatchedSkillRefs, findings = scrubEvolutionSkillNames(draft.MatchedSkillRefs, findings)
 	draft.ReviewNotes, findings = scrubEvolutionTextSlice(draft.ReviewNotes, findings)
 	draft.ScanFindings, findings = scrubEvolutionTextSlice(draft.ScanFindings, findings)
 	draft.DecisionSource, findings = appendScrubFindings(draft.DecisionSource, findings)
 
-	target := strings.TrimSpace(draft.TargetSkillName)
+	target := originalTarget
 	if target != "" {
 		_, targetFindings := ScrubEvolutionText(target)
 		if len(targetFindings) > 0 || validateEvolutionSkillTarget(target) != nil {
+			draft.BodyOrPatch = strings.ReplaceAll(
+				draft.BodyOrPatch,
+				target,
+				"[REDACTED FORBIDDEN TARGET]",
+			)
 			draft.TargetSkillName = "quarantined-skill"
 			findings = append(findings, "unsafe or invalid target skill name removed")
 		}
@@ -389,11 +419,14 @@ func scrubEvolutionTextSlice(values []string, findings []string) ([]string, []st
 }
 
 func draftSafetyTextFields(draft SkillDraft) []string {
-	values := []string{
+	capacity := 3 + len(draft.IntendedUseCases) + len(draft.PreferredEntryPath) +
+		len(draft.AvoidPatterns) + len(draft.MatchedSkillRefs)
+	values := make([]string, 0, capacity)
+	values = append(values,
 		draft.TargetSkillName,
 		draft.HumanSummary,
 		draft.BodyOrPatch,
-	}
+	)
 	values = append(values, draft.IntendedUseCases...)
 	values = append(values, draft.PreferredEntryPath...)
 	values = append(values, draft.AvoidPatterns...)

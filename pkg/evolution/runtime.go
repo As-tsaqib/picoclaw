@@ -124,33 +124,18 @@ func (rt *Runtime) FinalizeTurn(ctx context.Context, input TurnCaseInput) error 
 	workspaceID := input.Workspace
 	createdAt := rt.now()
 
-	attemptTrail := &AttemptTrail{
-		AttemptedSkills:       append([]string(nil), input.AttemptedSkillNames...),
-		FinalSuccessfulPath:   append([]string(nil), input.FinalSuccessfulPath...),
-		SkillContextSnapshots: append([]SkillContextSnapshot(nil), input.SkillContextSnapshots...),
-	}
-	if len(attemptTrail.AttemptedSkills) == 0 && len(attemptTrail.FinalSuccessfulPath) == 0 &&
-		len(attemptTrail.SkillContextSnapshots) == 0 {
-		attemptTrail = nil
-	}
-
 	record := LearningRecord{
-		ID:               buildTaskRecordID(input, createdAt),
-		Kind:             RecordKindTask,
-		WorkspaceID:      workspaceID,
-		CreatedAt:        createdAt,
-		SessionKey:       evolutionSessionReference(input.SessionKey),
-		Summary:          buildRecordSummary(input),
-		UserGoal:         summarizeText(input.UserMessage, 500),
-		FinalOutput:      summarizeText(input.FinalContent, 1200),
-		Status:           RecordStatus("new"),
-		Success:          &success,
-		UsedSkillNames:   append([]string(nil), usedSkillNames...),
-		ToolKinds:        append([]string(nil), input.ToolKinds...),
-		ToolExecutions:   append([]ToolExecutionRecord(nil), input.ToolExecutions...),
-		ActiveSkillNames: append([]string(nil), input.ActiveSkillNames...),
-		AttemptTrail:     attemptTrail,
-		Signals:          append([]string(nil), scrubFindings...),
+		ID:             buildTaskRecordID(input, createdAt),
+		Kind:           RecordKindTask,
+		WorkspaceID:    workspaceID,
+		CreatedAt:      createdAt,
+		SessionKey:     evolutionSessionReference(input.SessionKey),
+		Summary:        buildRecordSummary(input),
+		FinalOutput:    summarizeText(input.FinalContent, 1200),
+		Status:         RecordStatus("new"),
+		Success:        &success,
+		UsedSkillNames: append([]string(nil), usedSkillNames...),
+		Signals:        append([]string(nil), scrubFindings...),
 	}
 
 	paths := NewPaths(input.Workspace, rt.cfg.StateDir)
@@ -1187,13 +1172,13 @@ func collectSkillRefs(matches []skills.SkillInfo) []string {
 
 	refs := make([]string, 0, len(matches))
 	for _, match := range matches {
-		if strings := match.Path; strings != "" {
-			refs = append(refs, strings)
+		name := strings.TrimSpace(match.Name)
+		if name == "" || validateEvolutionSkillTarget(name) != nil {
 			continue
 		}
-		refs = append(refs, match.Source+":"+match.Name)
+		refs = append(refs, name)
 	}
-	return refs
+	return uniqueTrimmedNames(refs)
 }
 
 func countTaskLearningRecords(records []LearningRecord) int {
@@ -1426,17 +1411,21 @@ func (rt *Runtime) applyCandidateDraft(
 	})
 	currentBody, hadCurrent, currentErr := loadCurrentSkillBody(workspace, draft.TargetSkillName)
 	if currentErr != nil {
-		return draft, currentErr
+		return quarantinePreApplyFailure(store, draft, currentErr)
 	}
 	previousProfile, profileErr := store.LoadProfile(draft.TargetSkillName)
 	profileExisted := false
 	if profileErr == nil {
 		if previousProfile.WorkspaceID != workspace {
-			return draft, fmt.Errorf("skill profile scope mismatch")
+			return quarantinePreApplyFailure(
+				store,
+				draft,
+				fmt.Errorf("skill profile scope mismatch"),
+			)
 		}
 		profileExisted = true
 	} else if !errors.Is(profileErr, os.ErrNotExist) {
-		return draft, profileErr
+		return quarantinePreApplyFailure(store, draft, profileErr)
 	}
 	previousVersion := "pre-" + draft.ID
 	draft.PreviousVersion = previousVersion
@@ -1444,7 +1433,7 @@ func (rt *Runtime) applyCandidateDraft(
 		Version: previousVersion, SkillName: draft.TargetSkillName,
 		Workspace: workspace, Body: currentBody, Present: hadCurrent, CreatedAt: rt.now(),
 	}); err != nil {
-		return draft, err
+		return quarantinePreApplyFailure(store, draft, err)
 	}
 	rollbackApply, err := applier.applyDraftWithRollback(ctx, workspace, draft)
 	if err != nil {
@@ -1544,6 +1533,23 @@ func (rt *Runtime) applyCandidateDraft(
 		"run_ref":       evolutionLogRef(runID),
 	})
 	return draft, nil
+}
+
+func quarantinePreApplyFailure(
+	store *Store,
+	draft SkillDraft,
+	cause error,
+) (SkillDraft, error) {
+	draft.Status = DraftStatusQuarantined
+	draft.ScanFindings = appendUniqueStrings(
+		draft.ScanFindings,
+		"pre-apply state transaction failed; no skill changes were made",
+	)
+	var saveErr error
+	if store != nil {
+		saveErr = store.SaveDrafts([]SkillDraft{draft})
+	}
+	return draft, errorsJoin(fmt.Errorf("%w: %v", ErrApplyDraftFailed, cause), saveErr)
 }
 
 func evolutionLogRef(value string) string {

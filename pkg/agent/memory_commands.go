@@ -32,7 +32,11 @@ func configureMemoryCommandRuntime(
 					rt.Config.Memory.BackgroundReview.EffectiveInterval(),
 				),
 				fmt.Sprintf("Approval mode: %s", rt.Config.Memory.EffectiveApprovalMode()),
-				fmt.Sprintf("Query-aware retrieval: %t (%s)", rt.Config.Memory.Retrieval.Enabled, rt.Config.Memory.Retrieval.EffectiveEngine()),
+				fmt.Sprintf(
+					"Query-aware retrieval: %t (%s)",
+					rt.Config.Memory.Retrieval.Enabled,
+					rt.Config.Memory.Retrieval.EffectiveEngine(),
+				),
 				fmt.Sprintf("Notifications: %s", rt.Config.Memory.EffectiveNotificationMode()),
 			}
 			if workspaceErr == nil {

@@ -97,9 +97,21 @@ func TestMemoryApprovalModeLegacyMappingAndExplicitPrecedence(t *testing.T) {
 	}{
 		{name: "legacy false", cfg: MemoryConfig{WriteApproval: false}, want: MemoryApprovalOff},
 		{name: "legacy true", cfg: MemoryConfig{WriteApproval: true}, want: MemoryApprovalBackgroundOnly},
-		{name: "explicit off wins", cfg: MemoryConfig{WriteApproval: true, ApprovalMode: MemoryApprovalOff}, want: MemoryApprovalOff},
-		{name: "explicit background", cfg: MemoryConfig{ApprovalMode: MemoryApprovalBackgroundOnly}, want: MemoryApprovalBackgroundOnly},
-		{name: "explicit all writes", cfg: MemoryConfig{ApprovalMode: MemoryApprovalAllWrites}, want: MemoryApprovalAllWrites},
+		{
+			name: "explicit off wins",
+			cfg:  MemoryConfig{WriteApproval: true, ApprovalMode: MemoryApprovalOff},
+			want: MemoryApprovalOff,
+		},
+		{
+			name: "explicit background",
+			cfg:  MemoryConfig{ApprovalMode: MemoryApprovalBackgroundOnly},
+			want: MemoryApprovalBackgroundOnly,
+		},
+		{
+			name: "explicit all writes",
+			cfg:  MemoryConfig{ApprovalMode: MemoryApprovalAllWrites},
+			want: MemoryApprovalAllWrites,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

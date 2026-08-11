@@ -43,16 +43,38 @@ var curatedInjectionPatterns = []*regexp.Regexp{
 }
 
 var curatedPrivateFactPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\b(?:my name is|nama saya|call me|panggil saya|my timezone is|zona waktu saya|my role is|jabatan saya|i prefer|saya lebih suka)\b`),
+	regexp.MustCompile(
+		`(?i)\b(?:my name is|nama saya|call me|panggil saya|my timezone is|zona waktu saya|` +
+			`my role is|jabatan saya|i prefer|saya lebih suka)\b`,
+	),
 	regexp.MustCompile(`(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b`),
 	regexp.MustCompile(`(?i)(?:\+?\d[\d .()-]{7,}\d)`),
-	regexp.MustCompile(`(?i)\b(?:telegram|discord|slack|whatsapp|account|user)[ _-]?(?:id|handle)\s*[:=]`),
-	regexp.MustCompile(`(?i)\b(?:user|customer|client|owner)(?:'s)?\s+(?:name|timezone|location|address|phone|email|role|preference|prefers|likes|dislikes)\b`),
-	regexp.MustCompile(`(?i)\b(?:he|she|they|dia)\s+(?:lives?|resides?|works?|prefers?|likes?|dislikes?)\b`),
-	regexp.MustCompile(`(?i)\b(?:user|pengguna)\s+[a-z0-9][a-z0-9._-]{0,39}\s+(?:prefers?|likes?|dislikes?|wants?|lebih suka|menyukai|tidak suka|ingin)\b`),
-	regexp.MustCompile(`\b[A-Z][A-Za-z'’-]{1,39}(?:\s+[A-Z][A-Za-z'’-]{1,39}){0,2}\s+(?:prefers?|likes?|dislikes?|wants?|lebih suka|menyukai|tidak suka|ingin)\b`),
-	regexp.MustCompile(`(?i)\b(?:user|pengguna)\s+[a-z0-9][a-z0-9._-]{0,39}\s+(?:lives|works|is located|tinggal|berdomisili|berada|bekerja)\b`),
-	regexp.MustCompile(`\b[A-Z][A-Za-z'’-]{1,39}(?:\s+[A-Z][A-Za-z'’-]{1,39}){0,2}\s+(?:lives|works as|is located|tinggal|berdomisili|berada|bekerja sebagai)\b`),
+	regexp.MustCompile(
+		`(?i)\b(?:telegram|discord|slack|whatsapp|account|user)[ _-]?(?:id|handle)\s*[:=]`,
+	),
+	regexp.MustCompile(
+		`(?i)\b(?:user|customer|client|owner)(?:'s)?\s+` +
+			`(?:name|timezone|location|address|phone|email|role|preference|prefers|likes|dislikes)\b`,
+	),
+	regexp.MustCompile(
+		`(?i)\b(?:he|she|they|dia)\s+(?:lives?|resides?|works?|prefers?|likes?|dislikes?)\b`,
+	),
+	regexp.MustCompile(
+		`(?i)\b(?:user|pengguna)\s+[a-z0-9][a-z0-9._-]{0,39}\s+` +
+			`(?:prefers?|likes?|dislikes?|wants?|lebih suka|menyukai|tidak suka|ingin)\b`,
+	),
+	regexp.MustCompile(
+		`\b[A-Z][A-Za-z'’-]{1,39}(?:\s+[A-Z][A-Za-z'’-]{1,39}){0,2}\s+` +
+			`(?:prefers?|likes?|dislikes?|wants?|lebih suka|menyukai|tidak suka|ingin)\b`,
+	),
+	regexp.MustCompile(
+		`(?i)\b(?:user|pengguna)\s+[a-z0-9][a-z0-9._-]{0,39}\s+` +
+			`(?:lives|works|is located|tinggal|berdomisili|berada|bekerja)\b`,
+	),
+	regexp.MustCompile(
+		`\b[A-Z][A-Za-z'’-]{1,39}(?:\s+[A-Z][A-Za-z'’-]{1,39}){0,2}\s+` +
+			`(?:lives|works as|is located|tinggal|berdomisili|berada|bekerja sebagai)\b`,
+	),
 }
 
 // ValidateCuratedContent rejects secrets, prompt-injection-shaped control

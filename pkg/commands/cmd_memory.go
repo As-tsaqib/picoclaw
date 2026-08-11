@@ -12,12 +12,30 @@ func memoryCommand() Definition {
 		SubCommands: []SubCommand{
 			{Name: "status", Description: "Show memory configuration and capacity", Handler: memoryStatusHandler},
 			{Name: "list", Description: "List current workspace/user entries", Handler: memoryListHandler},
-			{Name: "search", Description: "Search current scoped memory", ArgsUsage: "<query>", Handler: memorySearchHandler},
-			{Name: "edit", Description: "Replace an entry's content", ArgsUsage: "<id> <content>", Handler: memoryEditHandler},
-			{Name: "pin", Description: "Pin an active entry", ArgsUsage: "<id>", Handler: memoryEntryActionHandler("pin")},
-			{Name: "unpin", Description: "Unpin an entry", ArgsUsage: "<id>", Handler: memoryEntryActionHandler("unpin")},
-			{Name: "archive", Description: "Archive an entry", ArgsUsage: "<id>", Handler: memoryEntryActionHandler("archive")},
-			{Name: "restore", Description: "Restore an archived entry", ArgsUsage: "<id>", Handler: memoryEntryActionHandler("restore")},
+			{
+				Name: "search", Description: "Search current scoped memory",
+				ArgsUsage: "<query>", Handler: memorySearchHandler,
+			},
+			{
+				Name: "edit", Description: "Replace an entry's content",
+				ArgsUsage: "<id> <content>", Handler: memoryEditHandler,
+			},
+			{
+				Name: "pin", Description: "Pin an active entry",
+				ArgsUsage: "<id>", Handler: memoryEntryActionHandler("pin"),
+			},
+			{
+				Name: "unpin", Description: "Unpin an entry",
+				ArgsUsage: "<id>", Handler: memoryEntryActionHandler("unpin"),
+			},
+			{
+				Name: "archive", Description: "Archive an entry",
+				ArgsUsage: "<id>", Handler: memoryEntryActionHandler("archive"),
+			},
+			{
+				Name: "restore", Description: "Restore an archived entry",
+				ArgsUsage: "<id>", Handler: memoryEntryActionHandler("restore"),
+			},
 			{
 				Name: "forget", Description: "Remove a current-user memory entry",
 				ArgsUsage: "<id>", Handler: memoryForgetHandler,

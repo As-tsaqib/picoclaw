@@ -43,7 +43,7 @@ func TestEvolutionControlApprovalApplyVersionAuditAndRollback(t *testing.T) {
 	if err := store.SaveDrafts([]evolution.SkillDraft{draft}); err != nil {
 		t.Fatalf("SaveDrafts: %v", err)
 	}
-	runtime, err := evolution.NewRuntime(evolution.RuntimeOptions{
+	runtime, runtimeErr := evolution.NewRuntime(evolution.RuntimeOptions{
 		Config: config.EvolutionConfig{
 			Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyApprovalRequired,
 			MinTaskCount: 2, MinSuccessRatio: 0.8, PrivateDataScrubbing: true,
@@ -51,8 +51,8 @@ func TestEvolutionControlApprovalApplyVersionAuditAndRollback(t *testing.T) {
 		Now: func() time.Time { return now }, Store: store,
 		Applier: evolution.NewApplier(paths, func() time.Time { return now }),
 	})
-	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
+	if runtimeErr != nil {
+		t.Fatalf("NewRuntime: %v", runtimeErr)
 	}
 
 	if _, err := runtime.ApplyApprovedDraft(context.Background(), workspace, draft.ID); err == nil {
@@ -89,11 +89,15 @@ func TestEvolutionControlApprovalApplyVersionAuditAndRollback(t *testing.T) {
 	if profile.CurrentVersion != draft.ID || len(profile.VersionHistory) < 2 {
 		t.Fatalf("version profile = %#v", profile)
 	}
-	if _, err := store.LoadSkillVersion(workspace, "weather", applied.PreviousVersion); err != nil {
-		t.Fatalf("LoadSkillVersion(baseline): %v", err)
+	if _, versionErr := store.LoadSkillVersion(
+		workspace,
+		"weather",
+		applied.PreviousVersion,
+	); versionErr != nil {
+		t.Fatalf("LoadSkillVersion(baseline): %v", versionErr)
 	}
-	if _, err := store.LoadSkillVersion(workspace, "weather", draft.ID); err != nil {
-		t.Fatalf("LoadSkillVersion(applied): %v", err)
+	if _, versionErr := store.LoadSkillVersion(workspace, "weather", draft.ID); versionErr != nil {
+		t.Fatalf("LoadSkillVersion(applied): %v", versionErr)
 	}
 	audit, err := store.LoadAuditForWorkspace(workspace, 20)
 	if err != nil {
@@ -132,17 +136,20 @@ func TestEvolutionControlRollbackNewSkillRestoresAbsentBaseline(t *testing.T) {
 	}
 	seedVerifiedEvolutionRule(t, store, rule)
 	draft := evolution.SkillDraft{
-		ID: "draft-new-skill", WorkspaceID: workspace, CreatedAt: now,
+		ID:             "draft-new-skill",
+		WorkspaceID:    workspace,
+		CreatedAt:      now,
 		SourceRecordID: rule.ID, TargetSkillName: "release-checklist",
 		DraftType: evolution.DraftTypeWorkflow, ChangeKind: evolution.ChangeKindCreate,
 		HumanSummary: "Verified release checklist",
-		BodyOrPatch:  "---\nname: release-checklist\ndescription: verified release checklist\n---\n# Release Checklist\n\nRun remote validation.\n",
-		Status:       evolution.DraftStatusCandidate,
+		BodyOrPatch: "---\nname: release-checklist\ndescription: verified release checklist\n---\n" +
+			"# Release Checklist\n\nRun remote validation.\n",
+		Status: evolution.DraftStatusCandidate,
 	}
 	if err := store.SaveDrafts([]evolution.SkillDraft{draft}); err != nil {
 		t.Fatalf("SaveDrafts: %v", err)
 	}
-	runtime, err := evolution.NewRuntime(evolution.RuntimeOptions{
+	runtime, runtimeErr := evolution.NewRuntime(evolution.RuntimeOptions{
 		Config: config.EvolutionConfig{
 			Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyApprovalRequired,
 			MinTaskCount: 2, MinSuccessRatio: 0.8, PrivateDataScrubbing: true,
@@ -150,8 +157,8 @@ func TestEvolutionControlRollbackNewSkillRestoresAbsentBaseline(t *testing.T) {
 		Now: func() time.Time { return now }, Store: store,
 		Applier: evolution.NewApplier(paths, func() time.Time { return now }),
 	})
-	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
+	if runtimeErr != nil {
+		t.Fatalf("NewRuntime: %v", runtimeErr)
 	}
 	if _, err := runtime.ApproveDraft(workspace, draft.ID, "dashboard"); err != nil {
 		t.Fatalf("ApproveDraft: %v", err)
@@ -164,12 +171,17 @@ func TestEvolutionControlRollbackNewSkillRestoresAbsentBaseline(t *testing.T) {
 	if err != nil || baseline.Present {
 		t.Fatalf("new-skill baseline = %#v, %v", baseline, err)
 	}
-	if _, err := runtime.RollbackSkill(workspace, draft.TargetSkillName, applied.PreviousVersion, "dashboard"); err != nil {
-		t.Fatalf("RollbackSkill: %v", err)
+	if _, rollbackErr := runtime.RollbackSkill(
+		workspace,
+		draft.TargetSkillName,
+		applied.PreviousVersion,
+		"dashboard",
+	); rollbackErr != nil {
+		t.Fatalf("RollbackSkill: %v", rollbackErr)
 	}
 	skillPath := filepath.Join(workspace, "skills", draft.TargetSkillName, "SKILL.md")
-	if _, err := os.Stat(skillPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("new skill still exists after rollback: %v", err)
+	if _, statErr := os.Stat(skillPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("new skill still exists after rollback: %v", statErr)
 	}
 }
 
@@ -210,7 +222,7 @@ func TestEvolutionControlRejectsInsufficientRejectedAndUnsafeDrafts(t *testing.T
 	if err := store.SaveDrafts([]evolution.SkillDraft{insufficient, unsafe}); err != nil {
 		t.Fatalf("SaveDrafts: %v", err)
 	}
-	runtime, err := evolution.NewRuntime(evolution.RuntimeOptions{
+	runtime, runtimeErr := evolution.NewRuntime(evolution.RuntimeOptions{
 		Config: config.EvolutionConfig{
 			Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyApprovalRequired,
 			MinTaskCount: 2, MinSuccessRatio: 0.8, PrivateDataScrubbing: true,
@@ -218,23 +230,27 @@ func TestEvolutionControlRejectsInsufficientRejectedAndUnsafeDrafts(t *testing.T
 		Now: func() time.Time { return now }, Store: store,
 		Applier: evolution.NewApplier(evolution.NewPaths(workspace, ""), func() time.Time { return now }),
 	})
-	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
+	if runtimeErr != nil {
+		t.Fatalf("NewRuntime: %v", runtimeErr)
 	}
-	if _, err := runtime.ApproveDraft(workspace, insufficient.ID, "dashboard"); err == nil {
+	if _, approveErr := runtime.ApproveDraft(
+		workspace,
+		insufficient.ID,
+		"dashboard",
+	); approveErr == nil {
 		t.Fatal("one task was sufficient for draft approval")
 	}
-	if candidate, err := runtime.GetDraft(workspace, insufficient.ID); err != nil ||
+	if candidate, getErr := runtime.GetDraft(workspace, insufficient.ID); getErr != nil ||
 		candidate.Status != evolution.DraftStatusCandidate {
-		t.Fatalf("insufficient candidate = %#v, %v", candidate, err)
+		t.Fatalf("insufficient candidate = %#v, %v", candidate, getErr)
 	}
-	if _, err := runtime.ApproveDraft(workspace, unsafe.ID, "dashboard"); err == nil {
+	if _, approveErr := runtime.ApproveDraft(workspace, unsafe.ID, "dashboard"); approveErr == nil {
 		t.Fatal("unsafe draft approval returned no error")
 	}
-	quarantined, err := runtime.GetDraft(workspace, unsafe.ID)
-	if err != nil || quarantined.Status != evolution.DraftStatusQuarantined ||
+	quarantined, getErr := runtime.GetDraft(workspace, unsafe.ID)
+	if getErr != nil || quarantined.Status != evolution.DraftStatusQuarantined ||
 		len(quarantined.ScanFindings) == 0 {
-		t.Fatalf("unsafe draft = %#v, %v", quarantined, err)
+		t.Fatalf("unsafe draft = %#v, %v", quarantined, getErr)
 	}
 
 	verifiedRule := evolution.LearningRecord{

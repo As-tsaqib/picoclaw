@@ -268,6 +268,7 @@ func TestRuntime_FinalizeTurnSharedStateKeepsSkillProfilesScoped(t *testing.T) {
 		TurnID:           "turn-a",
 		SessionKey:       "session-a",
 		Status:           "completed",
+		FinalContent:     "delivered result",
 		ActiveSkillNames: []string{"weather"},
 	}); finalizeErr != nil {
 		t.Fatalf("FinalizeTurn(workspaceA): %v", finalizeErr)
@@ -278,6 +279,7 @@ func TestRuntime_FinalizeTurnSharedStateKeepsSkillProfilesScoped(t *testing.T) {
 		TurnID:           "turn-b",
 		SessionKey:       "session-b",
 		Status:           "completed",
+		FinalContent:     "delivered result",
 		ActiveSkillNames: []string{"weather"},
 	}); finalizeErr != nil {
 		t.Fatalf("FinalizeTurn(workspaceB): %v", finalizeErr)
@@ -569,6 +571,7 @@ func TestRuntime_FinalizeTurnUpdatesSkillProfileUsage(t *testing.T) {
 		SessionKey:       "session-1",
 		AgentID:          "agent-1",
 		Status:           "completed",
+		FinalContent:     "delivered result",
 		ActiveSkillNames: []string{"skill-a", "skill-a"},
 	}); finalizeErr != nil {
 		t.Fatalf("FinalizeTurn: %v", finalizeErr)
@@ -640,6 +643,7 @@ func assertFinalizeTurnReactivatesSkill(
 		Workspace:        workspace,
 		TurnID:           "turn-" + skillName,
 		Status:           "completed",
+		FinalContent:     "delivered result",
 		ActiveSkillNames: []string{skillName},
 	}); finalizeErr != nil {
 		t.Fatalf("FinalizeTurn: %v", finalizeErr)

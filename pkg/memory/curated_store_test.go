@@ -122,9 +122,9 @@ func TestCuratedStoreScopePrivacyAndWorkspaceSharing(t *testing.T) {
 func TestCuratedStoreCapacityConsolidationAndAtomicBatch(t *testing.T) {
 	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 20, 20)
 	caller := testCaller("telegram:user-1")
-	entry := addCurated(t, store, CuratedTargetWorkspace, caller, "1234567890")
+	entry := addCurated(t, store, CuratedTargetWorkspace, caller, "abcdefghij")
 	if _, err := store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{{
-		Action: CuratedActionAdd, Content: "12345678901",
+		Action: CuratedActionAdd, Content: "abcdefghijk",
 	}}, false); err == nil {
 		t.Fatal("capacity add error = nil")
 	} else {

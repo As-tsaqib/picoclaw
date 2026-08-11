@@ -144,11 +144,6 @@ type curatedPromptEntry struct {
 	UpdatedAt  string  `json:"updated_at"`
 }
 
-func renderCuratedPromptData(target string, entries []memory.CuratedEntry, maxChars int) string {
-	content, _ := renderCuratedPromptDataWithUsage(target, entries, maxChars)
-	return content
-}
-
 func renderCuratedPromptDataWithUsage(
 	target string,
 	entries []memory.CuratedEntry,
@@ -288,7 +283,10 @@ func (ts *turnState) stagedCuratedUsage() []memory.CuratedUsage {
 	defer ts.mu.RUnlock()
 	out := make([]memory.CuratedUsage, len(ts.curatedUsage))
 	for i := range ts.curatedUsage {
-		out[i] = memory.CuratedUsage{Target: ts.curatedUsage[i].Target, IDs: append([]string(nil), ts.curatedUsage[i].IDs...)}
+		out[i] = memory.CuratedUsage{
+			Target: ts.curatedUsage[i].Target,
+			IDs:    append([]string(nil), ts.curatedUsage[i].IDs...),
+		}
 	}
 	return out
 }

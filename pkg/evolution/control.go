@@ -421,15 +421,16 @@ func (rt *Runtime) RollbackSkill(workspace, skillName, version, source string) (
 		return SkillProfile{}, err
 	}
 	if snapshot.Present {
-		if err := validateAppliedSkillBody(snapshot.Body, skillName, true); err != nil {
-			return SkillProfile{}, err
+		if validationErr := validateAppliedSkillBody(snapshot.Body, skillName, true); validationErr != nil {
+			return SkillProfile{}, validationErr
 		}
 	}
 	currentBody, currentPresent, err := loadCurrentSkillBody(workspace, skillName)
 	if err != nil {
 		return SkillProfile{}, err
 	}
-	if _, loadErr := store.LoadSkillVersion(workspace, skillName, profile.CurrentVersion); errors.Is(loadErr, os.ErrNotExist) {
+	_, loadErr := store.LoadSkillVersion(workspace, skillName, profile.CurrentVersion)
+	if errors.Is(loadErr, os.ErrNotExist) {
 		if saveErr := store.SaveSkillVersion(SkillVersionSnapshot{
 			Version: profile.CurrentVersion, SkillName: skillName, Workspace: workspace,
 			Body: currentBody, Present: currentPresent, CreatedAt: rt.now(),
@@ -439,8 +440,8 @@ func (rt *Runtime) RollbackSkill(workspace, skillName, version, source string) (
 	} else if loadErr != nil {
 		return SkillProfile{}, loadErr
 	}
-	if err := writeSkillVersionBody(workspace, skillName, snapshot.Body, snapshot.Present); err != nil {
-		return SkillProfile{}, err
+	if writeErr := writeSkillVersionBody(workspace, skillName, snapshot.Body, snapshot.Present); writeErr != nil {
+		return SkillProfile{}, writeErr
 	}
 	now := rt.now()
 	fromVersion := profile.CurrentVersion
@@ -456,23 +457,24 @@ func (rt *Runtime) RollbackSkill(workspace, skillName, version, source string) (
 		Summary: "Administrator-approved rollback", Rollback: true,
 		RollbackReason: boundedDecisionSource(source),
 	})
-	if len(profile.VersionHistory) > rt.cfg.EffectiveRollbackRetention()*4 {
-		profile.VersionHistory = profile.VersionHistory[len(profile.VersionHistory)-rt.cfg.EffectiveRollbackRetention()*4:]
+	maxHistory := rt.cfg.EffectiveRollbackRetention() * 4
+	if len(profile.VersionHistory) > maxHistory {
+		profile.VersionHistory = profile.VersionHistory[len(profile.VersionHistory)-maxHistory:]
 	}
-	if err := store.SaveProfile(profile); err != nil {
+	if profileSaveErr := store.SaveProfile(profile); profileSaveErr != nil {
 		restoreErr := writeSkillVersionBody(workspace, skillName, currentBody, currentPresent)
-		return SkillProfile{}, errorsJoin(err, restoreErr)
+		return SkillProfile{}, errorsJoin(profileSaveErr, restoreErr)
 	}
-	if err := store.AppendAudit(AuditEvent{
+	if auditErr := store.AppendAudit(AuditEvent{
 		Action: "rollback", Workspace: workspace, SkillName: skillName, Timestamp: now,
 		Details: map[string]any{
 			"from_version": fromVersion, "to_version": version,
 			"source": boundedDecisionSource(source),
 		},
-	}); err != nil {
+	}); auditErr != nil {
 		restoreSkillErr := writeSkillVersionBody(workspace, skillName, currentBody, currentPresent)
 		restoreProfileErr := store.SaveProfile(previousProfile)
-		return SkillProfile{}, errorsJoin(err, restoreSkillErr, restoreProfileErr)
+		return SkillProfile{}, errorsJoin(auditErr, restoreSkillErr, restoreProfileErr)
 	}
 	return profile, nil
 }

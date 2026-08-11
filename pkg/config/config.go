@@ -257,7 +257,10 @@ func (c EvolutionConfig) EffectiveRollbackRetention() int {
 func (c EvolutionConfig) Validate() error {
 	var validationErrors []string
 	if c.Enabled && !c.PrivateDataScrubbing {
-		validationErrors = append(validationErrors, "evolution.private_data_scrubbing must remain enabled when evolution is enabled")
+		validationErrors = append(
+			validationErrors,
+			"evolution.private_data_scrubbing must remain enabled when evolution is enabled",
+		)
 	}
 	switch strings.ToLower(strings.TrimSpace(c.Mode)) {
 	case "", "observe", "draft", "apply":

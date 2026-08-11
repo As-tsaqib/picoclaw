@@ -88,9 +88,15 @@ func TestMemoryManageToolApprovalModesDistinguishInteractiveAndCuratorWrites(t *
 		{name: "off interactive", mode: config.MemoryApprovalOff},
 		{name: "off curator", mode: config.MemoryApprovalOff, background: true},
 		{name: "background only interactive", mode: config.MemoryApprovalBackgroundOnly},
-		{name: "background only curator", mode: config.MemoryApprovalBackgroundOnly, background: true, wantStaged: true},
+		{
+			name: "background only curator", mode: config.MemoryApprovalBackgroundOnly,
+			background: true, wantStaged: true,
+		},
 		{name: "all writes interactive", mode: config.MemoryApprovalAllWrites, wantStaged: true},
-		{name: "all writes curator", mode: config.MemoryApprovalAllWrites, background: true, wantStaged: true},
+		{
+			name: "all writes curator", mode: config.MemoryApprovalAllWrites,
+			background: true, wantStaged: true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
