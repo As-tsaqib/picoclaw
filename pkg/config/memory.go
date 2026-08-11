@@ -436,7 +436,13 @@ func (c MemoryConfig) Validate() error {
 		validationErrors = append(validationErrors, "memory.retrieval.fuzzy_weight must be between 0 and 5")
 	}
 	if c.Retrieval.RecentFallbackCount < 0 || c.Retrieval.RecentFallbackCount > MaxMemoryRetrievalResults {
-		validationErrors = append(validationErrors, fmt.Sprintf("memory.retrieval.recent_fallback_count must be between 0 and %d", MaxMemoryRetrievalResults))
+		validationErrors = append(
+			validationErrors,
+			fmt.Sprintf(
+				"memory.retrieval.recent_fallback_count must be between 0 and %d",
+				MaxMemoryRetrievalResults,
+			),
+		)
 	}
 	bounded("memory.lifecycle.archived_retention_days", c.Lifecycle.ArchivedRetentionDays, MaxMemoryLifecycleDays)
 	bounded("memory.lifecycle.stale_threshold_days", c.Lifecycle.StaleThresholdDays, MaxMemoryLifecycleDays)

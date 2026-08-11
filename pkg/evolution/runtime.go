@@ -1586,14 +1586,41 @@ func (rt *Runtime) rollbackPostApplyFailure(
 }
 
 func (rt *Runtime) recordRollbackAudit(store *Store, draft SkillDraft, applyErr error) error {
+	now := rt.now()
+	reason := "apply_failed"
 	details := map[string]any{"error_class": "apply_failed"}
 	if errors.Is(applyErr, context.Canceled) || errors.Is(applyErr, context.DeadlineExceeded) {
-		details["error_class"] = "canceled"
+		reason = "canceled"
+		details["error_class"] = reason
 	}
-	return store.AppendAudit(AuditEvent{
+	profileErr := store.UpdateProfile(
+		draft.WorkspaceID,
+		draft.TargetSkillName,
+		func(profile *SkillProfile, exists bool) error {
+			if !exists {
+				return nil
+			}
+			profile.VersionHistory = append(profile.VersionHistory, SkillVersionEntry{
+				Version:        profile.CurrentVersion,
+				Action:         "rollback",
+				Timestamp:      now,
+				DraftID:        draft.ID,
+				Summary:        "Rolled back failed draft apply",
+				Rollback:       true,
+				RollbackReason: reason,
+			})
+			maxHistory := rt.cfg.EffectiveRollbackRetention() * 4
+			if len(profile.VersionHistory) > maxHistory {
+				profile.VersionHistory = profile.VersionHistory[len(profile.VersionHistory)-maxHistory:]
+			}
+			return nil
+		},
+	)
+	auditErr := store.AppendAudit(AuditEvent{
 		Action: "apply_failed", Workspace: draft.WorkspaceID, DraftID: draft.ID,
-		SkillName: draft.TargetSkillName, Timestamp: rt.now(), Details: details,
+		SkillName: draft.TargetSkillName, Timestamp: now, Details: details,
 	})
+	return errorsJoin(profileErr, auditErr)
 }
 
 func profileOrigin(origin string) string {

@@ -172,8 +172,8 @@ func TestRuntime_FinalizeTurnWritesRecordWithOverride(t *testing.T) {
 	if len(first.UsedSkillNames) != 0 {
 		t.Fatalf("first UsedSkillNames = %v, want empty", first.UsedSkillNames)
 	}
-	if len(first.ToolKinds) != 2 || len(first.ToolExecutions) != 2 ||
-		len(first.ActiveSkillNames) != 1 || first.Source != nil || first.AttemptTrail != nil {
+	if len(first.ToolKinds) != 0 || len(first.ToolExecutions) != 0 ||
+		len(first.ActiveSkillNames) != 0 || first.Source != nil || first.AttemptTrail != nil {
 		t.Fatalf("first record should retain only bounded procedural evidence: %+v", first)
 	}
 	if first.TaskHash != "" || len(first.Signals) != 0 {
@@ -377,10 +377,8 @@ func TestRuntime_FinalizeTurnWritesPotentiallyLearnableSignal(t *testing.T) {
 	if got := record.AllLoadedSkillNames; len(got) != 0 {
 		t.Fatalf("AllLoadedSkillNames = %v, want empty", got)
 	}
-	if record.AttemptTrail == nil || len(record.AttemptTrail.FinalSuccessfulPath) != 1 ||
-		record.AttemptTrail.FinalSuccessfulPath[0] != "weather" ||
-		len(record.AttemptTrail.SkillContextSnapshots) != 2 {
-		t.Fatalf("AttemptTrail = %+v, want bounded successful path evidence", record.AttemptTrail)
+	if record.AttemptTrail != nil {
+		t.Fatalf("AttemptTrail = %+v, want nil", record.AttemptTrail)
 	}
 }
 
@@ -531,10 +529,8 @@ func TestRuntime_FinalizeTurnPrefersExplicitAttemptTrail(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &record); err != nil {
 		t.Fatalf("Unmarshal record: %v", err)
 	}
-	if record.AttemptTrail == nil || len(record.AttemptTrail.AttemptedSkills) != 2 ||
-		len(record.AttemptTrail.FinalSuccessfulPath) != 2 ||
-		len(record.AttemptTrail.SkillContextSnapshots) != 2 {
-		t.Fatalf("AttemptTrail = %+v, want explicit bounded trail", record.AttemptTrail)
+	if record.AttemptTrail != nil {
+		t.Fatalf("AttemptTrail = %+v, want nil", record.AttemptTrail)
 	}
 	if got := record.UsedSkillNames; len(got) != 2 || got[0] != "geocode" || got[1] != "weather" {
 		t.Fatalf("UsedSkillNames = %v, want [geocode weather]", got)

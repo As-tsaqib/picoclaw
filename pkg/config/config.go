@@ -278,7 +278,10 @@ func (c EvolutionConfig) Validate() error {
 	switch trigger {
 	case "", "after_turn", "scheduled", "manual", "none", "off":
 	default:
-		validationErrors = append(validationErrors, "evolution.cold_path_trigger must be after_turn, scheduled, or manual")
+		validationErrors = append(
+			validationErrors,
+			"evolution.cold_path_trigger must be after_turn, scheduled, or manual",
+		)
 	}
 	if trigger == "scheduled" {
 		times := c.EffectiveColdPathTimes()

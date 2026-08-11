@@ -77,8 +77,14 @@ var evolutionForbiddenPathPatterns = []*regexp.Regexp{
 
 var evolutionForbiddenTargetPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(?:^|[-_])(?:soul|personality)(?:$|[-_])`),
-	regexp.MustCompile(`(?i)(?:^|[-_])(?:private|personal|per[-_]?user|current[-_]?user)[-_]?(?:memory|profile|preferences?|identity)(?:$|[-_])`),
-	regexp.MustCompile(`(?i)(?:^|[-_])(?:user|agent)[-_](?:memory|profile|preferences?|identity|personality)(?:$|[-_])`),
+	regexp.MustCompile(
+		`(?i)(?:^|[-_])(?:private|personal|per[-_]?user|current[-_]?user)[-_]?` +
+			`(?:memory|profile|preferences?|identity)(?:$|[-_])`,
+	),
+	regexp.MustCompile(
+		`(?i)(?:^|[-_])(?:user|agent)[-_]` +
+			`(?:memory|profile|preferences?|identity|personality)(?:$|[-_])`,
+	),
 }
 
 var opaqueEvolutionSessionPattern = regexp.MustCompile(`^session-[0-9a-f]{16}$`)

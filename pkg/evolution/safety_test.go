@@ -161,11 +161,13 @@ func TestEvolutionDraftPersistenceScrubsEveryPrivateFieldAndForbiddenTarget(t *t
 	paths := evolution.NewPaths(workspace, "")
 	store := evolution.NewStore(paths)
 	draft := evolution.SkillDraft{
-		ID:              "draft-private-profile",
-		WorkspaceID:     workspace,
-		SourceRecordID:  "pattern-private",
-		TargetSkillName: "user-preference-memory", DraftType: evolution.DraftTypeWorkflow,
-		ChangeKind: evolution.ChangeKindCreate, HumanSummary: "Alice prefers concise replies",
+		ID:                 "draft-private-profile",
+		WorkspaceID:        workspace,
+		SourceRecordID:     "pattern-private",
+		TargetSkillName:    "user-preference-memory",
+		DraftType:          evolution.DraftTypeWorkflow,
+		ChangeKind:         evolution.ChangeKindCreate,
+		HumanSummary:       "Alice prefers concise replies",
 		IntendedUseCases:   []string{"User A prefers Go and concise Indonesian"},
 		PreferredEntryPath: []string{"/workspace/SOUL.md"},
 		AvoidPatterns:      []string{"Email alice@example.test before responding"},

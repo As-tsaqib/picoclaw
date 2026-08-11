@@ -1235,8 +1235,12 @@ func TestAgentLoop_ReloadTransfersPendingEvolutionDeliveryGate(t *testing.T) {
 			Enabled: true, Mode: "observe", PrivateDataScrubbing: true,
 		},
 	}
-	if err := al.ReloadProviderAndConfig(context.Background(), &simpleMockProvider{response: "ok"}, reloadCfg); err != nil {
-		t.Fatalf("ReloadProviderAndConfig: %v", err)
+	if reloadErr := al.ReloadProviderAndConfig(
+		context.Background(),
+		&simpleMockProvider{response: "ok"},
+		reloadCfg,
+	); reloadErr != nil {
+		t.Fatalf("ReloadProviderAndConfig: %v", reloadErr)
 	}
 	current := al.currentEvolutionBridge()
 	if current == nil || current == oldBridge {
