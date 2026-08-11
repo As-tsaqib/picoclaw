@@ -11,15 +11,15 @@
 --- a/pkg/agent/turn_state.go
 +++ b/pkg/agent/turn_state.go
 @@ -239,7 +239,7 @@
- 	mu              sync.RWMutex       // protects mutable fields above
- 	isFinished      atomic.Bool        // True if parent has finished
- 	parentEnded     atomic.Bool        // True if parent turn ended gracefully
+ 	critical        bool               // Whether this SubTurn should continue after parent ends
+ 	parentTurnState *turnState         // Reference to parent turnState
+ 	parentEnded     atomic.Bool        // Whether parent has ended
 -	closeOnce       sync.Once          // Ensures pendingResults channel is closed once
 +	closeOnce       sync.Once          // Ensures finishedChan is closed once
- 	finishedChan    chan struct{}       // Closed when turn finishes (for delivery cancellation)
- 	gracefulOnce    sync.Once          // Ensures graceful interrupt executes only once
- 	gracefulFlag    atomic.Bool        // True after graceful interrupt requested
-@@ -797,15 +797,13 @@
+ 	finishedChan    chan struct{}      // Closed when turn finishes
+ 
+ 	// Token budget tracking
+@@ -797,15 +797,15 @@
  // SubTurn-related methods
  // =============================================================================
  
