@@ -40,6 +40,8 @@ jobs:
             pkg/agent/memory_prompt.go \
             pkg/agent/memory_prompt_test.go \
             pkg/agent/memory_reviewer_test.go \
+            pkg/agent/steering_test.go \
+            pkg/agent/turn_state.go \
             pkg/channels/manager.go \
             pkg/commands/cmd_clear.go \
             pkg/commands/memory_command_test.go \
@@ -111,6 +113,8 @@ jobs:
             pkg/agent/memory_prompt.go \
             pkg/agent/memory_prompt_test.go \
             pkg/agent/memory_reviewer_test.go \
+            pkg/agent/steering_test.go \
+            pkg/agent/turn_state.go \
             pkg/channels/manager.go \
             pkg/commands/cmd_clear.go \
             pkg/commands/memory_command_test.go \
