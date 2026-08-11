@@ -55,23 +55,40 @@ jobs:
         run: go generate ./...
 
       - name: Targeted personalization tests
-        run: go test -count=1 -tags goolm,stdjson ./pkg/memory ./pkg/agent ./pkg/tools ./pkg/commands ./pkg/channels ./cmd/membench
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -tags goolm,stdjson ./pkg/memory ./pkg/agent ./pkg/tools ./pkg/commands ./pkg/channels ./cmd/membench 2>&1 | tee /tmp/targeted-tests.log
 
       - name: Full Go test suite
-        run: go test -count=1 -tags goolm,stdjson ./...
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -tags goolm,stdjson ./... 2>&1 | tee /tmp/full-tests.log
 
       - name: Focused race suite
-        run: go test -race -count=1 -tags goolm,stdjson ./pkg/memory ./pkg/agent ./pkg/tools ./pkg/channels
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -count=1 -tags goolm,stdjson ./pkg/memory ./pkg/agent ./pkg/tools ./pkg/channels 2>&1 | tee /tmp/race-tests.log
 
       - name: Personalization benchmark
-        run: go run -tags goolm,stdjson ./cmd/membench personalization --out /tmp/personalization-bench
+        shell: bash
+        run: |
+          set -o pipefail
+          go run -tags goolm,stdjson ./cmd/membench personalization --out /tmp/personalization-bench 2>&1 | tee /tmp/personalization-bench.log
 
-      - name: Upload benchmark
+      - name: Upload validation logs
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: personalization-final-benchmark
-          path: /tmp/personalization-bench/personalization.json
+          name: personalization-final-validation-logs
+          path: |
+            /tmp/targeted-tests.log
+            /tmp/full-tests.log
+            /tmp/race-tests.log
+            /tmp/personalization-bench.log
+            /tmp/personalization-bench/personalization.json
           if-no-files-found: ignore
 
       - name: Commit validated source
