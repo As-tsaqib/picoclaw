@@ -25,14 +25,22 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Fix shadow declarations
+      - name: Fix lint-only declarations
         shell: python
         run: |
           from pathlib import Path
+          import re
 
-          path = Path("pkg/agent/context_manager_test.go")
-          text = path.read_text()
-          old = '''\tif _, err := recall.AppendDeliveredTurn(
+          def replace_one(path, old, new, label):
+              file = Path(path)
+              text = file.read_text()
+              if old not in text:
+                  raise SystemExit(f"{label} not found in {path}")
+              file.write_text(text.replace(old, new, 1))
+
+          replace_one(
+              "pkg/agent/context_manager_test.go",
+              '''\tif _, err := recall.AppendDeliveredTurn(
           \t\tcaller,
           \t\t"turn-pref",
           \t\t"Mulai sekarang saya lebih suka jawaban ringkas",
@@ -41,8 +49,8 @@ jobs:
           \t); err != nil {
           \t\tt.Fatal(err)
           \t}
-          '''
-          new = '''\tif _, appendErr := recall.AppendDeliveredTurn(
+          ''',
+              '''\tif _, appendErr := recall.AppendDeliveredTurn(
           \t\tcaller,
           \t\t"turn-pref",
           \t\t"Mulai sekarang saya lebih suka jawaban ringkas",
@@ -51,49 +59,110 @@ jobs:
           \t); appendErr != nil {
           \t\tt.Fatal(appendErr)
           \t}
-          '''
-          if old not in text:
-              raise SystemExit("AppendDeliveredTurn shadow block not found")
-          text = text.replace(old, new, 1)
-          old = '''\tif err := al.contextManager.Compact(context.Background(), &CompactRequest{
+          ''',
+              "AppendDeliveredTurn shadow block",
+          )
+          replace_one(
+              "pkg/agent/context_manager_test.go",
+              '''\tif err := al.contextManager.Compact(context.Background(), &CompactRequest{
           \t\tSessionKey: caller.SessionKey,
           \t\tReason:     ContextCompressReasonRetry,
           \t}); err != nil {
           \t\tt.Fatal(err)
           \t}
-          '''
-          new = '''\tif compactErr := al.contextManager.Compact(context.Background(), &CompactRequest{
+          ''',
+              '''\tif compactErr := al.contextManager.Compact(context.Background(), &CompactRequest{
           \t\tSessionKey: caller.SessionKey,
           \t\tReason:     ContextCompressReasonRetry,
           \t}); compactErr != nil {
           \t\tt.Fatal(compactErr)
           \t}
-          '''
-          if old not in text:
-              raise SystemExit("Compact shadow block not found")
-          path.write_text(text.replace(old, new, 1))
-
-          path = Path("cmd/membench/personalization.go")
-          text = path.read_text()
-          old = '''\t\tif _, err := store.Retrieve(memory.CuratedTargetCurrentUser, userA, memory.CuratedRetrievalOptions{
+          ''',
+              "Compact shadow block",
+          )
+          replace_one(
+              "cmd/membench/personalization.go",
+              '''\t\tif _, err := store.Retrieve(memory.CuratedTargetCurrentUser, userA, memory.CuratedRetrievalOptions{
           \t\t\tQuery: query, MaxResults: 6, MaxChars: 2_800, PinnedChars: 800,
           \t\t\tMinimumScore: 0.35, RecencyWeight: 0.25, RecencyHalfLifeDays: 90,
           \t\t\tStaleAfterDays: 180, FuzzyWeight: 0.75, RecentFallbackCount: 0,
           \t\t}); err != nil {
           \t\t\treturn err
           \t\t}
-          '''
-          new = '''\t\tif _, retrieveErr := store.Retrieve(memory.CuratedTargetCurrentUser, userA, memory.CuratedRetrievalOptions{
+          ''',
+              '''\t\tif _, retrieveErr := store.Retrieve(memory.CuratedTargetCurrentUser, userA, memory.CuratedRetrievalOptions{
           \t\t\tQuery: query, MaxResults: 6, MaxChars: 2_800, PinnedChars: 800,
           \t\t\tMinimumScore: 0.35, RecencyWeight: 0.25, RecencyHalfLifeDays: 90,
           \t\t\tStaleAfterDays: 180, FuzzyWeight: 0.75, RecentFallbackCount: 0,
           \t\t}); retrieveErr != nil {
           \t\t\treturn retrieveErr
           \t\t}
-          '''
-          if old not in text:
-              raise SystemExit("Retrieve shadow block not found")
-          path.write_text(text.replace(old, new, 1))
+          ''',
+              "Retrieve shadow block",
+          )
+          replace_one(
+              "pkg/memory/curated_schema.go",
+              '''\tif max := maxConfidenceForEvidence(evidence); confidence > max {
+          \t\treturn max
+          \t}
+          ''',
+              '''\tif maxConfidence := maxConfidenceForEvidence(evidence); confidence > maxConfidence {
+          \t\treturn maxConfidence
+          \t}
+          ''',
+              "predeclared max block",
+          )
+
+          path = Path("pkg/memory/user_profile_test.go")
+          text = path.read_text()
+          pattern = re.compile(
+              r'if _, err := store\.ApplyBatch\((.*?)\); err != nil \{\n\t\tt\.Fatal\(err\)\n\t\}',
+              re.S,
+          )
+          text, count = pattern.subn(
+              lambda m: 'if _, applyErr := store.ApplyBatch(' + m.group(1)
+              + '); applyErr != nil {\n\t\tt.Fatal(applyErr)\n\t}',
+              text,
+          )
+          if count < 4:
+              raise SystemExit(f"expected at least 4 ApplyBatch shadow blocks, found {count}")
+          path.write_text(text)
+
+          path = Path("pkg/agent/memory_reviewer_test.go")
+          text = path.read_text()
+          replacements = [
+              (
+                  re.compile(
+                      r'if _, err := recall\.AppendDeliveredTurn\((.*?)\); err != nil \{\n\t\tt\.Fatal\(err\)\n\t\}',
+                      re.S,
+                  ),
+                  lambda m: 'if _, appendErr := recall.AppendDeliveredTurn(' + m.group(1)
+                  + '); appendErr != nil {\n\t\tt.Fatal(appendErr)\n\t}',
+              ),
+              (
+                  re.compile(
+                      r'if _, err := reviewState\.RecordSuccessfulTurn\((.*?)\); err != nil \{\n\t\tt\.Fatal\(err\)\n\t\}',
+                      re.S,
+                  ),
+                  lambda m: 'if _, recordErr := reviewState.RecordSuccessfulTurn(' + m.group(1)
+                  + '); recordErr != nil {\n\t\tt.Fatal(recordErr)\n\t}',
+              ),
+              (
+                  re.compile(
+                      r'if err := al\.runMemoryReview\((.*?)\); err != nil \{\n\t\tt\.Fatalf\("post-restart review failed: %v", err\)\n\t\}',
+                      re.S,
+                  ),
+                  lambda m: 'if reviewErr := al.runMemoryReview(' + m.group(1)
+                  + '); reviewErr != nil {\n\t\tt.Fatalf("post-restart review failed: %v", reviewErr)\n\t}',
+              ),
+          ]
+          counts = []
+          for pattern, repl in replacements:
+              text, count = pattern.subn(repl, text)
+              counts.append(count)
+          if any(count < 1 for count in counts):
+              raise SystemExit(f"reviewer shadow replacements incomplete: {counts}")
+          path.write_text(text)
 
       - name: Install exact linter
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1
