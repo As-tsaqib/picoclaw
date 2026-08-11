@@ -158,7 +158,7 @@ jobs:
         run: pnpm test:config
 
       - name: Run frontend tests
-        run: pnpm test
+        run: pnpm exec vitest run src
 
       - name: Run frontend lint
         run: pnpm lint
