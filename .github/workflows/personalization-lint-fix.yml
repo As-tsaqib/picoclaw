@@ -1,0 +1,123 @@
+name: Personalization Lint Fix
+
+on:
+  push:
+    branches:
+      - fix/personalized-memory-v2-audit
+    paths:
+      - .github/workflows/personalization-lint-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format-lint-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Fix shadow declarations
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("pkg/agent/context_manager_test.go")
+          text = path.read_text()
+          old = '''\tif _, err := recall.AppendDeliveredTurn(
+          \t\tcaller,
+          \t\t"turn-pref",
+          \t\t"Mulai sekarang saya lebih suka jawaban ringkas",
+          \t\t"Baik.",
+          \t\t"assistant-message",
+          \t); err != nil {
+          \t\tt.Fatal(err)
+          \t}
+          '''
+          new = '''\tif _, appendErr := recall.AppendDeliveredTurn(
+          \t\tcaller,
+          \t\t"turn-pref",
+          \t\t"Mulai sekarang saya lebih suka jawaban ringkas",
+          \t\t"Baik.",
+          \t\t"assistant-message",
+          \t); appendErr != nil {
+          \t\tt.Fatal(appendErr)
+          \t}
+          '''
+          if old not in text:
+              raise SystemExit("AppendDeliveredTurn shadow block not found")
+          text = text.replace(old, new, 1)
+          old = '''\tif err := al.contextManager.Compact(context.Background(), &CompactRequest{
+          \t\tSessionKey: caller.SessionKey,
+          \t\tReason:     ContextCompressReasonRetry,
+          \t}); err != nil {
+          \t\tt.Fatal(err)
+          \t}
+          '''
+          new = '''\tif compactErr := al.contextManager.Compact(context.Background(), &CompactRequest{
+          \t\tSessionKey: caller.SessionKey,
+          \t\tReason:     ContextCompressReasonRetry,
+          \t}); compactErr != nil {
+          \t\tt.Fatal(compactErr)
+          \t}
+          '''
+          if old not in text:
+              raise SystemExit("Compact shadow block not found")
+          path.write_text(text.replace(old, new, 1))
+
+          path = Path("cmd/membench/personalization.go")
+          text = path.read_text()
+          old = '''\t\tif _, err := store.Retrieve(memory.CuratedTargetCurrentUser, userA, memory.CuratedRetrievalOptions{
+          \t\t\tQuery: query, MaxResults: 6, MaxChars: 2_800, PinnedChars: 800,
+          \t\t\tMinimumScore: 0.35, RecencyWeight: 0.25, RecencyHalfLifeDays: 90,
+          \t\t\tStaleAfterDays: 180, FuzzyWeight: 0.75, RecentFallbackCount: 0,
+          \t\t}); err != nil {
+          \t\t\treturn err
+          \t\t}
+          '''
+          new = '''\t\tif _, retrieveErr := store.Retrieve(memory.CuratedTargetCurrentUser, userA, memory.CuratedRetrievalOptions{
+          \t\t\tQuery: query, MaxResults: 6, MaxChars: 2_800, PinnedChars: 800,
+          \t\t\tMinimumScore: 0.35, RecencyWeight: 0.25, RecencyHalfLifeDays: 90,
+          \t\t\tStaleAfterDays: 180, FuzzyWeight: 0.75, RecentFallbackCount: 0,
+          \t\t}); retrieveErr != nil {
+          \t\t\treturn retrieveErr
+          \t\t}
+          '''
+          if old not in text:
+              raise SystemExit("Retrieve shadow block not found")
+          path.write_text(text.replace(old, new, 1))
+
+      - name: Install exact linter
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1
+
+      - name: Format with repository config
+        run: golangci-lint fmt
+
+      - name: Generate
+        run: go generate ./...
+
+      - name: Verify linter
+        run: golangci-lint run --build-tags=goolm,stdjson
+
+      - name: Verify affected tests
+        run: go test -count=1 -tags goolm,stdjson ./pkg/memory ./pkg/agent ./cmd/membench
+
+      - name: Commit clean lint fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git rm .github/workflows/personalization-lint-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "style: satisfy personalization lint gates"
+          git push origin HEAD:fix/personalized-memory-v2-audit
