@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/commands"
@@ -342,10 +343,19 @@ func (al *AgentLoop) buildCommandsRuntime(
 				opts.Dispatch.SessionScope,
 				opts.Dispatch.SessionAliases,
 			)
+			caller := callerScopeForTurn(agent.ID, cfg, *opts)
+			flushTimeout := 8 * time.Second
+			if configured := time.Duration(cfg.Memory.BackgroundReview.EffectiveTimeoutSeconds()) * time.Second; configured < flushTimeout {
+				flushTimeout = configured
+			}
+			flushCtx, flushCancel := context.WithTimeout(ctx, flushTimeout)
+			if err := al.flushMemoryReview(flushCtx, agent, caller); err != nil && flushCtx.Err() == nil {
+				logger.WarnCF("memory", "Pre-clear memory flush failed", safeMemoryLogFields(err))
+			}
+			flushCancel()
 			if err := al.contextManager.Clear(ctx, opts.SessionKey); err != nil {
 				return err
 			}
-			caller := callerScopeForTurn(agent.ID, cfg, *opts)
 			return clearSessionMemoryState(agent, caller)
 		}
 

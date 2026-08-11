@@ -119,7 +119,7 @@ func (al *AgentLoop) commitMemoryDelivery(delivery deferredMemoryDelivery, deliv
 	}
 	if agent.CuratedMemory != nil {
 		for _, usage := range delivery.curatedUsage {
-			if err := agent.CuratedMemory.MarkUsed(usage.Target, delivery.caller, usage.IDs, time.Time{}); err != nil {
+			if err := agent.CuratedMemory.MarkPresented(usage.Target, delivery.caller, usage.IDs, time.Time{}); err != nil {
 				logger.WarnCF("memory", "Failed to commit curated memory usage", safeMemoryLogFields(err))
 			}
 		}
@@ -139,7 +139,7 @@ func (al *AgentLoop) commitMemoryDelivery(delivery deferredMemoryDelivery, deliv
 		return
 	}
 	if delivery.reviewEligible && sequence > 0 {
-		al.recordAndMaybeReviewMemory(agent, delivery.caller, sequence)
+		al.recordAndMaybeReviewMemory(agent, delivery.caller, sequence, delivery.userContent)
 	}
 }
 

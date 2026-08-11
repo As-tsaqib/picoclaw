@@ -31,20 +31,27 @@ const (
 	CuratedStatusActive     = "active"
 	CuratedStatusSuperseded = "superseded"
 	CuratedStatusArchived   = "archived"
+
+	CuratedEvidenceExplicit = "explicit"
+	CuratedEvidenceObserved = "observed"
+	CuratedEvidenceInferred = "inferred"
+	CuratedEvidenceLegacy   = "legacy"
 )
 
 var (
-	ErrCuratedDisabled        = errors.New("curated memory is disabled")
-	ErrUserScopeUnavailable   = errors.New("trusted current-user scope is unavailable")
-	ErrPrivateContextRequired = errors.New("private context is required for current-user memory management")
-	ErrCuratedDuplicate       = errors.New("duplicate curated memory entry")
-	ErrCuratedEntryNotFound   = errors.New("curated memory entry not found")
-	ErrCuratedUnsafeContent   = errors.New("curated memory content was rejected")
-	ErrCuratedInvalidTarget   = errors.New("invalid curated memory target")
-	ErrCuratedInvalidAction   = errors.New("invalid curated memory action")
-	ErrCuratedInvalidType     = errors.New("invalid curated memory type")
-	ErrCuratedInvalidStatus   = errors.New("invalid curated memory status")
-	ErrCuratedInvalidPending  = errors.New("pending memory change not found")
+	ErrCuratedDisabled             = errors.New("curated memory is disabled")
+	ErrUserScopeUnavailable        = errors.New("trusted current-user scope is unavailable")
+	ErrPrivateContextRequired      = errors.New("private context is required for current-user memory management")
+	ErrCuratedDuplicate            = errors.New("duplicate curated memory entry")
+	ErrCuratedEntryNotFound        = errors.New("curated memory entry not found")
+	ErrCuratedUnsafeContent        = errors.New("curated memory content was rejected")
+	ErrCuratedInvalidTarget        = errors.New("invalid curated memory target")
+	ErrCuratedInvalidAction        = errors.New("invalid curated memory action")
+	ErrCuratedInvalidType          = errors.New("invalid curated memory type")
+	ErrCuratedInvalidStatus        = errors.New("invalid curated memory status")
+	ErrCuratedInvalidEvidence      = errors.New("invalid curated memory evidence kind")
+	ErrCuratedInvalidPreferenceKey = errors.New("invalid curated memory preference key")
+	ErrCuratedInvalidPending       = errors.New("pending memory change not found")
 )
 
 // CapacityError is returned when an atomic mutation would exceed a configured
@@ -102,32 +109,45 @@ type Provenance struct {
 }
 
 type CuratedEntry struct {
-	ID             string     `json:"id"`
-	Content        string     `json:"content"`
-	Type           string     `json:"type,omitempty"`
-	Status         string     `json:"status,omitempty"`
-	Pinned         bool       `json:"pinned,omitempty"`
-	Confidence     float64    `json:"confidence,omitempty"`
-	Supersedes     string     `json:"supersedes,omitempty"`
-	Provenance     Provenance `json:"provenance"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	LastVerifiedAt *time.Time `json:"last_verified_at,omitempty"`
-	LastUsedAt     *time.Time `json:"last_used_at,omitempty"`
-	ArchivedAt     *time.Time `json:"archived_at,omitempty"`
-	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	ID               string     `json:"id"`
+	Content          string     `json:"content"`
+	Type             string     `json:"type,omitempty"`
+	Status           string     `json:"status,omitempty"`
+	Pinned           bool       `json:"pinned,omitempty"`
+	Confidence       float64    `json:"confidence,omitempty"`
+	EvidenceKind     string     `json:"evidence_kind,omitempty"`
+	EvidenceCount    int        `json:"evidence_count,omitempty"`
+	ObservationCount int        `json:"observation_count,omitempty"`
+	PreferenceKey    string     `json:"preference_key,omitempty"`
+	PreferenceValue  string     `json:"preference_value,omitempty"`
+	Supersedes       string     `json:"supersedes,omitempty"`
+	Provenance       Provenance `json:"provenance"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	LastVerifiedAt   *time.Time `json:"last_verified_at,omitempty"` // legacy alias for confirmed evidence
+	LastConfirmedAt  *time.Time `json:"last_confirmed_at,omitempty"`
+	LastPresentedAt  *time.Time `json:"last_presented_at,omitempty"`
+	LastUsedAt       *time.Time `json:"last_used_at,omitempty"` // deprecated compatibility field
+	ArchivedAt       *time.Time `json:"archived_at,omitempty"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
 }
 
 type CuratedMutation struct {
-	Action         string     `json:"action"`
-	ID             string     `json:"id,omitempty"`
-	Content        string     `json:"content,omitempty"`
-	Type           string     `json:"type,omitempty"`
-	Confidence     *float64   `json:"confidence,omitempty"`
-	Supersedes     string     `json:"supersedes,omitempty"`
-	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
-	LastVerifiedAt *time.Time `json:"last_verified_at,omitempty"`
-	Provenance     Provenance `json:"provenance"`
+	Action           string     `json:"action"`
+	ID               string     `json:"id,omitempty"`
+	Content          string     `json:"content,omitempty"`
+	Type             string     `json:"type,omitempty"`
+	Confidence       *float64   `json:"confidence,omitempty"`
+	EvidenceKind     string     `json:"evidence_kind,omitempty"`
+	EvidenceCount    int        `json:"evidence_count,omitempty"`
+	ObservationCount int        `json:"observation_count,omitempty"`
+	PreferenceKey    string     `json:"preference_key,omitempty"`
+	PreferenceValue  string     `json:"preference_value,omitempty"`
+	Supersedes       string     `json:"supersedes,omitempty"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
+	LastVerifiedAt   *time.Time `json:"last_verified_at,omitempty"`
+	LastConfirmedAt  *time.Time `json:"last_confirmed_at,omitempty"`
+	Provenance       Provenance `json:"provenance"`
 }
 
 type PendingCuratedChange struct {

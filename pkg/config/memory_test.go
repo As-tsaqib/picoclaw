@@ -64,6 +64,9 @@ func TestMemoryConfigValidateEnumsAndBounds(t *testing.T) {
 		{"checkpoint count", func(cfg *MemoryConfig) { cfg.Checkpoints.MaxCount = 1_001 }},
 		{"checkpoint context", func(cfg *MemoryConfig) { cfg.Checkpoints.MaxContextChars = 20_001 }},
 		{"checkpoint retention", func(cfg *MemoryConfig) { cfg.Checkpoints.CompletedRetentionDays = 0 }},
+		{"profile chars", func(cfg *MemoryConfig) { cfg.Profile.MaxChars = MaxMemoryProfileChars + 1 }},
+		{"profile confidence", func(cfg *MemoryConfig) { cfg.Profile.MinConfidence = 1.1 }},
+		{"retrieval user share", func(cfg *MemoryConfig) { cfg.Retrieval.UserShare = 0.4 }},
 		{"retrieval engine", func(cfg *MemoryConfig) { cfg.Retrieval.Engine = "vector" }},
 		{"retrieval workspace results", func(cfg *MemoryConfig) { cfg.Retrieval.MaxWorkspaceResults = 51 }},
 		{"retrieval user results", func(cfg *MemoryConfig) { cfg.Retrieval.MaxUserResults = 51 }},
@@ -130,5 +133,37 @@ func TestMemoryApprovalModeLegacyMappingAndExplicitPrecedence(t *testing.T) {
 	all := MemoryConfig{ApprovalMode: MemoryApprovalAllWrites}
 	if !all.ShouldStageMemoryWrite(true) || !all.ShouldStageMemoryWrite(false) {
 		t.Fatal("all_writes did not stage every model write")
+	}
+}
+
+func TestDefaultConfigMemoryPersonalizationDefaults(t *testing.T) {
+	cfg := DefaultConfig().Memory
+	if !cfg.Profile.Enabled {
+		t.Fatal("memory.profile.enabled = false, want true")
+	}
+	if got := cfg.Profile.EffectiveMaxChars(); got != DefaultMemoryProfileChars {
+		t.Fatalf("profile max chars = %d, want %d", got, DefaultMemoryProfileChars)
+	}
+	if got := cfg.Profile.EffectiveMinConfidence(); got != DefaultMemoryProfileMinScore {
+		t.Fatalf("profile min confidence = %v, want %v", got, DefaultMemoryProfileMinScore)
+	}
+	if got := cfg.Retrieval.EffectiveUserShare(); got != DefaultMemoryUserShare {
+		t.Fatalf("retrieval user share = %v, want %v", got, DefaultMemoryUserShare)
+	}
+	if got := cfg.BackgroundReview.EffectiveMaxIterations(); got != DefaultMemoryReviewIterations {
+		t.Fatalf("review iterations = %d, want %d", got, DefaultMemoryReviewIterations)
+	}
+}
+
+func TestMemoryPersonalizationEffectiveDefaultsRemainBackwardCompatible(t *testing.T) {
+	legacy := MemoryConfig{}
+	if got := legacy.Profile.EffectiveMaxChars(); got != DefaultMemoryProfileChars {
+		t.Fatalf("legacy profile max chars = %d, want %d", got, DefaultMemoryProfileChars)
+	}
+	if got := legacy.Profile.EffectiveMinConfidence(); got != DefaultMemoryProfileMinScore {
+		t.Fatalf("legacy profile min confidence = %v, want %v", got, DefaultMemoryProfileMinScore)
+	}
+	if got := legacy.Retrieval.EffectiveUserShare(); got != DefaultMemoryUserShare {
+		t.Fatalf("legacy retrieval user share = %v, want %v", got, DefaultMemoryUserShare)
 	}
 }

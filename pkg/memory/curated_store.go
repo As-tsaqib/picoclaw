@@ -19,7 +19,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/fileutil"
 )
 
-const curatedDocumentVersion = 1
+const curatedDocumentVersion = 2
 
 var curatedDocumentLocks sync.Map
 
@@ -32,6 +32,7 @@ type CuratedStoreOptions struct {
 
 type curatedDocument struct {
 	Version     int                    `json:"version"`
+	Revision    uint64                 `json:"revision,omitempty"`
 	ScopeDigest string                 `json:"scope_digest"`
 	Entries     []CuratedEntry         `json:"entries"`
 	Pending     []PendingCuratedChange `json:"pending,omitempty"`
@@ -48,6 +49,7 @@ type CuratedStore struct {
 	now                func() time.Time
 	random             io.Reader
 	mu                 sync.RWMutex
+	profileCache       sync.Map
 }
 
 func NewCuratedStore(root string, opts CuratedStoreOptions) (*CuratedStore, error) {
@@ -140,10 +142,15 @@ func (s *CuratedStore) readDocument(path, digest string) (curatedDocument, error
 	if doc.Entries == nil {
 		doc.Entries = []CuratedEntry{}
 	}
+	for i := range doc.Entries {
+		doc.Entries[i] = normalizedCuratedEntry(doc.Entries[i])
+	}
 	return doc, nil
 }
 
 func (s *CuratedStore) writeDocument(path string, doc curatedDocument) error {
+	doc.Version = curatedDocumentVersion
+	doc.Revision++
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode curated memory: %w", err)
@@ -259,7 +266,29 @@ func (s *CuratedStore) prepareMutations(
 		mutation.Action = strings.ToLower(strings.TrimSpace(mutation.Action))
 		mutation.ID = strings.TrimSpace(mutation.ID)
 		mutation.Type = strings.ToLower(strings.TrimSpace(mutation.Type))
+		mutation.EvidenceKind = NormalizeEvidenceKind(mutation.EvidenceKind)
+		mutation.PreferenceKey = NormalizePreferenceKey(mutation.PreferenceKey)
+		mutation.PreferenceValue = strings.TrimSpace(mutation.PreferenceValue)
 		mutation.Supersedes = strings.TrimSpace(mutation.Supersedes)
+		if mutation.Action == CuratedActionAdd && mutation.EvidenceKind == "" {
+			// Missing evidence is deliberately conservative. Old callers and the
+			// background curator must not silently create fully verified facts.
+			mutation.EvidenceKind = CuratedEvidenceInferred
+		}
+		if mutation.EvidenceKind != "" && !ValidEvidenceKind(mutation.EvidenceKind) {
+			return nil, ErrCuratedInvalidEvidence
+		}
+		if mutation.PreferenceKey != "" {
+			if !ValidPreferenceKey(mutation.PreferenceKey) || !preferenceKeyAllowedForTarget(target, mutation.PreferenceKey) {
+				return nil, ErrCuratedInvalidPreferenceKey
+			}
+			if mutation.PreferenceValue == "" || utf8.RuneCountInString(mutation.PreferenceValue) > 240 {
+				return nil, ErrCuratedInvalidPreferenceKey
+			}
+		}
+		if mutation.EvidenceCount < 0 || mutation.ObservationCount < 0 {
+			return nil, ErrCuratedInvalidAction
+		}
 		switch mutation.Action {
 		case CuratedActionAdd:
 			mutation.Content = strings.TrimSpace(mutation.Content)
@@ -431,31 +460,51 @@ func applyCuratedMutations(
 			if duplicateCuratedContent(entries, mutation.Content, "") {
 				return nil, nil, ErrCuratedDuplicate
 			}
+			evidence := NormalizeEvidenceKind(mutation.EvidenceKind)
 			entry := CuratedEntry{
-				ID:             mutation.ID,
-				Content:        mutation.Content,
-				Type:           NormalizeCuratedType(mutation.Type),
-				Status:         CuratedStatusActive,
-				Confidence:     1,
-				Supersedes:     mutation.Supersedes,
-				Provenance:     mutation.Provenance,
-				CreatedAt:      now,
-				UpdatedAt:      now,
-				LastVerifiedAt: mutation.LastVerifiedAt,
-				ExpiresAt:      mutation.ExpiresAt,
+				ID:               mutation.ID,
+				Content:          mutation.Content,
+				Type:             NormalizeCuratedType(mutation.Type),
+				Status:           CuratedStatusActive,
+				Confidence:       DefaultConfidenceForEvidence(evidence),
+				EvidenceKind:     evidence,
+				EvidenceCount:    mutation.EvidenceCount,
+				ObservationCount: mutation.ObservationCount,
+				PreferenceKey:    NormalizePreferenceKey(mutation.PreferenceKey),
+				PreferenceValue:  strings.TrimSpace(mutation.PreferenceValue),
+				Supersedes:       mutation.Supersedes,
+				Provenance:       mutation.Provenance,
+				CreatedAt:        now,
+				UpdatedAt:        now,
+				LastVerifiedAt:   mutation.LastVerifiedAt,
+				LastConfirmedAt:  mutation.LastConfirmedAt,
+				ExpiresAt:        mutation.ExpiresAt,
 			}
 			if mutation.Confidence != nil {
 				entry.Confidence = *mutation.Confidence
 			}
-			if entry.LastVerifiedAt == nil {
-				verified := now
-				entry.LastVerifiedAt = &verified
+			if entry.EvidenceCount == 0 {
+				entry.EvidenceCount = 1
+			}
+			if evidence == CuratedEvidenceObserved && entry.ObservationCount == 0 {
+				entry.ObservationCount = entry.EvidenceCount
+			}
+			if entry.LastConfirmedAt == nil && entry.LastVerifiedAt != nil {
+				entry.LastConfirmedAt = entry.LastVerifiedAt
+			}
+			if evidence == CuratedEvidenceExplicit && entry.LastConfirmedAt == nil {
+				confirmed := now
+				entry.LastConfirmedAt = &confirmed
+				entry.LastVerifiedAt = &confirmed
 			}
 			if mutation.Supersedes != "" {
 				markCuratedSuperseded(entries, mutation.Supersedes, now)
 			}
-			entries = append(entries, entry)
-			applied = append(applied, entry)
+			entries = append(entries, normalizedCuratedEntry(entry))
+			reconcilePreferenceKey(entries, mutation.ID, now)
+			if current, ok := curatedEntryByID(entries, mutation.ID); ok {
+				applied = append(applied, current)
+			}
 		case CuratedActionReplace:
 			if idx < 0 {
 				return nil, nil, ErrCuratedEntryNotFound
@@ -467,17 +516,37 @@ func applyCuratedMutations(
 			if mutation.Type != "" {
 				entries[idx].Type = NormalizeCuratedType(mutation.Type)
 			}
+			if mutation.EvidenceKind != "" {
+				entries[idx].EvidenceKind = NormalizeEvidenceKind(mutation.EvidenceKind)
+			}
 			if mutation.Confidence != nil {
 				entries[idx].Confidence = *mutation.Confidence
+			} else if mutation.EvidenceKind != "" {
+				entries[idx].Confidence = DefaultConfidenceForEvidence(entries[idx].EvidenceKind)
+			}
+			if mutation.EvidenceCount > 0 {
+				entries[idx].EvidenceCount = mutation.EvidenceCount
+			}
+			if mutation.ObservationCount > 0 {
+				entries[idx].ObservationCount = mutation.ObservationCount
+			}
+			if mutation.PreferenceKey != "" {
+				entries[idx].PreferenceKey = NormalizePreferenceKey(mutation.PreferenceKey)
+				entries[idx].PreferenceValue = strings.TrimSpace(mutation.PreferenceValue)
 			}
 			if mutation.ExpiresAt != nil {
 				entries[idx].ExpiresAt = mutation.ExpiresAt
 			}
-			if mutation.LastVerifiedAt != nil {
+			if mutation.LastConfirmedAt != nil {
+				entries[idx].LastConfirmedAt = mutation.LastConfirmedAt
+				entries[idx].LastVerifiedAt = mutation.LastConfirmedAt
+			} else if mutation.LastVerifiedAt != nil {
 				entries[idx].LastVerifiedAt = mutation.LastVerifiedAt
-			} else {
-				verified := now
-				entries[idx].LastVerifiedAt = &verified
+				entries[idx].LastConfirmedAt = mutation.LastVerifiedAt
+			} else if entries[idx].EffectiveEvidenceKind() == CuratedEvidenceExplicit {
+				confirmed := now
+				entries[idx].LastConfirmedAt = &confirmed
+				entries[idx].LastVerifiedAt = &confirmed
 			}
 			if mutation.Supersedes != "" && mutation.Supersedes != mutation.ID {
 				entries[idx].Supersedes = mutation.Supersedes
@@ -486,7 +555,10 @@ func applyCuratedMutations(
 			entries[idx].Provenance = mutation.Provenance
 			entries[idx].UpdatedAt = now
 			entries[idx] = normalizedCuratedEntry(entries[idx])
-			applied = append(applied, entries[idx])
+			reconcilePreferenceKey(entries, mutation.ID, now)
+			if current, ok := curatedEntryByID(entries, mutation.ID); ok {
+				applied = append(applied, current)
+			}
 		case CuratedActionRemove:
 			if idx < 0 {
 				return nil, nil, ErrCuratedEntryNotFound
@@ -748,13 +820,14 @@ func (s *CuratedStore) Stats(target string, caller CallerScope) (CuratedStats, e
 	}, nil
 }
 
-// MarkUsed commits retrieval usage after authoritative delivery. Prompt
-// assembly only stages IDs in memory and never calls this method directly.
-func (s *CuratedStore) MarkUsed(
+// MarkPresented records that a memory was included in a successfully delivered
+// prompt. Presentation is intentionally weaker than confirmation and receives
+// only a small retrieval bonus.
+func (s *CuratedStore) MarkPresented(
 	target string,
 	caller CallerScope,
 	ids []string,
-	usedAt time.Time,
+	presentedAt time.Time,
 ) error {
 	path, digest, _, err := s.scopePath(target, caller)
 	if err != nil {
@@ -771,10 +844,10 @@ func (s *CuratedStore) MarkUsed(
 	if len(targetIDs) == 0 {
 		return nil
 	}
-	if usedAt.IsZero() {
-		usedAt = s.now()
+	if presentedAt.IsZero() {
+		presentedAt = s.now()
 	}
-	usedAt = usedAt.UTC()
+	presentedAt = presentedAt.UTC()
 
 	unlockDocument, lockErr := lockCuratedDocument(path)
 	if lockErr != nil {
@@ -792,14 +865,19 @@ func (s *CuratedStore) MarkUsed(
 		if _, ok := targetIDs[doc.Entries[i].ID]; !ok {
 			continue
 		}
-		value := usedAt
-		doc.Entries[i].LastUsedAt = &value
+		value := presentedAt
+		doc.Entries[i].LastPresentedAt = &value
 		found++
 	}
 	if found == 0 {
 		return nil
 	}
 	return s.writeDocument(path, doc)
+}
+
+// MarkUsed is kept for source compatibility. New code should use MarkPresented.
+func (s *CuratedStore) MarkUsed(target string, caller CallerScope, ids []string, usedAt time.Time) error {
+	return s.MarkPresented(target, caller, ids, usedAt)
 }
 
 func (s *CuratedStore) Maintain(
@@ -920,6 +998,93 @@ func markCuratedSuperseded(entries []CuratedEntry, id string, now time.Time) {
 	}
 }
 
+func curatedEntryByID(entries []CuratedEntry, id string) (CuratedEntry, bool) {
+	for _, entry := range entries {
+		if entry.ID == id {
+			return entry, true
+		}
+	}
+	return CuratedEntry{}, false
+}
+
+func reconcilePreferenceKey(entries []CuratedEntry, touchedID string, now time.Time) {
+	touchedIndex := -1
+	for i := range entries {
+		if entries[i].ID == touchedID {
+			touchedIndex = i
+			break
+		}
+	}
+	if touchedIndex < 0 {
+		return
+	}
+	key := NormalizePreferenceKey(entries[touchedIndex].PreferenceKey)
+	if key == "" {
+		return
+	}
+	entries[touchedIndex].PreferenceKey = key
+
+	candidates := make([]int, 0, 4)
+	for i := range entries {
+		if entries[i].EffectiveStatus() != CuratedStatusActive ||
+			NormalizePreferenceKey(entries[i].PreferenceKey) != key {
+			continue
+		}
+		candidates = append(candidates, i)
+	}
+	if len(candidates) <= 1 {
+		return
+	}
+
+	winner := candidates[0]
+	better := func(left, right CuratedEntry) bool {
+		if left.EvidenceAuthority() != right.EvidenceAuthority() {
+			return left.EvidenceAuthority() > right.EvidenceAuthority()
+		}
+		if left.EffectiveConfidence() != right.EffectiveConfidence() {
+			return left.EffectiveConfidence() > right.EffectiveConfidence()
+		}
+		leftConfirmed := left.EffectiveLastConfirmedAt()
+		rightConfirmed := right.EffectiveLastConfirmedAt()
+		if leftConfirmed != nil || rightConfirmed != nil {
+			if leftConfirmed == nil {
+				return false
+			}
+			if rightConfirmed == nil {
+				return true
+			}
+			if !leftConfirmed.Equal(*rightConfirmed) {
+				return leftConfirmed.After(*rightConfirmed)
+			}
+		}
+		if !left.UpdatedAt.Equal(right.UpdatedAt) {
+			return left.UpdatedAt.After(right.UpdatedAt)
+		}
+		return left.ID > right.ID
+	}
+	for _, idx := range candidates[1:] {
+		if better(entries[idx], entries[winner]) {
+			winner = idx
+		}
+	}
+
+	var strongestPrior string
+	for _, idx := range candidates {
+		if idx == winner {
+			continue
+		}
+		if strongestPrior == "" && entries[idx].ID != touchedID {
+			strongestPrior = entries[idx].ID
+		}
+		entries[idx].Status = CuratedStatusSuperseded
+		entries[idx].Pinned = false
+		entries[idx].UpdatedAt = now
+	}
+	if winner == touchedIndex && entries[winner].Supersedes == "" && strongestPrior != "" {
+		entries[winner].Supersedes = strongestPrior
+	}
+}
+
 func findCuratedConflicts(entries []CuratedEntry, mutations []CuratedMutation) []CuratedConflict {
 	conflicts := make([]CuratedConflict, 0, 4)
 	for mutationIndex, mutation := range mutations {
@@ -931,16 +1096,27 @@ func findCuratedConflicts(entries []CuratedEntry, mutations []CuratedMutation) [
 				entry.EffectiveStatus() != CuratedStatusActive {
 				continue
 			}
-			similarity := curatedContentSimilarity(mutation.Content, entry.Content)
-			if similarity < 0.72 {
-				continue
+			mutationKey := NormalizePreferenceKey(mutation.PreferenceKey)
+			entryKey := NormalizePreferenceKey(entry.PreferenceKey)
+			if mutationKey != "" && mutationKey == entryKey {
+				conflicts = append(conflicts, CuratedConflict{
+					MutationIndex: mutationIndex,
+					EntryID:       entry.ID,
+					Similarity:    1,
+					Reason:        "same structured preference key; authority and recency choose one active value",
+				})
+			} else {
+				similarity := curatedContentSimilarity(mutation.Content, entry.Content)
+				if similarity < 0.72 {
+					continue
+				}
+				conflicts = append(conflicts, CuratedConflict{
+					MutationIndex: mutationIndex,
+					EntryID:       entry.ID,
+					Similarity:    mathRound(similarity, 3),
+					Reason:        "likely near-duplicate or conflicting active entry",
+				})
 			}
-			conflicts = append(conflicts, CuratedConflict{
-				MutationIndex: mutationIndex,
-				EntryID:       entry.ID,
-				Similarity:    mathRound(similarity, 3),
-				Reason:        "likely near-duplicate or conflicting active entry",
-			})
 			if len(conflicts) >= 8 {
 				return conflicts
 			}

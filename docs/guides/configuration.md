@@ -60,14 +60,16 @@ PicoClaw stores data in your configured workspace (default: `~/.picoclaw/workspa
 ├── state/            # Persistent state (last channel, etc.)
 ├── cron/             # Scheduled jobs database
 ├── skills/           # Custom skills
-├── AGENT.md          # Agent behavior guide
+├── AGENT.md          # Workspace/role instructions and agent metadata
 ├── HEARTBEAT.md      # Periodic task prompts (checked every 30 min)
-├── IDENTITY.md       # Agent identity
-├── SOUL.md           # Agent soul
-└── USER.md           # User preferences
+├── IDENTITY.md       # Legacy identity compatibility input
+├── SOUL.md           # Authoritative agent personality/identity
+└── USER.md           # Legacy user seed/defaults (not live private memory)
 ```
 
 > **Note:** Changes to `AGENT.md`, `SOUL.md`, `USER.md` and `memory/MEMORY.md` are automatically detected at runtime via file modification time (mtime) tracking. You do **not** need to restart the gateway after editing these files — the agent picks up the new content on the next request.
+
+> **Personalization note:** `USER.md` is retained as a compatibility seed/default only. Continuously changing private user preferences belong in structured curated memory and the derived current-user profile. Newer explicit structured preferences take precedence over stale `USER.md` values. See [Curated Memory](curated-memory.md).
 
 ### Agent Self-Evolution
 
@@ -353,7 +355,7 @@ Important behavior:
 - The current agent and non-spawnable peers are omitted, so the model does not plan against unavailable agents.
 - Discovery is intentionally lightweight. It gives the model only the identity it needs to choose a peer: `id`, `name`, and `description`.
 - `config.json` remains the infrastructure layer: workspace, default agent selection, routing, and subagent permissions. Those permissions also gate discovery visibility.
-- `AGENT.md` remains the identity layer. Runtime/tool code can still use its `tools`, `skills`, `mcpServers`, and `model` fields when delegation happens.
+- `SOUL.md` is the authoritative runtime personality/identity layer. `AGENT.md` remains the workspace/role and agent-metadata layer; runtime/tool code can still use its `name`, `description`, `tools`, `skills`, `mcpServers`, and `model` fields when delegation happens.
 
 Example injected shape:
 

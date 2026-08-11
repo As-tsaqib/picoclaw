@@ -1,21 +1,19 @@
-# Long-term Memory
+# Workspace Long-term Memory
 
-This file stores important information that should persist across sessions.
+This manual file stores **non-private workspace facts** that may be shared by
+sessions/users of this agent workspace. It is not a user profile.
 
-## User Information
+## Project / Workspace Conventions
 
-(Important facts about user)
+(Stable project facts, build policy, shared environment conventions)
 
-## Preferences
+## Reliable Tool / Workflow Notes
 
-(User preferences learned over time)
+(Non-personal lessons that are safe to share across this workspace)
 
-## Important Notes
+## Configuration Notes
 
-(Things to remember)
+(Shared model/channel/skill conventions when appropriate)
 
-## Configuration
-
-- Model preferences
-- Channel settings
-- Skills enabled
+Private names, identity details, communication preferences, relationships, and
+personal workflow preferences belong in structured `current_user` memory.

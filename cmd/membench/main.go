@@ -111,7 +111,7 @@ func main() {
 	runCmd.Flags().StringVar(&flagJudgeAPIKey, "judge-api-key", "", "API key for judge model (defaults to --api-key)")
 	runCmd.Flags().IntVar(&flagConcurrency, "concurrency", 1, "number of concurrent QA evaluations")
 
-	rootCmd.AddCommand(ingestCmd, evalCmd, reportCmd, runCmd)
+	rootCmd.AddCommand(ingestCmd, evalCmd, reportCmd, runCmd, personalizationCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

@@ -16,6 +16,7 @@ type PromptLayer string
 
 const (
 	PromptLayerKernel      PromptLayer = "kernel"
+	PromptLayerIdentity    PromptLayer = "identity"
 	PromptLayerInstruction PromptLayer = "instruction"
 	PromptLayerCapability  PromptLayer = "capability"
 	PromptLayerContext     PromptLayer = "context"
@@ -32,6 +33,8 @@ const (
 	PromptSlotMCP          PromptSlot = "mcp"
 	PromptSlotSkillCatalog PromptSlot = "skill_catalog"
 	PromptSlotActiveSkill  PromptSlot = "active_skill"
+	PromptSlotUserProfile  PromptSlot = "user_profile"
+	PromptSlotLegacyUser   PromptSlot = "legacy_user"
 	PromptSlotMemory       PromptSlot = "memory"
 	PromptSlotRuntime      PromptSlot = "runtime"
 	PromptSlotSummary      PromptSlot = "summary"
@@ -48,7 +51,10 @@ type PromptSourceID string
 const (
 	PromptSourceKernel         PromptSourceID = "runtime.kernel"
 	PromptSourceHierarchy      PromptSourceID = "runtime.hierarchy"
+	PromptSourceSoul           PromptSourceID = "workspace.soul"
 	PromptSourceWorkspace      PromptSourceID = "workspace.definition"
+	PromptSourceLegacyUser     PromptSourceID = "workspace.user_seed"
+	PromptSourceUserProfile    PromptSourceID = "memory:user_profile"
 	PromptSourceRuntime        PromptSourceID = "runtime.context"
 	PromptSourceSummary        PromptSourceID = "context.summary"
 	PromptSourceMemory         PromptSourceID = "memory:workspace"
@@ -170,8 +176,8 @@ func builtinPromptSources() []PromptSourceDescriptor {
 		{
 			ID:              PromptSourceKernel,
 			Owner:           "agent",
-			Description:     "Core picoclaw identity and hard rules",
-			Allowed:         []PromptPlacement{{Layer: PromptLayerKernel, Slot: PromptSlotIdentity}},
+			Description:     "Immutable runtime, security, and workspace policy",
+			Allowed:         []PromptPlacement{{Layer: PromptLayerKernel, Slot: PromptSlotHierarchy}},
 			StableByDefault: true,
 		},
 		{
@@ -179,6 +185,13 @@ func builtinPromptSources() []PromptSourceDescriptor {
 			Owner:           "agent",
 			Description:     "Prompt hierarchy rules",
 			Allowed:         []PromptPlacement{{Layer: PromptLayerKernel, Slot: PromptSlotHierarchy}},
+			StableByDefault: true,
+		},
+		{
+			ID:              PromptSourceSoul,
+			Owner:           "workspace",
+			Description:     "Agent identity and personality from SOUL.md or safe fallback",
+			Allowed:         []PromptPlacement{{Layer: PromptLayerIdentity, Slot: PromptSlotIdentity}},
 			StableByDefault: true,
 		},
 		{
@@ -222,6 +235,20 @@ func builtinPromptSources() []PromptSourceDescriptor {
 			Description:     "Structured multi-agent discovery registry",
 			Allowed:         []PromptPlacement{{Layer: PromptLayerCapability, Slot: PromptSlotTooling}},
 			StableByDefault: false,
+		},
+		{
+			ID:              PromptSourceUserProfile,
+			Owner:           "memory",
+			Description:     "Compiled current-user interaction profile",
+			Allowed:         []PromptPlacement{{Layer: PromptLayerContext, Slot: PromptSlotUserProfile}},
+			StableByDefault: false,
+		},
+		{
+			ID:              PromptSourceLegacyUser,
+			Owner:           "workspace",
+			Description:     "Legacy USER.md seed/default context",
+			Allowed:         []PromptPlacement{{Layer: PromptLayerContext, Slot: PromptSlotLegacyUser}},
+			StableByDefault: true,
 		},
 		{
 			ID:              PromptSourceMemory,
@@ -494,6 +521,8 @@ func layerPriority(layer PromptLayer) int {
 	switch layer {
 	case PromptLayerKernel:
 		return 100
+	case PromptLayerIdentity:
+		return 90
 	case PromptLayerInstruction:
 		return 80
 	case PromptLayerCapability:
@@ -523,6 +552,10 @@ func slotPriority(slot PromptSlot) int {
 		return 780
 	case PromptSlotActiveSkill:
 		return 770
+	case PromptSlotUserProfile:
+		return 750
+	case PromptSlotLegacyUser:
+		return 720
 	case PromptSlotMemory:
 		return 700
 	case PromptSlotOutput:
