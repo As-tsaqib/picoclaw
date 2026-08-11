@@ -3,6 +3,7 @@ package evolution
 import (
 	"context"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -107,26 +108,49 @@ func NewRuntime(opts RuntimeOptions) (*Runtime, error) {
 }
 
 func (rt *Runtime) FinalizeTurn(ctx context.Context, input TurnCaseInput) error {
-	if rt == nil || !rt.cfg.Enabled || input.Workspace == "" || shouldSkipLearningRecord(input) {
+	if rt == nil || !rt.cfg.Enabled || input.Workspace == "" ||
+		!strings.EqualFold(strings.TrimSpace(input.Status), "completed") ||
+		shouldSkipLearningRecord(input) {
+		return nil
+	}
+	var scrubFindings []string
+	input, scrubFindings = scrubTurnCaseInput(input)
+	if strings.TrimSpace(input.FinalContent) == "" {
 		return nil
 	}
 
-	success := input.Status == "completed"
+	success := true
 	usedSkillNames := buildUsedSkillNames(input)
 	workspaceID := input.Workspace
 	createdAt := rt.now()
 
+	attemptTrail := &AttemptTrail{
+		AttemptedSkills:       append([]string(nil), input.AttemptedSkillNames...),
+		FinalSuccessfulPath:   append([]string(nil), input.FinalSuccessfulPath...),
+		SkillContextSnapshots: append([]SkillContextSnapshot(nil), input.SkillContextSnapshots...),
+	}
+	if len(attemptTrail.AttemptedSkills) == 0 && len(attemptTrail.FinalSuccessfulPath) == 0 &&
+		len(attemptTrail.SkillContextSnapshots) == 0 {
+		attemptTrail = nil
+	}
+
 	record := LearningRecord{
-		ID:             buildTaskRecordID(input, createdAt),
-		Kind:           RecordKindTask,
-		WorkspaceID:    workspaceID,
-		CreatedAt:      createdAt,
-		SessionKey:     input.SessionKey,
-		Summary:        buildRecordSummary(input),
-		FinalOutput:    summarizeText(input.FinalContent, 1200),
-		Status:         RecordStatus("new"),
-		Success:        &success,
-		UsedSkillNames: append([]string(nil), usedSkillNames...),
+		ID:               buildTaskRecordID(input, createdAt),
+		Kind:             RecordKindTask,
+		WorkspaceID:      workspaceID,
+		CreatedAt:        createdAt,
+		SessionKey:       evolutionSessionReference(input.SessionKey),
+		Summary:          buildRecordSummary(input),
+		UserGoal:         summarizeText(input.UserMessage, 500),
+		FinalOutput:      summarizeText(input.FinalContent, 1200),
+		Status:           RecordStatus("new"),
+		Success:          &success,
+		UsedSkillNames:   append([]string(nil), usedSkillNames...),
+		ToolKinds:        append([]string(nil), input.ToolKinds...),
+		ToolExecutions:   append([]ToolExecutionRecord(nil), input.ToolExecutions...),
+		ActiveSkillNames: append([]string(nil), input.ActiveSkillNames...),
+		AttemptTrail:     attemptTrail,
+		Signals:          append([]string(nil), scrubFindings...),
 	}
 
 	paths := NewPaths(input.Workspace, rt.cfg.StateDir)
@@ -147,12 +171,20 @@ func (rt *Runtime) FinalizeTurn(ctx context.Context, input TurnCaseInput) error 
 	}
 
 	logger.DebugCF("evolution", "Recorded hot path learning record", map[string]any{
-		"workspace":   input.Workspace,
-		"turn_id":     input.TurnID,
-		"success":     success,
-		"used_skills": len(record.UsedSkillNames),
+		"workspace_ref":    evolutionLogRef(input.Workspace),
+		"success":          success,
+		"used_skill_count": len(record.UsedSkillNames),
 	})
 	return nil
+}
+
+func evolutionSessionReference(sessionKey string) string {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(sessionKey))
+	return "session-" + hex.EncodeToString(digest[:8])
 }
 
 func buildTaskRecordID(input TurnCaseInput, createdAt time.Time) string {
@@ -196,6 +228,27 @@ func summarizeText(text string, maxLen int) string {
 	}
 	runes := []rune(text)
 	return string(runes[:maxLen-3]) + "..."
+}
+
+func limitEvolutionRecords(records []LearningRecord, maximum int) []LearningRecord {
+	if maximum <= 0 || len(records) <= maximum {
+		return records
+	}
+	ordered := append([]LearningRecord(nil), records...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if !ordered[i].CreatedAt.Equal(ordered[j].CreatedAt) {
+			return ordered[i].CreatedAt.After(ordered[j].CreatedAt)
+		}
+		return ordered[i].ID < ordered[j].ID
+	})
+	ordered = ordered[:maximum]
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if !ordered[i].CreatedAt.Equal(ordered[j].CreatedAt) {
+			return ordered[i].CreatedAt.Before(ordered[j].CreatedAt)
+		}
+		return ordered[i].ID < ordered[j].ID
+	})
+	return ordered
 }
 
 func buildUsedSkillNames(input TurnCaseInput) []string {
@@ -246,17 +299,17 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 	runID := fmt.Sprintf("%d", rt.now().UnixNano())
 	if mode == "" || mode == "observe" {
 		logger.DebugCF("evolution", "Skipped cold path run", map[string]any{
-			"workspace": workspace,
-			"mode":      mode,
-			"run_id":    runID,
+			"workspace_ref": evolutionLogRef(workspace),
+			"mode":          mode,
+			"run_ref":       evolutionLogRef(runID),
 		})
 		return nil
 	}
 
 	logger.InfoCF("evolution", "Started cold path run", map[string]any{
-		"workspace": workspace,
-		"mode":      mode,
-		"run_id":    runID,
+		"workspace_ref": evolutionLogRef(workspace),
+		"mode":          mode,
+		"run_ref":       evolutionLogRef(runID),
 	})
 
 	store := rt.storeForWorkspace(workspace)
@@ -264,15 +317,18 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 	if err != nil {
 		return err
 	}
+	taskRecords = filterEvolutionRecordsForWorkspace(taskRecords, workspace)
+	taskRecords = limitEvolutionRecords(taskRecords, rt.cfg.EffectiveMaxEvidenceRecords())
 	patternRecords, err := store.LoadPatternRecords()
 	if err != nil {
 		return err
 	}
+	patternRecords = filterEvolutionRecordsForWorkspace(patternRecords, workspace)
 	logger.DebugCF("evolution", "Loaded evolution records", map[string]any{
-		"workspace":     workspace,
+		"workspace_ref": evolutionLogRef(workspace),
 		"task_count":    len(taskRecords),
 		"pattern_count": len(patternRecords),
-		"run_id":        runID,
+		"run_ref":       evolutionLogRef(runID),
 	})
 
 	admittedCount := 0
@@ -293,11 +349,10 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 		)
 		admittedCount = countTaskLearningRecords(recordsForOrganizer)
 		logger.DebugCF("evolution", "Admitted task records for cold path", map[string]any{
-			"workspace":       workspace,
+			"workspace_ref":   evolutionLogRef(workspace),
 			"admitted_tasks":  admittedCount,
 			"organizer_input": len(recordsForOrganizer),
-			"task_ids":        joinRecordIDs(recordsForOrganizer),
-			"run_id":          runID,
+			"run_ref":         evolutionLogRef(runID),
 		})
 		var rules []LearningRecord
 		var clusteredTaskIDs []string
@@ -323,12 +378,11 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 		}
 		newRuleCount = countNewPatterns(patternRecords, rules, workspace)
 		logger.DebugCF("evolution", "Built learning patterns", map[string]any{
-			"workspace":      workspace,
+			"workspace_ref":  evolutionLogRef(workspace),
 			"pattern_count":  len(rules),
 			"new_patterns":   newRuleCount,
 			"admitted_tasks": admittedCount,
-			"patterns":       summarizePatternRecords(rules),
-			"run_id":         runID,
+			"run_ref":        evolutionLogRef(runID),
 		})
 		if len(rules) > 0 {
 			merged := mergePatternRecords(patternRecords, rules, workspace)
@@ -347,8 +401,8 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 	generator := rt.draftGeneratorForWorkspace(workspace)
 	if generator == nil {
 		logger.DebugCF("evolution", "Skipped drafting because no draft generator is available", map[string]any{
-			"workspace": workspace,
-			"run_id":    runID,
+			"workspace_ref": evolutionLogRef(workspace),
+			"run_ref":       evolutionLogRef(runID),
 		})
 		return rt.runLifecycleMaintenance(workspace, store, runID)
 	}
@@ -359,11 +413,11 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 	readyRules = enrichReadyRulesForDrafts(readyRules, taskRecords)
 	if len(readyRules) == 0 {
 		logger.DebugCF("evolution", "Finished cold path run without ready patterns", map[string]any{
-			"workspace":      workspace,
+			"workspace_ref":  evolutionLogRef(workspace),
 			"record_count":   len(taskRecords),
 			"new_patterns":   newRuleCount,
 			"admitted_tasks": admittedCount,
-			"run_id":         runID,
+			"run_ref":        evolutionLogRef(runID),
 		})
 		return rt.runLifecycleMaintenance(workspace, store, runID)
 	}
@@ -388,10 +442,9 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 				"evolution",
 				"Skipped existing candidate draft because its source pattern is not ready",
 				map[string]any{
-					"workspace":        workspace,
-					"draft_id":         draft.ID,
-					"source_record_id": draft.SourceRecordID,
-					"run_id":           runID,
+					"workspace_ref": evolutionLogRef(workspace),
+					"status":        string(draft.Status),
+					"run_ref":       evolutionLogRef(runID),
 				},
 			)
 			continue
@@ -403,13 +456,15 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 		draft.MatchedSkillRefs = collectSkillRefs(matches)
 		var normalizationNotes []string
 		evidence := draftEvidenceForRule(rule, taskRecords)
+		draft = withDraftEvidenceMetrics(draft, evidence)
 		draft, normalizationNotes = rt.normalizeDraftForWorkspace(workspace, rule, matches, evidence, draft)
-		review := ReviewDraft(draft)
+		review := ReviewDraftWithPolicy(draft, rt.cfg.EffectiveMaxDraftChars())
 		draft.Status = review.Status
 		draft.ReviewNotes = appendUniqueStrings(draft.ReviewNotes, append(review.ReviewNotes, normalizationNotes...)...)
 		draft.ScanFindings = appendUniqueStrings(draft.ScanFindings, review.Findings...)
 		changedExistingDrafts = true
-		if draft.Status != DraftStatusCandidate || mode != "apply" || applier == nil {
+		if draft.Status != DraftStatusCandidate || !rt.cfg.AutoAppliesDrafts() || applier == nil ||
+			!rt.draftMeetsEvidenceThresholds(draft) {
 			if saveErr := store.SaveDrafts([]SkillDraft{draft}); saveErr != nil {
 				return saveErr
 			}
@@ -432,13 +487,11 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 	}
 	existingBySource := existingDraftSourceSet(existingDrafts, workspace)
 	logger.DebugCF("evolution", "Selected ready patterns for drafting", map[string]any{
-		"workspace":            workspace,
+		"workspace_ref":        evolutionLogRef(workspace),
 		"ready_patterns":       len(readyRules),
 		"existing_draft_count": len(existingBySource),
 		"applied_existing":     appliedExistingDrafts,
-		"ready_pattern_ids":    joinRecordIDs(readyRules),
-		"ready_patterns_info":  summarizePatternRecords(readyRules),
-		"run_id":               runID,
+		"run_ref":              evolutionLogRef(runID),
 	})
 
 	processedRules := 0
@@ -454,10 +507,8 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 				"evolution",
 				"Skipped pattern because a non-quarantined draft already exists",
 				map[string]any{
-					"workspace":    workspace,
-					"pattern_id":   rule.ID,
-					"pattern_info": summarizePatternRecord(rule),
-					"run_id":       runID,
+					"workspace_ref": evolutionLogRef(workspace),
+					"run_ref":       evolutionLogRef(runID),
 				},
 			)
 			continue
@@ -470,14 +521,17 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 			return err
 		}
 		logger.DebugCF("evolution", "Generating skill draft", map[string]any{
-			"workspace":           workspace,
-			"pattern_id":          rule.ID,
+			"workspace_ref":       evolutionLogRef(workspace),
 			"matched_skill_count": len(matches),
-			"pattern_info":        summarizePatternRecord(rule),
-			"run_id":              runID,
+			"run_ref":             evolutionLogRef(runID),
 		})
 
-		draft, err := generateDraftWithEvidence(ctx, generator, rule, matches, evidence)
+		draftCtx, cancelDraft := context.WithTimeout(
+			ctx,
+			time.Duration(rt.cfg.EffectiveDraftTimeoutSeconds())*time.Second,
+		)
+		draft, err := generateDraftWithEvidence(draftCtx, generator, rule, matches, evidence)
+		cancelDraft()
 		if err != nil {
 			return err
 		}
@@ -485,15 +539,13 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 		draft = rt.finalizeDraft(workspace, rule, matches, evidence, draft)
 		draftSaved := false
 		logger.DebugCF("evolution", "Finalized skill draft", map[string]any{
-			"workspace":    workspace,
-			"pattern_id":   rule.ID,
-			"draft_id":     draft.ID,
-			"target_skill": draft.TargetSkillName,
-			"change_kind":  string(draft.ChangeKind),
-			"status":       string(draft.Status),
-			"run_id":       runID,
+			"workspace_ref": evolutionLogRef(workspace),
+			"change_kind":   string(draft.ChangeKind),
+			"status":        string(draft.Status),
+			"run_ref":       evolutionLogRef(runID),
 		})
-		if mode == "apply" && applier != nil && draft.Status == DraftStatusCandidate {
+		if rt.cfg.AutoAppliesDrafts() && applier != nil && draft.Status == DraftStatusCandidate &&
+			rt.draftMeetsEvidenceThresholds(draft) {
 			var err error
 			draft, err = rt.applyCandidateDraft(ctx, workspace, store, applier, draft, runID)
 			if err != nil {
@@ -508,24 +560,32 @@ func (rt *Runtime) RunColdPathOnce(ctx context.Context, workspace string) error 
 			}
 		}
 		logger.DebugCF("evolution", "Saved skill draft", map[string]any{
-			"workspace":    workspace,
-			"draft_id":     draft.ID,
-			"target_skill": draft.TargetSkillName,
-			"status":       string(draft.Status),
-			"run_id":       runID,
+			"workspace_ref": evolutionLogRef(workspace),
+			"status":        string(draft.Status),
+			"run_ref":       evolutionLogRef(runID),
 		})
 		existingBySource[rule.ID] = struct{}{}
 		processedRules++
 	}
 
 	logger.InfoCF("evolution", "Finished cold path run", map[string]any{
-		"workspace":          workspace,
+		"workspace_ref":      evolutionLogRef(workspace),
 		"ready_patterns":     len(readyRules),
 		"processed_patterns": processedRules,
 		"new_patterns":       newRuleCount,
-		"run_id":             runID,
+		"run_ref":            evolutionLogRef(runID),
 	})
 	return rt.runLifecycleMaintenance(workspace, store, runID)
+}
+
+func filterEvolutionRecordsForWorkspace(records []LearningRecord, workspace string) []LearningRecord {
+	out := make([]LearningRecord, 0, len(records))
+	for _, record := range records {
+		if record.WorkspaceID == workspace {
+			out = append(out, record)
+		}
+	}
+	return out
 }
 
 func (rt *Runtime) recordsForColdPathInputs(
@@ -543,9 +603,8 @@ func (rt *Runtime) recordsForColdPathInputs(
 		}
 		if reason := coldPathEvidenceRejectReason(record); reason != "" {
 			logger.DebugCF("evolution", "Rejected task record for cold path", map[string]any{
-				"workspace": workspace,
-				"record_id": record.ID,
-				"reason":    reason,
+				"workspace_ref": evolutionLogRef(workspace),
+				"reason_class":  reason,
 			})
 			continue
 		}
@@ -560,9 +619,8 @@ func (rt *Runtime) recordsForColdPathInputs(
 			evidenceRecord.Success = &judgedSuccess
 			if !decision.Success {
 				logger.DebugCF("evolution", "Rejected task record by success judge", map[string]any{
-					"workspace": workspace,
-					"record_id": record.ID,
-					"reason":    strings.TrimSpace(decision.Reason),
+					"workspace_ref": evolutionLogRef(workspace),
+					"reason_class":  "judge_rejected",
 				})
 			}
 		}
@@ -620,8 +678,7 @@ func (rt *Runtime) filterRecordsByMinSuccessRatio(
 		ratio := float64(stats.success) / float64(stats.total)
 		if ratio < minRatio {
 			logger.DebugCF("evolution", "Rejected task record below cold path success ratio", map[string]any{
-				"workspace":         workspace,
-				"record_id":         record.ID,
+				"workspace_ref":     evolutionLogRef(workspace),
 				"success_ratio":     ratio,
 				"min_success_ratio": minRatio,
 				"success_count":     stats.success,
@@ -749,9 +806,10 @@ func (rt *Runtime) finalizeDraft(
 	draft.WorkspaceID = workspace
 	draft.SourceRecordID = rule.ID
 	draft.MatchedSkillRefs = collectSkillRefs(matches)
+	draft = withDraftEvidenceMetrics(draft, evidence)
 
 	draft, normalizationNotes := rt.normalizeDraftForWorkspace(workspace, rule, matches, evidence, draft)
-	review := ReviewDraft(draft)
+	review := ReviewDraftWithPolicy(draft, rt.cfg.EffectiveMaxDraftChars())
 	draft.Status = review.Status
 	draft.ReviewNotes = append([]string(nil), review.ReviewNotes...)
 	draft.ReviewNotes = append(draft.ReviewNotes, normalizationNotes...)
@@ -761,6 +819,27 @@ func (rt *Runtime) finalizeDraft(
 	}
 	draft.ScanFindings = append([]string(nil), review.Findings...)
 	return draft
+}
+
+func withDraftEvidenceMetrics(draft SkillDraft, evidence DraftEvidence) SkillDraft {
+	draft.EvidenceCount = len(evidence.TaskRecords)
+	draft.SuccessRatio = 0
+	if draft.EvidenceCount == 0 {
+		return draft
+	}
+	successes := 0
+	for _, record := range evidence.TaskRecords {
+		if record.Success != nil && *record.Success {
+			successes++
+		}
+	}
+	draft.SuccessRatio = float64(successes) / float64(draft.EvidenceCount)
+	return draft
+}
+
+func (rt *Runtime) draftMeetsEvidenceThresholds(draft SkillDraft) bool {
+	return draft.EvidenceCount >= rt.cfg.EffectiveMinTaskCount() &&
+		draft.SuccessRatio >= rt.cfg.EffectiveMinSuccessRatio()
 }
 
 func (rt *Runtime) normalizeDraftForWorkspace(
@@ -773,6 +852,9 @@ func (rt *Runtime) normalizeDraftForWorkspace(
 	target := strings.TrimSpace(draft.TargetSkillName)
 	if workspace == "" || target == "" {
 		return draft, nil
+	}
+	if validateEvolutionSkillTarget(target) != nil {
+		return draft, []string{"rejected unsafe target before workspace path resolution"}
 	}
 
 	notes := make([]string, 0, 4)
@@ -1131,70 +1213,28 @@ func (rt *Runtime) runLifecycleMaintenance(workspace string, store *Store, runID
 
 	paths := NewPaths(workspace, rt.cfg.StateDir)
 	logger.DebugCF("evolution", "Started lifecycle maintenance", map[string]any{
-		"workspace": workspace,
-		"run_id":    runID,
+		"workspace_ref": evolutionLogRef(workspace),
+		"run_ref":       evolutionLogRef(runID),
 	})
 
 	summary, err := RunLifecycleOnce(store, paths, workspace, rt.now())
 	if err != nil {
 		logger.WarnCF("evolution", "Lifecycle maintenance failed", map[string]any{
-			"workspace": workspace,
-			"run_id":    runID,
-			"error":     err.Error(),
+			"workspace_ref": evolutionLogRef(workspace),
+			"run_ref":       evolutionLogRef(runID),
+			"error_class":   "lifecycle_maintenance_failed",
 		})
 		return err
 	}
 
 	logger.DebugCF("evolution", "Finished lifecycle maintenance", map[string]any{
-		"workspace":             workspace,
-		"run_id":                runID,
+		"workspace_ref":         evolutionLogRef(workspace),
+		"run_ref":               evolutionLogRef(runID),
 		"evaluated_profiles":    summary.EvaluatedProfiles,
 		"transitioned_profiles": summary.TransitionedProfiles,
 		"deleted_skills":        summary.DeletedSkills,
 	})
 	return nil
-}
-
-func joinRecordIDs(records []LearningRecord) string {
-	if len(records) == 0 {
-		return ""
-	}
-	ids := make([]string, 0, len(records))
-	for _, record := range records {
-		if strings.TrimSpace(record.ID) == "" {
-			continue
-		}
-		ids = append(ids, record.ID)
-	}
-	return strings.Join(ids, ",")
-}
-
-func summarizePatternRecords(records []LearningRecord) string {
-	if len(records) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(records))
-	for _, record := range records {
-		parts = append(parts, summarizePatternRecord(record))
-	}
-	return strings.Join(parts, " | ")
-}
-
-func summarizePatternRecord(record LearningRecord) string {
-	label := strings.TrimSpace(record.ID)
-	if label == "" {
-		label = "unknown-pattern"
-	}
-
-	path := strings.Join(record.WinningPath, " -> ")
-	if path == "" {
-		path = strings.TrimSpace(record.Summary)
-	}
-	if path == "" {
-		path = "no-summary"
-	}
-
-	return fmt.Sprintf("%s[%s]", label, path)
 }
 
 func enrichReadyRulesForDrafts(rules, taskRecords []LearningRecord) []LearningRecord {
@@ -1341,7 +1381,13 @@ func existingDraftSourceSet(drafts []SkillDraft, workspace string) map[string]st
 func (rt *Runtime) saveAppliedProfile(store *Store, workspace string, draft SkillDraft) error {
 	now := rt.now()
 
-	return SaveAppliedProfile(store, workspace, draft, now)
+	return SaveAppliedProfile(
+		store,
+		workspace,
+		draft,
+		now,
+		rt.cfg.EffectiveRollbackRetention()*4,
+	)
 }
 
 func (rt *Runtime) applyCandidateDraft(
@@ -1352,28 +1398,67 @@ func (rt *Runtime) applyCandidateDraft(
 	draft SkillDraft,
 	runID string,
 ) (SkillDraft, error) {
+	review := ReviewDraftWithPolicy(draft, rt.cfg.EffectiveMaxDraftChars())
+	if review.Status == DraftStatusQuarantined {
+		draft.Status = DraftStatusQuarantined
+		draft.ScanFindings = appendUniqueStrings(draft.ScanFindings, review.Findings...)
+		if saveErr := store.SaveDrafts([]SkillDraft{draft}); saveErr != nil {
+			return draft, errorsJoin(fmt.Errorf("unsafe draft was quarantined"), saveErr)
+		}
+		return draft, fmt.Errorf("unsafe draft was quarantined")
+	}
+	if !rt.draftMeetsEvidenceThresholds(draft) {
+		return draft, fmt.Errorf("draft evidence does not meet configured thresholds")
+	}
+	if draft.Status == DraftStatusCandidate && rt.cfg.AutoAppliesDrafts() {
+		now := rt.now()
+		draft.Status = DraftStatusApproved
+		draft.ApprovedAt = &now
+		draft.DecisionSource = "automatic_policy"
+		draft.UpdatedAt = &now
+	} else if draft.Status != DraftStatusApproved {
+		return draft, fmt.Errorf("draft must be approved before apply")
+	}
 	logger.InfoCF("evolution", "Applying skill draft", map[string]any{
-		"workspace":    workspace,
-		"draft_id":     draft.ID,
-		"target_skill": draft.TargetSkillName,
-		"change_kind":  string(draft.ChangeKind),
-		"run_id":       runID,
+		"workspace_ref": evolutionLogRef(workspace),
+		"change_kind":   string(draft.ChangeKind),
+		"run_ref":       evolutionLogRef(runID),
 	})
+	currentBody, hadCurrent, currentErr := loadCurrentSkillBody(workspace, draft.TargetSkillName)
+	if currentErr != nil {
+		return draft, currentErr
+	}
+	previousProfile, profileErr := store.LoadProfile(draft.TargetSkillName)
+	profileExisted := false
+	if profileErr == nil {
+		if previousProfile.WorkspaceID != workspace {
+			return draft, fmt.Errorf("skill profile scope mismatch")
+		}
+		profileExisted = true
+	} else if !errors.Is(profileErr, os.ErrNotExist) {
+		return draft, profileErr
+	}
+	previousVersion := "pre-" + draft.ID
+	draft.PreviousVersion = previousVersion
+	if err := store.SaveSkillVersion(SkillVersionSnapshot{
+		Version: previousVersion, SkillName: draft.TargetSkillName,
+		Workspace: workspace, Body: currentBody, Present: hadCurrent, CreatedAt: rt.now(),
+	}); err != nil {
+		return draft, err
+	}
 	rollbackApply, err := applier.applyDraftWithRollback(ctx, workspace, draft)
 	if err != nil {
 		logger.WarnCF("evolution", "Skill draft apply failed", map[string]any{
-			"workspace":    workspace,
-			"draft_id":     draft.ID,
-			"target_skill": draft.TargetSkillName,
-			"error":        err.Error(),
-			"run_id":       runID,
+			"workspace_ref": evolutionLogRef(workspace),
+			"error_class":   "apply_failed",
+			"run_ref":       evolutionLogRef(runID),
 		})
 		draft.Status = DraftStatusQuarantined
-		draft.ScanFindings = appendUniqueStrings(draft.ScanFindings, fmt.Sprintf("apply failed: %v", err))
+		draft.ScanFindings = appendUniqueStrings(draft.ScanFindings, "skill apply failed; no changes were retained")
 		if auditErr := rt.recordRollbackAudit(store, draft, err); auditErr != nil {
 			draft.ScanFindings = appendUniqueStrings(
 				draft.ScanFindings,
-				fmt.Sprintf("rollback audit failed: %v", auditErr),
+				"apply-failure audit could not be recorded",
 			)
 			if saveErr := store.SaveDrafts([]SkillDraft{draft}); saveErr != nil {
 				return draft, errorsJoin(fmt.Errorf("%w: %v", ErrApplyDraftFailed, err), auditErr, saveErr)
@@ -1386,14 +1471,15 @@ func (rt *Runtime) applyCandidateDraft(
 		return draft, fmt.Errorf("%w: %v", ErrApplyDraftFailed, err)
 	}
 
+	now := rt.now()
 	draft.Status = DraftStatusAccepted
+	draft.AppliedAt = &now
+	draft.UpdatedAt = &now
 	if saveErr := store.SaveDrafts([]SkillDraft{draft}); saveErr != nil {
 		logger.WarnCF("evolution", "Skill draft save failed after apply", map[string]any{
-			"workspace":    workspace,
-			"draft_id":     draft.ID,
-			"target_skill": draft.TargetSkillName,
-			"error":        saveErr.Error(),
-			"run_id":       runID,
+			"workspace_ref": evolutionLogRef(workspace),
+			"error_class":   "draft_persistence_failed",
+			"run_ref":       evolutionLogRef(runID),
 		})
 		if rollbackErr := rollbackApply(); rollbackErr != nil {
 			return draft, errorsJoin(fmt.Errorf("%w: %v", ErrApplyDraftFailed, saveErr), rollbackErr)
@@ -1403,59 +1489,105 @@ func (rt *Runtime) applyCandidateDraft(
 
 	if err := rt.saveAppliedProfile(store, workspace, draft); err != nil {
 		logger.WarnCF("evolution", "Skill profile save failed after apply", map[string]any{
-			"workspace":    workspace,
-			"draft_id":     draft.ID,
-			"target_skill": draft.TargetSkillName,
-			"error":        err.Error(),
-			"run_id":       runID,
+			"workspace_ref": evolutionLogRef(workspace),
+			"error_class":   "profile_persistence_failed",
+			"run_ref":       evolutionLogRef(runID),
 		})
-		draft.Status = DraftStatusQuarantined
-		draft.ScanFindings = appendUniqueStrings(draft.ScanFindings, fmt.Sprintf("profile save failed: %v", err))
-		if rollbackErr := rollbackApply(); rollbackErr != nil {
-			draft.ScanFindings = appendUniqueStrings(
-				draft.ScanFindings,
-				fmt.Sprintf("apply rollback failed: %v", rollbackErr),
-			)
-			if saveErr := store.SaveDrafts([]SkillDraft{draft}); saveErr != nil {
-				return draft, errorsJoin(fmt.Errorf("%w: %v", ErrApplyDraftFailed, err), rollbackErr, saveErr)
-			}
-			return draft, errorsJoin(fmt.Errorf("%w: %v", ErrApplyDraftFailed, err), rollbackErr)
-		}
-		if saveErr := store.SaveDrafts([]SkillDraft{draft}); saveErr != nil {
-			return draft, errorsJoin(fmt.Errorf("%w: %v", ErrApplyDraftFailed, err), saveErr)
-		}
-		return draft, fmt.Errorf("%w: %v", ErrApplyDraftFailed, err)
+		draft.ScanFindings = appendUniqueStrings(draft.ScanFindings, "skill profile transaction failed")
+		return rt.rollbackPostApplyFailure(
+			store,
+			rollbackApply,
+			previousProfile,
+			profileExisted,
+			draft,
+			fmt.Errorf("%w: %v", ErrApplyDraftFailed, err),
+		)
+	}
+	appliedBody, present, snapshotErr := loadCurrentSkillBody(workspace, draft.TargetSkillName)
+	if snapshotErr != nil || !present {
+		return rt.rollbackPostApplyFailure(
+			store, rollbackApply, previousProfile, profileExisted, draft,
+			errorsJoin(ErrApplyDraftFailed, snapshotErr),
+		)
+	}
+	if snapshotErr := store.SaveSkillVersion(SkillVersionSnapshot{
+		Version: draft.ID, SkillName: draft.TargetSkillName, Workspace: workspace,
+		Body: appliedBody, Present: true, CreatedAt: rt.now(),
+	}); snapshotErr != nil {
+		return rt.rollbackPostApplyFailure(
+			store, rollbackApply, previousProfile, profileExisted, draft,
+			fmt.Errorf("%w: %v", ErrApplyDraftFailed, snapshotErr),
+		)
+	}
+	if auditErr := store.AppendAudit(AuditEvent{
+		Action: "apply", Workspace: workspace, DraftID: draft.ID,
+		SkillName: draft.TargetSkillName, Timestamp: rt.now(),
+		Details: map[string]any{"change_kind": draft.ChangeKind},
+	}); auditErr != nil {
+		return rt.rollbackPostApplyFailure(
+			store, rollbackApply, previousProfile, profileExisted, draft, auditErr,
+		)
+	}
+	if pruneErr := store.PruneSkillVersions(
+		workspace,
+		draft.TargetSkillName,
+		rt.cfg.EffectiveRollbackRetention(),
+		draft.ID,
+		draft.PreviousVersion,
+	); pruneErr != nil {
+		logger.WarnCF("evolution", "Evolution version retention failed", map[string]any{
+			"workspace_ref": evolutionLogRef(workspace), "error_class": "version_retention_failed",
+		})
 	}
 	logger.InfoCF("evolution", "Applied skill draft successfully", map[string]any{
-		"workspace":    workspace,
-		"draft_id":     draft.ID,
-		"target_skill": draft.TargetSkillName,
-		"run_id":       runID,
+		"workspace_ref": evolutionLogRef(workspace),
+		"run_ref":       evolutionLogRef(runID),
 	})
 	return draft, nil
 }
 
+func evolutionLogRef(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "none"
+	}
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:6])
+}
+
+func (rt *Runtime) rollbackPostApplyFailure(
+	store *Store,
+	rollbackApply func() error,
+	previousProfile SkillProfile,
+	profileExisted bool,
+	draft SkillDraft,
+	cause error,
+) (SkillDraft, error) {
+	var rollbackErr error
+	if rollbackApply != nil {
+		rollbackErr = rollbackApply()
+	}
+	var profileErr error
+	if profileExisted {
+		profileErr = store.SaveProfile(previousProfile)
+	} else {
+		profileErr = store.DeleteProfile(draft.WorkspaceID, draft.TargetSkillName)
+	}
+	draft.Status = DraftStatusQuarantined
+	draft.ScanFindings = appendUniqueStrings(draft.ScanFindings, "post-apply audit/version transaction failed")
+	saveErr := store.SaveDrafts([]SkillDraft{draft})
+	return draft, errorsJoin(cause, rollbackErr, profileErr, saveErr)
+}
+
 func (rt *Runtime) recordRollbackAudit(store *Store, draft SkillDraft, applyErr error) error {
-	now := rt.now()
-	return store.UpdateProfile(
-		draft.WorkspaceID,
-		draft.TargetSkillName,
-		func(profile *SkillProfile, exists bool) error {
-			if !exists {
-				return nil
-			}
-			profile.VersionHistory = append(profile.VersionHistory, SkillVersionEntry{
-				Version:        profile.CurrentVersion,
-				Action:         "rollback",
-				Timestamp:      now,
-				DraftID:        draft.ID,
-				Summary:        fmt.Sprintf("Rolled back failed draft apply: %s", draft.HumanSummary),
-				Rollback:       true,
-				RollbackReason: applyErr.Error(),
-			})
-			return nil
-		},
-	)
+	details := map[string]any{"error_class": "apply_failed"}
+	if errors.Is(applyErr, context.Canceled) || errors.Is(applyErr, context.DeadlineExceeded) {
+		details["error_class"] = "canceled"
+	}
+	return store.AppendAudit(AuditEvent{
+		Action: "apply_failed", Workspace: draft.WorkspaceID, DraftID: draft.ID,
+		SkillName: draft.TargetSkillName, Timestamp: rt.now(), Details: details,
+	})
 }
 
 func profileOrigin(origin string) string {

@@ -37,6 +37,8 @@ type DraftStatus string
 
 const (
 	DraftStatusCandidate   DraftStatus = "candidate"
+	DraftStatusApproved    DraftStatus = "approved"
+	DraftStatusRejected    DraftStatus = "rejected"
 	DraftStatusQuarantined DraftStatus = "quarantined"
 	DraftStatusAccepted    DraftStatus = "accepted"
 )
@@ -123,6 +125,13 @@ type SkillDraft struct {
 	Status             DraftStatus `json:"status"`
 	ReviewNotes        []string    `json:"review_notes,omitempty"`
 	ScanFindings       []string    `json:"scan_findings,omitempty"`
+	ApprovedAt         *time.Time  `json:"approved_at,omitempty"`
+	RejectedAt         *time.Time  `json:"rejected_at,omitempty"`
+	AppliedAt          *time.Time  `json:"applied_at,omitempty"`
+	DecisionSource     string      `json:"decision_source,omitempty"`
+	EvidenceCount      int         `json:"evidence_count,omitempty"`
+	SuccessRatio       float64     `json:"success_ratio,omitempty"`
+	PreviousVersion    string      `json:"previous_version,omitempty"`
 }
 
 type SkillVersionEntry struct {
@@ -133,6 +142,25 @@ type SkillVersionEntry struct {
 	Summary        string    `json:"summary"`
 	Rollback       bool      `json:"rollback,omitempty"`
 	RollbackReason string    `json:"rollback_reason,omitempty"`
+}
+
+type SkillVersionSnapshot struct {
+	Version   string    `json:"version"`
+	SkillName string    `json:"skill_name"`
+	Workspace string    `json:"workspace"`
+	Body      string    `json:"body,omitempty"`
+	Present   bool      `json:"present"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type AuditEvent struct {
+	ID        string         `json:"id"`
+	Action    string         `json:"action"`
+	Workspace string         `json:"workspace"`
+	DraftID   string         `json:"draft_id,omitempty"`
+	SkillName string         `json:"skill_name,omitempty"`
+	Timestamp time.Time      `json:"timestamp"`
+	Details   map[string]any `json:"details,omitempty"`
 }
 
 type SkillProfile struct {

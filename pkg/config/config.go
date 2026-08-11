@@ -57,13 +57,19 @@ type Config struct {
 }
 
 type EvolutionConfig struct {
-	Enabled         bool     `json:"enabled,omitempty"`
-	Mode            string   `json:"mode,omitempty"`
-	StateDir        string   `json:"state_dir,omitempty"`
-	MinTaskCount    int      `json:"min_task_count,omitempty"`
-	MinSuccessRatio float64  `json:"min_success_ratio,omitempty"`
-	ColdPathTrigger string   `json:"cold_path_trigger,omitempty"`
-	ColdPathTimes   []string `json:"cold_path_times,omitempty"`
+	Enabled              bool     `json:"enabled,omitempty"`
+	Mode                 string   `json:"mode,omitempty"`
+	StateDir             string   `json:"state_dir,omitempty"`
+	MinTaskCount         int      `json:"min_task_count,omitempty"`
+	MinSuccessRatio      float64  `json:"min_success_ratio,omitempty"`
+	ColdPathTrigger      string   `json:"cold_path_trigger,omitempty"`
+	ColdPathTimes        []string `json:"cold_path_times,omitempty"`
+	ApplyPolicy          string   `json:"apply_policy,omitempty"`
+	PrivateDataScrubbing bool     `json:"private_data_scrubbing"`
+	DraftTimeoutSeconds  int      `json:"draft_timeout_seconds,omitempty"`
+	MaxEvidenceRecords   int      `json:"max_evidence_records,omitempty"`
+	MaxDraftChars        int      `json:"max_draft_chars,omitempty"`
+	RollbackRetention    int      `json:"rollback_retention,omitempty"`
 	// Deprecated: use MinTaskCount.
 	MinCaseCount int `json:"min_case_count,omitempty"`
 	// Deprecated: use MinSuccessRatio.
@@ -72,21 +78,33 @@ type EvolutionConfig struct {
 
 func (c EvolutionConfig) MarshalJSON() ([]byte, error) {
 	out := struct {
-		Enabled         bool     `json:"enabled,omitempty"`
-		Mode            string   `json:"mode,omitempty"`
-		StateDir        string   `json:"state_dir,omitempty"`
-		MinTaskCount    int      `json:"min_task_count,omitempty"`
-		MinSuccessRatio float64  `json:"min_success_ratio,omitempty"`
-		ColdPathTrigger string   `json:"cold_path_trigger,omitempty"`
-		ColdPathTimes   []string `json:"cold_path_times,omitempty"`
+		Enabled              bool     `json:"enabled,omitempty"`
+		Mode                 string   `json:"mode,omitempty"`
+		StateDir             string   `json:"state_dir,omitempty"`
+		MinTaskCount         int      `json:"min_task_count,omitempty"`
+		MinSuccessRatio      float64  `json:"min_success_ratio,omitempty"`
+		ColdPathTrigger      string   `json:"cold_path_trigger,omitempty"`
+		ColdPathTimes        []string `json:"cold_path_times,omitempty"`
+		ApplyPolicy          string   `json:"apply_policy,omitempty"`
+		PrivateDataScrubbing bool     `json:"private_data_scrubbing"`
+		DraftTimeoutSeconds  int      `json:"draft_timeout_seconds,omitempty"`
+		MaxEvidenceRecords   int      `json:"max_evidence_records,omitempty"`
+		MaxDraftChars        int      `json:"max_draft_chars,omitempty"`
+		RollbackRetention    int      `json:"rollback_retention,omitempty"`
 	}{
-		Enabled:         c.Enabled,
-		Mode:            c.Mode,
-		StateDir:        c.StateDir,
-		MinTaskCount:    c.EffectiveMinTaskCount(),
-		MinSuccessRatio: c.EffectiveMinSuccessRatio(),
-		ColdPathTrigger: strings.TrimSpace(c.ColdPathTrigger),
-		ColdPathTimes:   c.EffectiveColdPathTimes(),
+		Enabled:              c.Enabled,
+		Mode:                 c.Mode,
+		StateDir:             c.StateDir,
+		MinTaskCount:         c.EffectiveMinTaskCount(),
+		MinSuccessRatio:      c.EffectiveMinSuccessRatio(),
+		ColdPathTrigger:      strings.TrimSpace(c.ColdPathTrigger),
+		ColdPathTimes:        c.EffectiveColdPathTimes(),
+		ApplyPolicy:          c.EffectiveApplyPolicy(),
+		PrivateDataScrubbing: c.PrivateDataScrubbing,
+		DraftTimeoutSeconds:  c.EffectiveDraftTimeoutSeconds(),
+		MaxEvidenceRecords:   c.EffectiveMaxEvidenceRecords(),
+		MaxDraftChars:        c.EffectiveMaxDraftChars(),
+		RollbackRetention:    c.EffectiveRollbackRetention(),
 	}
 	if !out.Enabled {
 		out.Mode = ""
@@ -141,10 +159,10 @@ func (c EvolutionConfig) RunsColdPathScheduled() bool {
 }
 
 func (c EvolutionConfig) EffectiveMinTaskCount() int {
-	if c.MinTaskCount > 0 {
+	if c.MinTaskCount >= 2 {
 		return c.MinTaskCount
 	}
-	if c.MinCaseCount > 0 {
+	if c.MinCaseCount >= 2 {
 		return c.MinCaseCount
 	}
 	return 2
@@ -173,7 +191,135 @@ func (c EvolutionConfig) EffectiveColdPathTimes() []string {
 }
 
 func (c EvolutionConfig) AutoAppliesDrafts() bool {
-	return c.EffectiveMode() == "apply"
+	return c.EffectiveMode() == "apply" && c.EffectiveApplyPolicy() == EvolutionApplyAutomatic
+}
+
+const (
+	EvolutionApplyApprovalRequired = "approval_required"
+	EvolutionApplyAutomatic        = "automatic"
+	DefaultEvolutionDraftTimeout   = 45
+	DefaultEvolutionMaxEvidence    = 50
+	DefaultEvolutionMaxDraftChars  = 12_000
+	DefaultEvolutionRollbackKeep   = 10
+	MaxEvolutionDraftTimeout       = 300
+	MaxEvolutionEvidenceRecords    = 500
+	MaxEvolutionDraftChars         = 50_000
+	MaxEvolutionRollbackKeep       = 100
+)
+
+func (c EvolutionConfig) EffectiveApplyPolicy() string {
+	if strings.EqualFold(strings.TrimSpace(c.ApplyPolicy), EvolutionApplyAutomatic) {
+		return EvolutionApplyAutomatic
+	}
+	return EvolutionApplyApprovalRequired
+}
+
+func (c EvolutionConfig) EffectiveDraftTimeoutSeconds() int {
+	if c.DraftTimeoutSeconds <= 0 {
+		return DefaultEvolutionDraftTimeout
+	}
+	if c.DraftTimeoutSeconds > MaxEvolutionDraftTimeout {
+		return MaxEvolutionDraftTimeout
+	}
+	return c.DraftTimeoutSeconds
+}
+
+func (c EvolutionConfig) EffectiveMaxEvidenceRecords() int {
+	if c.MaxEvidenceRecords <= 0 {
+		return DefaultEvolutionMaxEvidence
+	}
+	if c.MaxEvidenceRecords > MaxEvolutionEvidenceRecords {
+		return MaxEvolutionEvidenceRecords
+	}
+	return c.MaxEvidenceRecords
+}
+
+func (c EvolutionConfig) EffectiveMaxDraftChars() int {
+	if c.MaxDraftChars <= 0 {
+		return DefaultEvolutionMaxDraftChars
+	}
+	if c.MaxDraftChars > MaxEvolutionDraftChars {
+		return MaxEvolutionDraftChars
+	}
+	return c.MaxDraftChars
+}
+
+func (c EvolutionConfig) EffectiveRollbackRetention() int {
+	if c.RollbackRetention <= 0 {
+		return DefaultEvolutionRollbackKeep
+	}
+	if c.RollbackRetention > MaxEvolutionRollbackKeep {
+		return MaxEvolutionRollbackKeep
+	}
+	return c.RollbackRetention
+}
+
+func (c EvolutionConfig) Validate() error {
+	var validationErrors []string
+	if c.Enabled && !c.PrivateDataScrubbing {
+		validationErrors = append(validationErrors, "evolution.private_data_scrubbing must remain enabled when evolution is enabled")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Mode)) {
+	case "", "observe", "draft", "apply":
+	default:
+		validationErrors = append(validationErrors, "evolution.mode must be observe, draft, or apply")
+	}
+	if strings.TrimSpace(c.ApplyPolicy) != "" {
+		switch strings.ToLower(strings.TrimSpace(c.ApplyPolicy)) {
+		case EvolutionApplyApprovalRequired, EvolutionApplyAutomatic:
+		default:
+			validationErrors = append(validationErrors, "evolution.apply_policy must be approval_required or automatic")
+		}
+	}
+	trigger := strings.ToLower(strings.TrimSpace(c.ColdPathTrigger))
+	switch trigger {
+	case "", "after_turn", "scheduled", "manual", "none", "off":
+	default:
+		validationErrors = append(validationErrors, "evolution.cold_path_trigger must be after_turn, scheduled, or manual")
+	}
+	if trigger == "scheduled" {
+		times := c.EffectiveColdPathTimes()
+		if len(times) == 0 {
+			validationErrors = append(validationErrors, "evolution.cold_path_times must contain at least one HH:MM value when scheduled")
+		}
+		for _, value := range times {
+			if !validEvolutionScheduleTime(value) {
+				validationErrors = append(validationErrors, fmt.Sprintf("evolution.cold_path_times contains invalid HH:MM value %q", value))
+			}
+		}
+	}
+	if c.MinTaskCount != 0 && (c.MinTaskCount < 2 || c.MinTaskCount > MaxEvolutionEvidenceRecords) {
+		validationErrors = append(validationErrors, fmt.Sprintf("evolution.min_task_count must be between 2 and %d", MaxEvolutionEvidenceRecords))
+	}
+	if c.MinSuccessRatio != 0 && (c.MinSuccessRatio < 0 || c.MinSuccessRatio > 1) {
+		validationErrors = append(validationErrors, "evolution.min_success_ratio must be greater than 0 and at most 1")
+	}
+	if c.DraftTimeoutSeconds != 0 && (c.DraftTimeoutSeconds < 1 || c.DraftTimeoutSeconds > MaxEvolutionDraftTimeout) {
+		validationErrors = append(validationErrors, fmt.Sprintf("evolution.draft_timeout_seconds must be between 1 and %d", MaxEvolutionDraftTimeout))
+	}
+	if c.MaxEvidenceRecords != 0 && (c.MaxEvidenceRecords < 2 || c.MaxEvidenceRecords > MaxEvolutionEvidenceRecords) {
+		validationErrors = append(validationErrors, fmt.Sprintf("evolution.max_evidence_records must be between 2 and %d", MaxEvolutionEvidenceRecords))
+	}
+	if c.MaxDraftChars != 0 && (c.MaxDraftChars < 1 || c.MaxDraftChars > MaxEvolutionDraftChars) {
+		validationErrors = append(validationErrors, fmt.Sprintf("evolution.max_draft_chars must be between 1 and %d", MaxEvolutionDraftChars))
+	}
+	if c.RollbackRetention != 0 && (c.RollbackRetention < 1 || c.RollbackRetention > MaxEvolutionRollbackKeep) {
+		validationErrors = append(validationErrors, fmt.Sprintf("evolution.rollback_retention must be between 1 and %d", MaxEvolutionRollbackKeep))
+	}
+	if len(validationErrors) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(validationErrors, "; "))
+}
+
+func validEvolutionScheduleTime(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 5 || value[2] != ':' {
+		return false
+	}
+	hour, hourErr := strconv.Atoi(value[:2])
+	minute, minuteErr := strconv.Atoi(value[3:])
+	return hourErr == nil && minuteErr == nil && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
 }
 
 // IsolationConfig controls subprocess isolation for commands started by PicoClaw.

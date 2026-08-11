@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,52 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
+func (al *AgentLoop) processEvolutionUserTurn(
+	ctx context.Context,
+	content, sessionKey, channel, chatID string,
+) (string, error) {
+	// Most historical bridge tests used the direct CLI helper even though CLI
+	// is an internal channel. Exercise the same flow as a trusted live gateway
+	// user so internal-channel exclusion remains meaningful.
+	if channel == "cli" {
+		channel = "telegram"
+	}
+	msg := bus.InboundMessage{
+		Context: bus.InboundContext{
+			Channel: channel, ChatID: chatID, ChatType: "direct", SenderID: "user-1",
+		},
+		Content: content, SessionKey: sessionKey,
+	}
+	response, err := al.processMessage(ctx, msg)
+	if err != nil || response == "" {
+		return response, err
+	}
+	target, err := al.buildContinuationTarget(msg)
+	if err != nil {
+		return "", err
+	}
+	if target != nil {
+		al.acknowledgeDeferredMemoryDelivery(target.SessionKey, response, true)
+	}
+	return response, nil
+}
+
+func waitForEvolutionAcknowledgement(
+	t *testing.T,
+	bridge *evolutionBridge,
+	turnID string,
+) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if bridge.AcknowledgeTurn(turnID, true) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("turn %s was not staged for delivery acknowledgement", turnID)
+}
+
 func TestEvolutionBridge_DisabledWritesNothing(t *testing.T) {
 	tmpDir := t.TempDir()
 	al := newEvolutionTestLoop(t, tmpDir, config.EvolutionConfig{
@@ -26,7 +73,7 @@ func TestEvolutionBridge_DisabledWritesNothing(t *testing.T) {
 	}, &simpleMockProvider{response: "ok"})
 	defer al.Close()
 
-	resp, err := al.ProcessDirectWithChannel(context.Background(), "hello", "session-disabled", "cli", "direct")
+	resp, err := al.processEvolutionUserTurn(context.Background(), "hello", "session-disabled", "cli", "direct")
 	if err != nil {
 		t.Fatalf("ProcessDirectWithChannel failed: %v", err)
 	}
@@ -58,7 +105,7 @@ func TestEvolutionBridge_ObserveWritesCaseRecord(t *testing.T) {
 	defaultAgent.SkillsFilter = []string{"observe-skill"}
 	al.RegisterTool(&echoTextTool{})
 
-	resp, err := al.ProcessDirectWithChannel(context.Background(), "hello", "session-observe", "cli", "direct")
+	resp, err := al.processEvolutionUserTurn(context.Background(), "hello", "session-observe", "cli", "direct")
 	if err != nil {
 		t.Fatalf("ProcessDirectWithChannel failed: %v", err)
 	}
@@ -130,10 +177,14 @@ func TestEvolutionBridge_TurnEndBypassesHookObserverBackpressure(t *testing.T) {
 		UserMessage:  "hello",
 		FinalContent: "ok",
 	})
+	if !al.currentEvolutionBridge().AcknowledgeTurn("turn-backpressure", true) {
+		t.Fatal("delivered turn was not acknowledged")
+	}
 
 	record := waitForEvolutionRecord(t, filepath.Join(tmpDir, "state", "evolution", "task-records.jsonl"))
-	if got := record["session_key"]; got != "session-backpressure" {
-		t.Fatalf("session_key = %v, want session-backpressure", got)
+	if got, _ := record["session_key"].(string); got == "session-backpressure" ||
+		!strings.HasPrefix(got, "session-") {
+		t.Fatalf("session_key = %v, want opaque reference", record["session_key"])
 	}
 	if got := record["summary"]; got != "hello" {
 		t.Fatalf("summary = %v, want hello", got)
@@ -166,10 +217,12 @@ func TestEvolutionBridge_RuntimeBusTurnEndWritesCaseRecord(t *testing.T) {
 	if result.Delivered == 0 {
 		t.Fatalf("runtime bus publish delivered = %d, want > 0", result.Delivered)
 	}
+	waitForEvolutionAcknowledgement(t, al.currentEvolutionBridge(), "turn-runtime-bus")
 
 	record := waitForEvolutionRecord(t, filepath.Join(tmpDir, "state", "evolution", "task-records.jsonl"))
-	if got := record["session_key"]; got != "session-runtime-bus" {
-		t.Fatalf("session_key = %v, want session-runtime-bus", got)
+	if got, _ := record["session_key"].(string); got == "session-runtime-bus" ||
+		!strings.HasPrefix(got, "session-") {
+		t.Fatalf("session_key = %v, want opaque reference", record["session_key"])
 	}
 	if got := record["summary"]; got != "runtime bus task" {
 		t.Fatalf("summary = %v, want runtime bus task", got)
@@ -254,6 +307,7 @@ func TestEvolutionBridge_RuntimeBusOnlyCurrentBridgeConsumesTurnEnd(t *testing.T
 			FinalContent: "ok",
 		},
 	})
+	waitForEvolutionAcknowledgement(t, newBridge, "turn-current-bridge")
 
 	recordsPath := filepath.Join(tmpDir, "state", "evolution", "task-records.jsonl")
 	waitForEvolutionRecord(t, recordsPath)
@@ -314,11 +368,13 @@ func TestEvolutionBridge_DirectDeliveryFailureFallsBackToCurrentRuntimeBridge(t 
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for emitEvent")
 	}
+	waitForEvolutionAcknowledgement(t, newBridge, "turn-direct-fallback")
 
 	recordsPath := filepath.Join(tmpDir, "state", "evolution", "task-records.jsonl")
 	record := waitForEvolutionRecord(t, recordsPath)
-	if got := record["session_key"]; got != "session-direct-fallback" {
-		t.Fatalf("session_key = %v, want session-direct-fallback", got)
+	if got, _ := record["session_key"].(string); got == "session-direct-fallback" ||
+		!strings.HasPrefix(got, "session-") {
+		t.Fatalf("session_key = %v, want opaque reference", record["session_key"])
 	}
 	if got := countEvolutionTaskRecords(t, recordsPath); got != 1 {
 		t.Fatalf("task record count = %d, want 1", got)
@@ -354,6 +410,104 @@ func TestEvolutionBridge_CloseCancelsPendingTurnEndRecord(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Close timed out")
 	}
+	assertNotExists(t, filepath.Join(tmpDir, "state", "evolution", "task-records.jsonl"))
+}
+
+func TestEvolutionBridge_FailedDeliveryAcknowledgementDoesNotWriteRecord(t *testing.T) {
+	tmpDir := t.TempDir()
+	al := newEvolutionTestLoop(t, tmpDir, config.EvolutionConfig{
+		Enabled: true,
+		Mode:    "observe",
+	}, &simpleMockProvider{response: "ok"})
+	defer al.Close()
+
+	al.emitEvent(runtimeevents.KindAgentTurnEnd, EventMeta{
+		AgentID: "main", TurnID: "turn-failed-delivery", SessionKey: "session-failed-delivery",
+	}, TurnEndPayload{
+		Status: TurnEndStatusCompleted, Workspace: tmpDir,
+		UserMessage: "private task", FinalContent: "unsent answer",
+	})
+	if al.currentEvolutionBridge().AcknowledgeTurn("turn-failed-delivery", false) {
+		t.Fatal("failed delivery acknowledgement started evolution capture")
+	}
+	assertNotExists(t, filepath.Join(tmpDir, "state", "evolution", "task-records.jsonl"))
+}
+
+func TestEvolutionBridge_IgnoresFailedInternalReviewerCronAndSubagentTurns(t *testing.T) {
+	workspace := t.TempDir()
+	bridge, err := newEvolutionBridge(nil, &config.Config{Evolution: config.EvolutionConfig{
+		Enabled: true, Mode: "observe", PrivateDataScrubbing: true,
+	}}, nil)
+	if err != nil {
+		t.Fatalf("newEvolutionBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	basePayload := TurnEndPayload{
+		Status: TurnEndStatusCompleted, Workspace: workspace,
+		UserMessage: "repeatable workflow", FinalContent: "delivered result",
+	}
+	tests := []struct {
+		name    string
+		scope   runtimeevents.Scope
+		parent  string
+		payload TurnEndPayload
+	}{
+		{name: "failed", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "user"}, payload: func() TurnEndPayload { value := basePayload; value.Status = TurnEndStatusError; return value }()},
+		{name: "no history", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "user"}, payload: func() TurnEndPayload { value := basePayload; value.NoHistory = true; return value }()},
+		{name: "reviewer or internal suppression", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "worker"}, payload: func() TurnEndPayload { value := basePayload; value.SuppressLearning = true; return value }()},
+		{name: "subagent depth", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "user"}, payload: func() TurnEndPayload { value := basePayload; value.Depth = 1; return value }()},
+		{name: "subagent parent", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "user"}, parent: "parent-turn", payload: basePayload},
+		{name: "cli internal channel", scope: runtimeevents.Scope{Channel: "cli", SenderID: "user"}, payload: basePayload},
+		{name: "system internal channel", scope: runtimeevents.Scope{Channel: "system", SenderID: "worker"}, payload: basePayload},
+		{name: "subagent internal channel", scope: runtimeevents.Scope{Channel: "subagent", SenderID: "user"}, payload: basePayload},
+		{name: "cron sender", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "cron"}, payload: basePayload},
+		{name: "heartbeat sender", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "heartbeat"}, payload: basePayload},
+		{name: "system sender", scope: runtimeevents.Scope{Channel: "telegram", SenderID: "system"}, payload: basePayload},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.scope.TurnID = fmt.Sprintf("ignored-turn-%d", index)
+			evt := runtimeevents.Event{
+				Kind: runtimeevents.KindAgentTurnEnd, Scope: test.scope,
+				Correlation: runtimeevents.Correlation{ParentTurnID: test.parent},
+				Payload:     test.payload,
+			}
+			if bridge.stageRuntimeTurnEnd(evt) {
+				t.Fatal("ineligible turn was staged")
+			}
+		})
+	}
+	assertNotExists(t, filepath.Join(workspace, "state", "evolution", "task-records.jsonl"))
+}
+
+func TestEvolutionBridge_LegacyEventRejectsTrustedCronScope(t *testing.T) {
+	workspace := t.TempDir()
+	bridge, err := newEvolutionBridge(nil, &config.Config{Evolution: config.EvolutionConfig{
+		Enabled: true, Mode: "observe", PrivateDataScrubbing: true,
+	}}, nil)
+	if err != nil {
+		t.Fatalf("newEvolutionBridge: %v", err)
+	}
+	defer bridge.Close()
+	err = bridge.OnEvent(context.Background(), Event{
+		Kind: EventKindTurnEnd,
+		Meta: EventMeta{TurnID: "legacy-cron", SessionKey: "session", AgentID: "main"},
+		Context: &TurnContext{Inbound: &bus.InboundContext{
+			Channel: "telegram", SenderID: "cron", ChatType: "direct",
+		}},
+		Payload: TurnEndPayload{
+			Status: TurnEndStatusCompleted, Workspace: workspace,
+			UserMessage: "internal work", FinalContent: "internal result",
+		},
+	})
+	if err != nil {
+		t.Fatalf("OnEvent: %v", err)
+	}
+	if bridge.AcknowledgeTurn("legacy-cron", true) {
+		t.Fatal("legacy cron turn was staged")
+	}
+	assertNotExists(t, filepath.Join(workspace, "state", "evolution", "task-records.jsonl"))
 }
 
 func TestEvolutionBridge_ObserveTurnEndPayloadIncludesResolvedAttemptTrail(t *testing.T) {
@@ -385,7 +539,7 @@ func TestEvolutionBridge_ObserveTurnEndPayloadIncludesResolvedAttemptTrail(t *te
 	sub := al.SubscribeEvents(16)
 	defer al.UnsubscribeEvents(sub.ID)
 
-	resp, err := al.ProcessDirectWithChannel(
+	resp, err := al.processEvolutionUserTurn(
 		context.Background(),
 		"hello",
 		"session-observe-attempt-trail",
@@ -448,7 +602,7 @@ func TestEvolutionBridge_ObserveTurnEndUsesLatestSkillSnapshotAfterRetry(t *test
 	sub := al.SubscribeEvents(16)
 	defer al.UnsubscribeEvents(sub.ID)
 
-	resp, err := al.ProcessDirectWithChannel(
+	resp, err := al.processEvolutionUserTurn(
 		context.Background(),
 		"hello",
 		"session-observe-retry-snapshot",
@@ -506,7 +660,7 @@ func TestEvolutionBridge_ObserveDoesNotCreateDraftFile(t *testing.T) {
 	}, &simpleMockProvider{response: "ok"})
 	defer al.Close()
 
-	resp, err := al.ProcessDirectWithChannel(context.Background(), "hello", "session-observe-no-draft", "cli", "direct")
+	resp, err := al.processEvolutionUserTurn(context.Background(), "hello", "session-observe-no-draft", "cli", "direct")
 	if err != nil {
 		t.Fatalf("ProcessDirectWithChannel failed: %v", err)
 	}
@@ -528,7 +682,7 @@ func TestEvolutionBridge_DraftModeAutomaticallyRunsColdPathAndCreatesDraftFile(t
 	}, &simpleMockProvider{response: "ok"})
 	defer al.Close()
 
-	resp, err := al.ProcessDirectWithChannel(context.Background(), "hello", "session-auto-cold-path", "cli", "direct")
+	resp, err := al.processEvolutionUserTurn(context.Background(), "hello", "session-auto-cold-path", "cli", "direct")
 	if err != nil {
 		t.Fatalf("ProcessDirectWithChannel failed: %v", err)
 	}
@@ -576,7 +730,7 @@ func TestEvolutionBridge_ScheduledModeDoesNotRunColdPathAfterTurn(t *testing.T) 
 	}, &simpleMockProvider{response: "ok"})
 	defer al.Close()
 
-	resp, err := al.ProcessDirectWithChannel(
+	resp, err := al.processEvolutionUserTurn(
 		context.Background(),
 		"hello",
 		"session-scheduled-cold-path",
@@ -607,7 +761,7 @@ func TestEvolutionBridge_DraftModeUsesProviderBackedDraftGenerator(t *testing.T)
 	})
 	defer al.Close()
 
-	resp, err := al.ProcessDirectWithChannel(
+	resp, err := al.processEvolutionUserTurn(
 		context.Background(),
 		"hello",
 		"session-auto-cold-path-llm",
@@ -655,7 +809,7 @@ func TestEvolutionBridge_DraftModeUsesProviderDefaultModel(t *testing.T) {
 	al := NewAgentLoop(cfg, bus.NewMessageBus(), provider)
 	defer al.Close()
 
-	if _, err := al.ProcessDirectWithChannel(
+	if _, err := al.processEvolutionUserTurn(
 		context.Background(),
 		"hello",
 		"session-auto-cold-path-model",
@@ -700,7 +854,7 @@ func TestEvolutionBridge_DraftModePrefersConfigDefaultModelName(t *testing.T) {
 	al := NewAgentLoop(cfg, bus.NewMessageBus(), provider)
 	defer al.Close()
 
-	if _, err := al.ProcessDirectWithChannel(
+	if _, err := al.processEvolutionUserTurn(
 		context.Background(),
 		"hello",
 		"session-auto-cold-path-model-config",
@@ -729,7 +883,7 @@ func TestEvolutionBridge_DraftModeKeepsCandidateDraft(t *testing.T) {
 	})
 	defer al.Close()
 
-	if _, err := al.ProcessDirectWithChannel(
+	if _, err := al.processEvolutionUserTurn(
 		context.Background(),
 		"hello",
 		"session-apply-no-auto-apply",
@@ -764,14 +918,15 @@ func TestEvolutionBridge_ApplyModeAutomaticallyRunsColdPathAndAppliesMergeDraft(
 	}
 
 	al := newEvolutionTestLoop(t, tmpDir, config.EvolutionConfig{
-		Enabled: true,
-		Mode:    "apply",
+		Enabled:     true,
+		Mode:        "apply",
+		ApplyPolicy: config.EvolutionApplyAutomatic,
 	}, &simpleMockProvider{
 		response: `{"target_skill_name":"weather","draft_type":"shortcut","change_kind":"merge","human_summary":"Merge native-name path","body_or_patch":"Prefer native-name query first."}`,
 	})
 	defer al.Close()
 
-	if _, err := al.ProcessDirectWithChannel(
+	if _, err := al.processEvolutionUserTurn(
 		context.Background(),
 		"hello",
 		"session-apply-merge",
@@ -817,7 +972,7 @@ func TestEvolutionBridge_ObserveModeDoesNotRunColdPathOrCreateDraftFile(t *testi
 	}, &simpleMockProvider{response: "ok"})
 	defer al.Close()
 
-	resp, err := al.ProcessDirectWithChannel(
+	resp, err := al.processEvolutionUserTurn(
 		context.Background(),
 		"hello",
 		"session-no-auto-cold-path",
@@ -859,12 +1014,17 @@ func TestEvolutionBridge_TurnEndUsesPayloadWorkspace(t *testing.T) {
 		Payload: TurnEndPayload{
 			Status:       TurnEndStatusCompleted,
 			Workspace:    workspace,
+			UserMessage:  "use the observed workflow",
+			FinalContent: "workflow delivered",
 			ActiveSkills: []string{"observe-skill"},
 			ToolKinds:    []string{"echo_text"},
 		},
 	})
 	if err != nil {
 		t.Fatalf("OnEvent: %v", err)
+	}
+	if !bridge.AcknowledgeTurn("turn-1", true) {
+		t.Fatal("legacy event was not staged for delivery acknowledgement")
 	}
 
 	record := waitForEvolutionRecord(t, filepath.Join(workspace, "state", "evolution", "task-records.jsonl"))
@@ -897,6 +1057,8 @@ func TestEvolutionBridge_TurnEndUsesExplicitAttemptTrail(t *testing.T) {
 		Payload: TurnEndPayload{
 			Status:              TurnEndStatusCompleted,
 			Workspace:           workspace,
+			UserMessage:         "run geocode then weather",
+			FinalContent:        "weather workflow delivered",
 			ActiveSkills:        []string{"weather"},
 			AttemptedSkills:     []string{"geocode", "weather"},
 			FinalSuccessfulPath: []string{"geocode", "weather"},
@@ -913,6 +1075,9 @@ func TestEvolutionBridge_TurnEndUsesExplicitAttemptTrail(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("OnEvent: %v", err)
+	}
+	if !bridge.AcknowledgeTurn("turn-1", true) {
+		t.Fatal("legacy attempt-trail event was not staged")
 	}
 
 	record := waitForEvolutionRecord(t, filepath.Join(workspace, "state", "evolution", "task-records.jsonl"))
@@ -988,6 +1153,78 @@ func TestEvolutionBridge_CloseRejectsLateTurnEndEvents(t *testing.T) {
 		t.Fatalf("OnEvent() error = %v", err)
 	}
 
+	assertNotExists(t, filepath.Join(workspace, "state", "evolution", "task-records.jsonl"))
+}
+
+func TestAgentLoop_ReloadTransfersPendingEvolutionDeliveryGate(t *testing.T) {
+	workspace := t.TempDir()
+	al := newEvolutionTestLoop(t, workspace, config.EvolutionConfig{
+		Enabled: true, Mode: "observe", PrivateDataScrubbing: true,
+	}, &simpleMockProvider{response: "ok"})
+	defer al.Close()
+
+	al.emitEvent(runtimeevents.KindAgentTurnEnd, EventMeta{
+		AgentID: "main", TurnID: "turn-before-reload", SessionKey: "session-before-reload",
+	}, TurnEndPayload{
+		Status: TurnEndStatusCompleted, Workspace: workspace,
+		UserMessage: "repeat the verified remote workflow", FinalContent: "workflow delivered",
+	})
+	oldBridge := al.currentEvolutionBridge()
+	if oldBridge == nil {
+		t.Fatal("expected initial evolution bridge")
+	}
+
+	reloadCfg := &config.Config{
+		Agents: config.AgentsConfig{Defaults: config.AgentDefaults{
+			Workspace: workspace, ModelName: "test-model", MaxTokens: 4096, MaxToolIterations: 3,
+		}},
+		Evolution: config.EvolutionConfig{
+			Enabled: true, Mode: "observe", PrivateDataScrubbing: true,
+		},
+	}
+	if err := al.ReloadProviderAndConfig(context.Background(), &simpleMockProvider{response: "ok"}, reloadCfg); err != nil {
+		t.Fatalf("ReloadProviderAndConfig: %v", err)
+	}
+	current := al.currentEvolutionBridge()
+	if current == nil || current == oldBridge {
+		t.Fatal("expected replacement evolution bridge")
+	}
+	if !current.AcknowledgeTurn("turn-before-reload", true) {
+		t.Fatal("pending delivered turn was not transferred to replacement bridge")
+	}
+	record := waitForEvolutionRecord(t, filepath.Join(workspace, "state", "evolution", "task-records.jsonl"))
+	if record["summary"] != "repeat the verified remote workflow" {
+		t.Fatalf("transferred record=%#v", record)
+	}
+}
+
+func TestAgentLoop_ReloadTransferredEvolutionTurnStillRequiresSuccessfulDelivery(t *testing.T) {
+	workspace := t.TempDir()
+	al := newEvolutionTestLoop(t, workspace, config.EvolutionConfig{
+		Enabled: true, Mode: "observe", PrivateDataScrubbing: true,
+	}, &simpleMockProvider{response: "ok"})
+	defer al.Close()
+
+	al.emitEvent(runtimeevents.KindAgentTurnEnd, EventMeta{
+		AgentID: "main", TurnID: "turn-failed-after-reload", SessionKey: "session-failed-after-reload",
+	}, TurnEndPayload{
+		Status: TurnEndStatusCompleted, Workspace: workspace,
+		UserMessage: "private work", FinalContent: "unsent output",
+	})
+	reloadCfg := &config.Config{
+		Agents: config.AgentsConfig{Defaults: config.AgentDefaults{
+			Workspace: workspace, ModelName: "test-model", MaxTokens: 4096, MaxToolIterations: 3,
+		}},
+		Evolution: config.EvolutionConfig{
+			Enabled: true, Mode: "observe", PrivateDataScrubbing: true,
+		},
+	}
+	if err := al.ReloadProviderAndConfig(context.Background(), &simpleMockProvider{response: "ok"}, reloadCfg); err != nil {
+		t.Fatalf("ReloadProviderAndConfig: %v", err)
+	}
+	if al.currentEvolutionBridge().AcknowledgeTurn("turn-failed-after-reload", false) {
+		t.Fatal("failed delivery started evolution capture after reload")
+	}
 	assertNotExists(t, filepath.Join(workspace, "state", "evolution", "task-records.jsonl"))
 }
 
@@ -1142,6 +1379,24 @@ func seedReadyRule(t *testing.T, workspace string) {
 	t.Helper()
 
 	store := evolution.NewStore(evolution.NewPaths(workspace, ""))
+	success := true
+	tasks := []evolution.LearningRecord{
+		{
+			ID: "task-1", Kind: evolution.RecordKindTask, WorkspaceID: workspace,
+			CreatedAt: time.Unix(1699999980, 0).UTC(), Summary: "weather native-name path",
+			FinalOutput: "verified result one", Status: evolution.RecordStatus("clustered"),
+			Success: &success,
+		},
+		{
+			ID: "task-2", Kind: evolution.RecordKindTask, WorkspaceID: workspace,
+			CreatedAt: time.Unix(1699999990, 0).UTC(), Summary: "weather native-name path",
+			FinalOutput: "verified result two", Status: evolution.RecordStatus("clustered"),
+			Success: &success,
+		},
+	}
+	if err := store.AppendTaskRecords(context.Background(), tasks); err != nil {
+		t.Fatalf("AppendTaskRecords: %v", err)
+	}
 	rule := evolution.LearningRecord{
 		ID:            "rule-1",
 		Kind:          evolution.RecordKindRule,
@@ -1152,8 +1407,8 @@ func seedReadyRule(t *testing.T, workspace string) {
 		Status:        evolution.RecordStatus("ready"),
 		TaskRecordIDs: []string{"task-1", "task-2"},
 	}
-	if err := store.AppendLearningRecords([]evolution.LearningRecord{rule}); err != nil {
-		t.Fatalf("AppendLearningRecords: %v", err)
+	if err := store.AppendPatternRecords([]evolution.LearningRecord{rule}); err != nil {
+		t.Fatalf("AppendPatternRecords: %v", err)
 	}
 }
 

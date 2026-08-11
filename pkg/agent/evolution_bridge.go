@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/constants"
 	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
 	"github.com/sipeed/picoclaw/pkg/evolution"
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -30,6 +31,15 @@ type evolutionBridge struct {
 
 	scheduledMu         sync.Mutex
 	scheduledWorkspaces map[string]struct{}
+	pendingMu           sync.Mutex
+	pendingTurns        map[string]evolutionPendingTurn
+}
+
+type evolutionPendingTurn struct {
+	meta    EventMeta
+	payload TurnEndPayload
+	scope   runtimeevents.Scope
+	parent  string
 }
 
 const evolutionDirectDeliveryAttr = "evolution_direct_delivery"
@@ -69,16 +79,18 @@ func newEvolutionBridge(
 	bgCtx, cancel := context.WithCancel(context.Background())
 
 	bridge := &evolutionBridge{
-		cfg:      cfg.Evolution,
-		registry: registry,
-		runtime:  runtime,
-		bgCtx:    bgCtx,
-		cancel:   cancel,
+		cfg:          cfg.Evolution,
+		registry:     registry,
+		runtime:      runtime,
+		bgCtx:        bgCtx,
+		cancel:       cancel,
+		pendingTurns: make(map[string]evolutionPendingTurn),
 	}
 	if cfg.Evolution.RunsColdPathAutomatically() {
 		bridge.coldPathRunner = evolution.NewColdPathRunnerWithErrorHandler(runtime, func(err error) {
+			_ = err
 			logger.WarnCF("agent", "Cold path run failed", map[string]any{
-				"error": err.Error(),
+				"error_class": "cold_path_failed",
 			})
 		})
 	}
@@ -109,8 +121,9 @@ func (b *evolutionBridge) Close() error {
 
 	if b.runtimeSub != nil {
 		if err := b.runtimeSub.Close(); err != nil {
+			_ = err
 			logger.WarnCF("agent", "Failed to close evolution runtime subscription", map[string]any{
-				"error": err.Error(),
+				"error_class": "subscription_close_failed",
 			})
 		}
 		<-b.runtimeSub.Done()
@@ -126,6 +139,9 @@ func (b *evolutionBridge) Close() error {
 	if b.cancel != nil {
 		b.cancel()
 	}
+	b.pendingMu.Lock()
+	b.pendingTurns = make(map[string]evolutionPendingTurn)
+	b.pendingMu.Unlock()
 	var closeErr error
 	if b.coldPathRunner != nil {
 		closeErr = b.coldPathRunner.Close()
@@ -145,10 +161,15 @@ func (b *evolutionBridge) OnEvent(_ context.Context, evt Event) error {
 	switch evt.Kind {
 	case EventKindTurnEnd:
 		payload, ok := evt.Payload.(TurnEndPayload)
-		if !ok {
+		scope := runtimeScopeFromHookMeta(evt.Meta, evt.Context)
+		if !ok || !evolutionTurnEligible(scope, evt.Meta.ParentTurnID, payload) {
 			return nil
 		}
-		b.handleTurnEndAsync(evt.Meta, payload)
+		turnID := strings.TrimSpace(evt.Meta.TurnID)
+		if turnID == "" {
+			return nil
+		}
+		b.stagePendingTurn(turnID, evolutionPendingTurn{meta: evt.Meta, payload: payload})
 		return nil
 	}
 
@@ -168,11 +189,7 @@ func (b *evolutionBridge) OnRuntimeEvent(_ context.Context, evt runtimeevents.Ev
 	if deliveredDirectly, _ := evt.Attrs[evolutionDirectDeliveryAttr].(bool); deliveredDirectly {
 		return nil
 	}
-	payload, ok := evt.Payload.(TurnEndPayload)
-	if !ok {
-		return nil
-	}
-	b.handleTurnEndAsync(hookMetaFromRuntimeEvent(evt), payload)
+	b.stageRuntimeTurnEnd(evt)
 	return nil
 }
 
@@ -183,11 +200,97 @@ func (b *evolutionBridge) handleRuntimeTurnEnd(evt runtimeevents.Event) bool {
 	if runtimeEventIsPrivate(evt) {
 		return false
 	}
-	payload, ok := evt.Payload.(TurnEndPayload)
-	if !ok {
+	return b.stageRuntimeTurnEnd(evt)
+}
+
+func (b *evolutionBridge) stageRuntimeTurnEnd(evt runtimeevents.Event) bool {
+	if b == nil || !b.cfg.Enabled || b.runtime == nil || evt.Kind != runtimeevents.KindAgentTurnEnd {
 		return false
 	}
-	return b.handleTurnEndAsync(hookMetaFromRuntimeEvent(evt), payload)
+	payload, ok := evt.Payload.(TurnEndPayload)
+	if !ok || !evolutionTurnEligible(evt.Scope, evt.Correlation.ParentTurnID, payload) {
+		return false
+	}
+	turnID := strings.TrimSpace(evt.Scope.TurnID)
+	if turnID == "" {
+		turnID = strings.TrimSpace(evt.Correlation.TraceID)
+	}
+	if turnID == "" {
+		return false
+	}
+	return b.stagePendingTurn(turnID, evolutionPendingTurn{
+		meta: hookMetaFromRuntimeEvent(evt), payload: payload, scope: evt.Scope,
+		parent: evt.Correlation.ParentTurnID,
+	})
+}
+
+func (b *evolutionBridge) stagePendingTurn(turnID string, pending evolutionPendingTurn) bool {
+	if b == nil {
+		return false
+	}
+	turnID = strings.TrimSpace(turnID)
+	if turnID == "" {
+		return false
+	}
+	b.closeMu.Lock()
+	defer b.closeMu.Unlock()
+	if b.closed || (b.isCurrent != nil && !b.isCurrent(b)) {
+		return false
+	}
+	b.pendingMu.Lock()
+	b.pendingTurns[turnID] = pending
+	b.pendingMu.Unlock()
+	return true
+}
+
+func evolutionTurnEligible(scope runtimeevents.Scope, parent string, payload TurnEndPayload) bool {
+	if payload.Status != TurnEndStatusCompleted || payload.NoHistory || payload.SuppressLearning || payload.Depth > 0 ||
+		strings.TrimSpace(parent) != "" || constants.IsInternalChannel(scope.Channel) {
+		return false
+	}
+	sender := strings.ToLower(strings.TrimSpace(scope.SenderID))
+	return sender != "cron" && sender != "heartbeat" && sender != "system"
+}
+
+func (b *evolutionBridge) AcknowledgeTurn(turnID string, delivered bool) bool {
+	if b == nil {
+		return false
+	}
+	turnID = strings.TrimSpace(turnID)
+	b.pendingMu.Lock()
+	pending, ok := b.pendingTurns[turnID]
+	delete(b.pendingTurns, turnID)
+	b.pendingMu.Unlock()
+	if !ok || !delivered {
+		return false
+	}
+	return b.handleTurnEndAsync(pending.meta, pending.payload)
+}
+
+func (b *evolutionBridge) DiscardTurn(turnID string) {
+	if b == nil {
+		return
+	}
+	b.pendingMu.Lock()
+	delete(b.pendingTurns, strings.TrimSpace(turnID))
+	b.pendingMu.Unlock()
+}
+
+// transferPendingTurnsTo moves delivery-gated observations during an atomic
+// runtime reload. Callers must prevent delivery acknowledgement from selecting
+// either bridge while the transfer and current-bridge swap are in progress.
+func (b *evolutionBridge) transferPendingTurnsTo(next *evolutionBridge) {
+	if b == nil || next == nil || b == next {
+		return
+	}
+	b.pendingMu.Lock()
+	next.pendingMu.Lock()
+	for turnID, pending := range b.pendingTurns {
+		next.pendingTurns[turnID] = pending
+		delete(b.pendingTurns, turnID)
+	}
+	next.pendingMu.Unlock()
+	b.pendingMu.Unlock()
 }
 
 func (b *evolutionBridge) handleTurnEndAsync(meta EventMeta, payload TurnEndPayload) bool {
@@ -229,10 +332,9 @@ func (b *evolutionBridge) handleTurnEndAsync(meta EventMeta, payload TurnEndPayl
 	go func() {
 		defer b.wg.Done()
 		if err := b.runtime.FinalizeTurn(b.bgCtx, input); err != nil {
+			_ = err
 			logger.WarnCF("agent", "Evolution finalize turn failed", map[string]any{
-				"error":     err.Error(),
-				"turn_id":   input.TurnID,
-				"workspace": input.Workspace,
+				"error_class": "finalize_turn_failed",
 			})
 			return
 		}
@@ -287,7 +389,7 @@ func (b *evolutionBridge) startScheduledColdPath(workspace string, times []strin
 	schedule := parseColdPathSchedule(times)
 	if len(schedule) == 0 {
 		logger.WarnCF("agent", "No valid evolution cold path schedule times configured", map[string]any{
-			"times": times,
+			"configured_count": len(times),
 		})
 		return
 	}

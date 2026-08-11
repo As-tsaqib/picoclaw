@@ -75,6 +75,7 @@ func (h *Handler) SetDebug(debug bool) {
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Config CRUD
 	h.registerConfigRoutes(mux)
+	h.registerMemoryEvolutionRoutes(mux)
 
 	// Pico Channel (WebSocket chat)
 	h.registerPicoRoutes(mux)

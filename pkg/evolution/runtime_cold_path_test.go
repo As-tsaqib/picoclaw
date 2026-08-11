@@ -211,6 +211,19 @@ func TestRuntime_RunColdPathOnce_AdmitsOnlyRecordsApprovedBySuccessJudge(t *test
 				FinalSuccessfulPath: []string{"weather"},
 			},
 		},
+		{
+			ID:             "task-admitted-2",
+			Kind:           evolution.RecordKindTask,
+			WorkspaceID:    root,
+			CreatedAt:      time.Unix(1700000300, 0).UTC(),
+			Summary:        "weather answer delivered",
+			UserGoal:       "check weather in shanghai",
+			FinalOutput:    "sunny, 27C",
+			Status:         evolution.RecordStatus("new"),
+			Success:        &ok,
+			UsedSkillNames: []string{"weather", "native-name"},
+			ToolKinds:      []string{"read_file"},
+		},
 	}
 	if err := store.AppendLearningRecords(records); err != nil {
 		t.Fatalf("AppendLearningRecords: %v", err)
@@ -218,13 +231,14 @@ func TestRuntime_RunColdPathOnce_AdmitsOnlyRecordsApprovedBySuccessJudge(t *test
 
 	judge := &stubSuccessJudge{
 		decisions: map[string]evolution.TaskSuccessDecision{
-			"task-rejected": {Success: false, Reason: "only partial reasoning"},
-			"task-admitted": {Success: true, Reason: "goal achieved"},
+			"task-rejected":   {Success: false, Reason: "only partial reasoning"},
+			"task-admitted":   {Success: true, Reason: "goal achieved"},
+			"task-admitted-2": {Success: true, Reason: "goal achieved"},
 		},
 	}
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config:         config.EvolutionConfig{Enabled: true, Mode: "draft", MinTaskCount: 1},
+		Config:         config.EvolutionConfig{Enabled: true, Mode: "draft", MinTaskCount: 2},
 		Store:          store,
 		SuccessJudge:   judge,
 		Organizer:      evolution.NewOrganizer(evolution.OrganizerOptions{MinCaseCount: 1, MinSuccessRate: 1}),
@@ -248,8 +262,9 @@ func TestRuntime_RunColdPathOnce_AdmitsOnlyRecordsApprovedBySuccessJudge(t *test
 		t.Fatalf("RunColdPathOnce: %v", runErr)
 	}
 
-	if len(judge.calls) != 2 || judge.calls[0] != "task-rejected" || judge.calls[1] != "task-admitted" {
-		t.Fatalf("judge calls = %v, want [task-rejected task-admitted]", judge.calls)
+	if len(judge.calls) != 3 || judge.calls[0] != "task-rejected" ||
+		judge.calls[1] != "task-admitted" || judge.calls[2] != "task-admitted-2" {
+		t.Fatalf("judge calls = %v, want [task-rejected task-admitted task-admitted-2]", judge.calls)
 	}
 
 	allRecords, err := store.LoadLearningRecords()
@@ -270,8 +285,9 @@ func TestRuntime_RunColdPathOnce_AdmitsOnlyRecordsApprovedBySuccessJudge(t *test
 	if !foundPattern {
 		t.Fatal("expected generated pattern record")
 	}
-	if len(pattern.TaskRecordIDs) != 1 || pattern.TaskRecordIDs[0] != "task-admitted" {
-		t.Fatalf("TaskRecordIDs = %v, want [task-admitted]", pattern.TaskRecordIDs)
+	if len(pattern.TaskRecordIDs) != 2 || pattern.TaskRecordIDs[0] != "task-admitted" ||
+		pattern.TaskRecordIDs[1] != "task-admitted-2" {
+		t.Fatalf("TaskRecordIDs = %v, want two verified tasks", pattern.TaskRecordIDs)
 	}
 	if pattern.Label == "" {
 		t.Fatal("pattern Label should not be empty")
@@ -335,7 +351,7 @@ func TestRuntime_RunColdPathOnce_RejectsClusterBelowMinSuccessRatio(t *testing.T
 	}
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config:         config.EvolutionConfig{Enabled: true, Mode: "draft", MinTaskCount: 1, MinSuccessRatio: 0.8},
+		Config:         config.EvolutionConfig{Enabled: true, Mode: "draft", MinTaskCount: 2, MinSuccessRatio: 0.8},
 		Store:          store,
 		SuccessJudge:   &stubSuccessJudge{},
 		SkillsRecaller: evolution.NewSkillsRecaller(root),
@@ -416,13 +432,13 @@ func TestRuntime_RunColdPathOnce_FallbackUsesJudgeAdjustedSuccessRatio(t *testin
 	clusterer := evolution.NewLLMPatternClusterer(
 		&llmClusterTestProvider{content: `not-json`, defaultModel: "test-model"},
 		"test-model",
-		evolution.NewHeuristicPatternClusterer(1, nil),
-		1,
+		evolution.NewHeuristicPatternClusterer(2, nil),
+		2,
 		func() time.Time { return time.Unix(1700000000, 0).UTC() },
 	)
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config:           config.EvolutionConfig{Enabled: true, Mode: "draft", MinTaskCount: 1, MinSuccessRatio: 0.8},
+		Config:           config.EvolutionConfig{Enabled: true, Mode: "draft", MinTaskCount: 2, MinSuccessRatio: 0.8},
 		Store:            store,
 		PatternClusterer: clusterer,
 		SuccessJudge:     judge,
@@ -490,6 +506,17 @@ func TestRuntime_RunColdPathOnce_FallbackMarksAcceptedFailureEvidenceClustered(t
 			Success:        &ok,
 			UsedSkillNames: []string{"weather"},
 		},
+		{
+			ID:             "task-success-2",
+			Kind:           evolution.RecordKindTask,
+			WorkspaceID:    root,
+			CreatedAt:      time.Unix(1700000300, 0).UTC(),
+			Summary:        "weather lookup 300",
+			FinalOutput:    "sunny again",
+			Status:         evolution.RecordStatus("new"),
+			Success:        &ok,
+			UsedSkillNames: []string{"weather"},
+		},
 	}
 	if err := store.AppendLearningRecords(records); err != nil {
 		t.Fatalf("AppendLearningRecords: %v", err)
@@ -499,18 +526,19 @@ func TestRuntime_RunColdPathOnce_FallbackMarksAcceptedFailureEvidenceClustered(t
 		decisions: map[string]evolution.TaskSuccessDecision{
 			"task-success":        {Success: true, Reason: "goal achieved"},
 			"task-judge-rejected": {Success: false, Reason: "partial result"},
+			"task-success-2":      {Success: true, Reason: "goal achieved"},
 		},
 	}
 	clusterer := evolution.NewLLMPatternClusterer(
 		&llmClusterTestProvider{content: `not-json`, defaultModel: "test-model"},
 		"test-model",
-		evolution.NewHeuristicPatternClusterer(1, nil),
-		1,
+		evolution.NewHeuristicPatternClusterer(2, nil),
+		2,
 		func() time.Time { return time.Unix(1700000000, 0).UTC() },
 	)
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config:           config.EvolutionConfig{Enabled: true, Mode: "draft", MinTaskCount: 1, MinSuccessRatio: 0.5},
+		Config:           config.EvolutionConfig{Enabled: true, Mode: "draft", MinTaskCount: 2, MinSuccessRatio: 0.5},
 		Store:            store,
 		PatternClusterer: clusterer,
 		SuccessJudge:     judge,
@@ -541,8 +569,8 @@ func TestRuntime_RunColdPathOnce_FallbackMarksAcceptedFailureEvidenceClustered(t
 	if len(patterns) != 1 {
 		t.Fatalf("len(patterns) = %d, want 1", len(patterns))
 	}
-	if got := strings.Join(patterns[0].TaskRecordIDs, ","); got != "task-success" {
-		t.Fatalf("pattern TaskRecordIDs = %v, want only successful task", patterns[0].TaskRecordIDs)
+	if got := strings.Join(patterns[0].TaskRecordIDs, ","); got != "task-success,task-success-2" {
+		t.Fatalf("pattern TaskRecordIDs = %v, want two successful tasks", patterns[0].TaskRecordIDs)
 	}
 	taskRecords, err := store.LoadTaskRecords()
 	if err != nil {
@@ -552,7 +580,7 @@ func TestRuntime_RunColdPathOnce_FallbackMarksAcceptedFailureEvidenceClustered(t
 	for _, record := range taskRecords {
 		statusByID[record.ID] = record.Status
 	}
-	for _, id := range []string{"task-success", "task-judge-rejected"} {
+	for _, id := range []string{"task-success", "task-judge-rejected", "task-success-2"} {
 		if statusByID[id] != evolution.RecordStatus("clustered") {
 			t.Fatalf("statusByID[%s] = %q, want clustered", id, statusByID[id])
 		}

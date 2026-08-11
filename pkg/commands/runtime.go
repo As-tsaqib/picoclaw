@@ -66,6 +66,9 @@ type Runtime struct {
 	StopActiveTurn     func() (StopResult, error)
 	MemoryStatus       func() string
 	MemoryList         func() (string, error)
+	MemorySearch       func(query string) (string, error)
+	MemoryEdit         func(id, content string) (string, error)
+	MemoryEntryAction  func(action, id string) (string, error)
 	MemoryForget       func(id string) (string, error)
 	MemoryPending      func() (string, error)
 	MemoryApprove      func(id string) (string, error)

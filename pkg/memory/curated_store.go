@@ -21,6 +21,8 @@ import (
 
 const curatedDocumentVersion = 1
 
+var curatedDocumentLocks sync.Map
+
 type CuratedStoreOptions struct {
 	WorkspaceCharLimit int
 	PerUserCharLimit   int
@@ -166,6 +168,11 @@ func (s *CuratedStore) ApplyBatch(
 		return CuratedBatchResult{}, scopeErr
 	}
 
+	unlockDocument, lockErr := lockCuratedDocument(path)
+	if lockErr != nil {
+		return CuratedBatchResult{}, lockErr
+	}
+	defer unlockDocument()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	doc, readErr := s.readDocument(path, digest)
@@ -173,10 +180,11 @@ func (s *CuratedStore) ApplyBatch(
 		return CuratedBatchResult{}, readErr
 	}
 	now := s.now().UTC()
-	prepared, prepareErr := s.prepareMutations(doc, mutations, caller, now)
+	prepared, prepareErr := s.prepareMutations(target, doc, mutations, caller, now)
 	if prepareErr != nil {
 		return CuratedBatchResult{}, prepareErr
 	}
+	conflicts := findCuratedConflicts(doc.Entries, prepared)
 
 	projected := cloneCuratedEntries(doc.Entries)
 	for _, pending := range doc.Pending {
@@ -209,7 +217,7 @@ func (s *CuratedStore) ApplyBatch(
 		if writeErr := s.writeDocument(path, doc); writeErr != nil {
 			return CuratedBatchResult{}, writeErr
 		}
-		return CuratedBatchResult{Pending: &pending}, nil
+		return CuratedBatchResult{Pending: &pending, Conflicts: conflicts}, nil
 	}
 
 	// Re-apply only the requested batch to the actual entries. Pending batches
@@ -230,23 +238,28 @@ func (s *CuratedStore) ApplyBatch(
 	if writeErr := s.writeDocument(path, doc); writeErr != nil {
 		return CuratedBatchResult{}, writeErr
 	}
-	return CuratedBatchResult{Applied: applied}, nil
+	return CuratedBatchResult{Applied: applied, Conflicts: conflicts}, nil
 }
 
 func (s *CuratedStore) prepareMutations(
+	target string,
 	doc curatedDocument,
 	mutations []CuratedMutation,
 	caller CallerScope,
 	now time.Time,
 ) ([]CuratedMutation, error) {
 	known := make(map[string]struct{}, len(doc.Entries)+len(mutations))
+	knownStatus := make(map[string]string, len(doc.Entries)+len(mutations))
 	for _, entry := range doc.Entries {
 		known[entry.ID] = struct{}{}
+		knownStatus[entry.ID] = entry.EffectiveStatus()
 	}
 	prepared := make([]CuratedMutation, 0, len(mutations))
 	for _, mutation := range mutations {
 		mutation.Action = strings.ToLower(strings.TrimSpace(mutation.Action))
 		mutation.ID = strings.TrimSpace(mutation.ID)
+		mutation.Type = strings.ToLower(strings.TrimSpace(mutation.Type))
+		mutation.Supersedes = strings.TrimSpace(mutation.Supersedes)
 		switch mutation.Action {
 		case CuratedActionAdd:
 			mutation.Content = strings.TrimSpace(mutation.Content)
@@ -266,7 +279,40 @@ func (s *CuratedStore) prepareMutations(
 			if _, exists := known[mutation.ID]; exists {
 				return nil, ErrCuratedDuplicate
 			}
+			if mutation.Type == "" {
+				mutation.Type = CuratedTypeOther
+			}
+			if !ValidCuratedType(mutation.Type) {
+				return nil, ErrCuratedInvalidType
+			}
+			if !curatedTypeAllowedForTarget(target, mutation.Type) {
+				return nil, ErrCuratedInvalidTarget
+			}
+			if err := validateCuratedTargetContent(target, mutation.Type, mutation.Content); err != nil {
+				return nil, err
+			}
+			if mutation.Confidence != nil && (*mutation.Confidence <= 0 || *mutation.Confidence > 1) {
+				return nil, ErrCuratedInvalidAction
+			}
+			if mutation.Supersedes != "" {
+				if !validStableEntryID(mutation.Supersedes) {
+					return nil, ErrCuratedInvalidAction
+				}
+				if _, exists := known[mutation.Supersedes]; !exists {
+					return nil, ErrCuratedEntryNotFound
+				}
+				if status := knownStatus[mutation.Supersedes]; status != CuratedStatusActive {
+					return nil, ErrCuratedInvalidAction
+				}
+			}
+			if mutation.ExpiresAt != nil && !mutation.ExpiresAt.After(now) {
+				return nil, ErrCuratedInvalidAction
+			}
 			known[mutation.ID] = struct{}{}
+			knownStatus[mutation.ID] = CuratedStatusActive
+			if mutation.Supersedes != "" {
+				knownStatus[mutation.Supersedes] = CuratedStatusSuperseded
+			}
 		case CuratedActionReplace:
 			if !validStableEntryID(mutation.ID) {
 				return nil, ErrCuratedInvalidAction
@@ -275,9 +321,62 @@ func (s *CuratedStore) prepareMutations(
 			if err := ValidateCuratedContent(mutation.Content); err != nil {
 				return nil, err
 			}
-		case CuratedActionRemove:
+			if mutation.Type != "" {
+				if !ValidCuratedType(mutation.Type) {
+					return nil, ErrCuratedInvalidType
+				}
+				if !curatedTypeAllowedForTarget(target, mutation.Type) {
+					return nil, ErrCuratedInvalidTarget
+				}
+			}
+			effectiveType := mutation.Type
+			if effectiveType == "" {
+				for _, entry := range doc.Entries {
+					if entry.ID == mutation.ID {
+						effectiveType = entry.EffectiveType()
+						break
+					}
+				}
+			}
+			if err := validateCuratedTargetContent(target, effectiveType, mutation.Content); err != nil {
+				return nil, err
+			}
+			if mutation.Confidence != nil && (*mutation.Confidence <= 0 || *mutation.Confidence > 1) {
+				return nil, ErrCuratedInvalidAction
+			}
+			if mutation.Supersedes != "" && mutation.Supersedes != mutation.ID {
+				if !validStableEntryID(mutation.Supersedes) {
+					return nil, ErrCuratedInvalidAction
+				}
+				if _, exists := known[mutation.Supersedes]; !exists {
+					return nil, ErrCuratedEntryNotFound
+				}
+			}
+		case CuratedActionRemove,
+			CuratedActionPin,
+			CuratedActionUnpin,
+			CuratedActionArchive,
+			CuratedActionRestore:
 			if !validStableEntryID(mutation.ID) {
 				return nil, ErrCuratedInvalidAction
+			}
+			status, exists := knownStatus[mutation.ID]
+			if !exists {
+				return nil, ErrCuratedEntryNotFound
+			}
+			if mutation.Action == CuratedActionPin && status != CuratedStatusActive {
+				return nil, ErrCuratedInvalidAction
+			}
+			if mutation.Action == CuratedActionRestore && status != CuratedStatusArchived {
+				return nil, ErrCuratedInvalidAction
+			}
+			switch mutation.Action {
+			case CuratedActionRemove:
+				delete(knownStatus, mutation.ID)
+			case CuratedActionArchive:
+				knownStatus[mutation.ID] = CuratedStatusArchived
+			case CuratedActionRestore:
+				knownStatus[mutation.ID] = CuratedStatusActive
 			}
 			mutation.Content = ""
 		default:
@@ -333,11 +432,27 @@ func applyCuratedMutations(
 				return nil, nil, ErrCuratedDuplicate
 			}
 			entry := CuratedEntry{
-				ID:         mutation.ID,
-				Content:    mutation.Content,
-				Provenance: mutation.Provenance,
-				CreatedAt:  now,
-				UpdatedAt:  now,
+				ID:             mutation.ID,
+				Content:        mutation.Content,
+				Type:           NormalizeCuratedType(mutation.Type),
+				Status:         CuratedStatusActive,
+				Confidence:     1,
+				Supersedes:     mutation.Supersedes,
+				Provenance:     mutation.Provenance,
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				LastVerifiedAt: mutation.LastVerifiedAt,
+				ExpiresAt:      mutation.ExpiresAt,
+			}
+			if mutation.Confidence != nil {
+				entry.Confidence = *mutation.Confidence
+			}
+			if entry.LastVerifiedAt == nil {
+				verified := now
+				entry.LastVerifiedAt = &verified
+			}
+			if mutation.Supersedes != "" {
+				markCuratedSuperseded(entries, mutation.Supersedes, now)
 			}
 			entries = append(entries, entry)
 			applied = append(applied, entry)
@@ -349,8 +464,28 @@ func applyCuratedMutations(
 				return nil, nil, ErrCuratedDuplicate
 			}
 			entries[idx].Content = mutation.Content
+			if mutation.Type != "" {
+				entries[idx].Type = NormalizeCuratedType(mutation.Type)
+			}
+			if mutation.Confidence != nil {
+				entries[idx].Confidence = *mutation.Confidence
+			}
+			if mutation.ExpiresAt != nil {
+				entries[idx].ExpiresAt = mutation.ExpiresAt
+			}
+			if mutation.LastVerifiedAt != nil {
+				entries[idx].LastVerifiedAt = mutation.LastVerifiedAt
+			} else {
+				verified := now
+				entries[idx].LastVerifiedAt = &verified
+			}
+			if mutation.Supersedes != "" && mutation.Supersedes != mutation.ID {
+				entries[idx].Supersedes = mutation.Supersedes
+				markCuratedSuperseded(entries, mutation.Supersedes, now)
+			}
 			entries[idx].Provenance = mutation.Provenance
 			entries[idx].UpdatedAt = now
+			entries[idx] = normalizedCuratedEntry(entries[idx])
 			applied = append(applied, entries[idx])
 		case CuratedActionRemove:
 			if idx < 0 {
@@ -359,6 +494,36 @@ func applyCuratedMutations(
 			removed := entries[idx]
 			entries = append(entries[:idx], entries[idx+1:]...)
 			applied = append(applied, removed)
+		case CuratedActionPin, CuratedActionUnpin:
+			if idx < 0 {
+				return nil, nil, ErrCuratedEntryNotFound
+			}
+			entries[idx].Pinned = mutation.Action == CuratedActionPin
+			entries[idx].UpdatedAt = now
+			entries[idx].Provenance = mutation.Provenance
+			entries[idx] = normalizedCuratedEntry(entries[idx])
+			applied = append(applied, entries[idx])
+		case CuratedActionArchive:
+			if idx < 0 {
+				return nil, nil, ErrCuratedEntryNotFound
+			}
+			entries[idx].Status = CuratedStatusArchived
+			archived := now
+			entries[idx].ArchivedAt = &archived
+			entries[idx].UpdatedAt = now
+			entries[idx].Provenance = mutation.Provenance
+			entries[idx] = normalizedCuratedEntry(entries[idx])
+			applied = append(applied, entries[idx])
+		case CuratedActionRestore:
+			if idx < 0 {
+				return nil, nil, ErrCuratedEntryNotFound
+			}
+			entries[idx].Status = CuratedStatusActive
+			entries[idx].ArchivedAt = nil
+			entries[idx].UpdatedAt = now
+			entries[idx].Provenance = mutation.Provenance
+			entries[idx] = normalizedCuratedEntry(entries[idx])
+			applied = append(applied, entries[idx])
 		default:
 			return nil, nil, ErrCuratedInvalidAction
 		}
@@ -388,6 +553,11 @@ func (s *CuratedStore) List(target string, caller CallerScope) ([]CuratedEntry, 
 	if err != nil {
 		return nil, err
 	}
+	unlockDocument, lockErr := lockCuratedDocument(path)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer unlockDocument()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	doc, err := s.readDocument(path, digest)
@@ -395,10 +565,32 @@ func (s *CuratedStore) List(target string, caller CallerScope) ([]CuratedEntry, 
 		return nil, err
 	}
 	entries := cloneCuratedEntries(doc.Entries)
+	for i := range entries {
+		entries[i] = normalizedCuratedEntry(entries[i])
+	}
 	sort.SliceStable(entries, func(i, j int) bool {
-		return entries[i].UpdatedAt.After(entries[j].UpdatedAt)
+		if !entries[i].UpdatedAt.Equal(entries[j].UpdatedAt) {
+			return entries[i].UpdatedAt.After(entries[j].UpdatedAt)
+		}
+		return entries[i].ID < entries[j].ID
 	})
 	return entries, nil
+}
+
+func (s *CuratedStore) Inspect(target string, caller CallerScope, id string) (CuratedEntry, error) {
+	if !validStableEntryID(strings.TrimSpace(id)) {
+		return CuratedEntry{}, ErrCuratedInvalidAction
+	}
+	entries, err := s.List(target, caller)
+	if err != nil {
+		return CuratedEntry{}, err
+	}
+	for _, entry := range entries {
+		if entry.ID == id {
+			return entry, nil
+		}
+	}
+	return CuratedEntry{}, ErrCuratedEntryNotFound
 }
 
 func (s *CuratedStore) Search(target string, caller CallerScope, query string, limit int) ([]CuratedEntry, error) {
@@ -449,6 +641,11 @@ func (s *CuratedStore) Pending(target string, caller CallerScope) ([]PendingCura
 	if err != nil {
 		return nil, err
 	}
+	unlockDocument, lockErr := lockCuratedDocument(path)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer unlockDocument()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	doc, err := s.readDocument(path, digest)
@@ -477,9 +674,14 @@ func (s *CuratedStore) resolvePending(
 		return nil, err
 	}
 	id = strings.TrimSpace(id)
-	if id == "" {
+	if id != "all" && !validStablePendingID(id) {
 		return nil, ErrCuratedInvalidPending
 	}
+	unlockDocument, lockErr := lockCuratedDocument(path)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer unlockDocument()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	doc, err := s.readDocument(path, digest)
@@ -526,6 +728,11 @@ func (s *CuratedStore) Stats(target string, caller CallerScope) (CuratedStats, e
 	if err != nil {
 		return CuratedStats{}, err
 	}
+	unlockDocument, lockErr := lockCuratedDocument(path)
+	if lockErr != nil {
+		return CuratedStats{}, lockErr
+	}
+	defer unlockDocument()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	doc, err := s.readDocument(path, digest)
@@ -539,6 +746,114 @@ func (s *CuratedStore) Stats(target string, caller CallerScope) (CuratedStats, e
 		Capacity:     limit,
 		PendingCount: len(doc.Pending),
 	}, nil
+}
+
+// MarkUsed commits retrieval usage after authoritative delivery. Prompt
+// assembly only stages IDs in memory and never calls this method directly.
+func (s *CuratedStore) MarkUsed(
+	target string,
+	caller CallerScope,
+	ids []string,
+	usedAt time.Time,
+) error {
+	path, digest, _, err := s.scopePath(target, caller)
+	if err != nil {
+		return err
+	}
+	targetIDs := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if !validStableEntryID(id) {
+			return ErrCuratedInvalidAction
+		}
+		targetIDs[id] = struct{}{}
+	}
+	if len(targetIDs) == 0 {
+		return nil
+	}
+	if usedAt.IsZero() {
+		usedAt = s.now()
+	}
+	usedAt = usedAt.UTC()
+
+	unlockDocument, lockErr := lockCuratedDocument(path)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer unlockDocument()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc, err := s.readDocument(path, digest)
+	if err != nil {
+		return err
+	}
+	found := 0
+	for i := range doc.Entries {
+		if _, ok := targetIDs[doc.Entries[i].ID]; !ok {
+			continue
+		}
+		value := usedAt
+		doc.Entries[i].LastUsedAt = &value
+		found++
+	}
+	if found == 0 {
+		return nil
+	}
+	return s.writeDocument(path, doc)
+}
+
+func (s *CuratedStore) Maintain(
+	target string,
+	caller CallerScope,
+	autoArchiveExpired bool,
+	archivedRetention time.Duration,
+	now time.Time,
+) error {
+	path, digest, _, err := s.scopePath(target, caller)
+	if err != nil {
+		return err
+	}
+	if now.IsZero() {
+		now = s.now()
+	}
+	now = now.UTC()
+	unlockDocument, lockErr := lockCuratedDocument(path)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer unlockDocument()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc, err := s.readDocument(path, digest)
+	if err != nil {
+		return err
+	}
+	changed := false
+	out := make([]CuratedEntry, 0, len(doc.Entries))
+	for _, entry := range doc.Entries {
+		status := entry.EffectiveStatus()
+		if autoArchiveExpired && status == CuratedStatusActive &&
+			entry.ExpiresAt != nil && !now.Before(entry.ExpiresAt.UTC()) {
+			entry.Status = CuratedStatusArchived
+			entry.Pinned = false
+			archived := now
+			entry.ArchivedAt = &archived
+			entry.UpdatedAt = now
+			status = CuratedStatusArchived
+			changed = true
+		}
+		if archivedRetention > 0 && status == CuratedStatusArchived && entry.ArchivedAt != nil &&
+			now.Sub(entry.ArchivedAt.UTC()) > archivedRetention {
+			changed = true
+			continue
+		}
+		out = append(out, entry)
+	}
+	if !changed {
+		return nil
+	}
+	doc.Entries = out
+	return s.writeDocument(path, doc)
 }
 
 func (s *CuratedStore) newStableID(prefix string, known map[string]struct{}) (string, error) {
@@ -563,6 +878,26 @@ func validStableEntryID(id string) bool {
 	return err == nil
 }
 
+func validStablePendingID(id string) bool {
+	if !strings.HasPrefix(id, "pm_") || len(id) != len("pm_")+16 {
+		return false
+	}
+	_, err := hex.DecodeString(strings.TrimPrefix(id, "pm_"))
+	return err == nil
+}
+
+// ValidCuratedEntryID reports whether value has the stable identifier shape
+// used for curated entries. It performs syntax validation only.
+func ValidCuratedEntryID(value string) bool {
+	return validStableEntryID(strings.TrimSpace(value))
+}
+
+// ValidPendingCuratedID reports whether value has the stable identifier shape
+// used for staged curated-memory batches. It performs syntax validation only.
+func ValidPendingCuratedID(value string) bool {
+	return validStablePendingID(strings.TrimSpace(value))
+}
+
 func duplicateCuratedContent(entries []CuratedEntry, content, exceptID string) bool {
 	normalized := normalizeCuratedContent(content)
 	for _, entry := range entries {
@@ -571,6 +906,75 @@ func duplicateCuratedContent(entries []CuratedEntry, content, exceptID string) b
 		}
 	}
 	return false
+}
+
+func markCuratedSuperseded(entries []CuratedEntry, id string, now time.Time) {
+	for i := range entries {
+		if entries[i].ID != id {
+			continue
+		}
+		entries[i].Status = CuratedStatusSuperseded
+		entries[i].Pinned = false
+		entries[i].UpdatedAt = now
+		return
+	}
+}
+
+func findCuratedConflicts(entries []CuratedEntry, mutations []CuratedMutation) []CuratedConflict {
+	conflicts := make([]CuratedConflict, 0, 4)
+	for mutationIndex, mutation := range mutations {
+		if mutation.Action != CuratedActionAdd && mutation.Action != CuratedActionReplace {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.ID == mutation.ID || entry.ID == mutation.Supersedes ||
+				entry.EffectiveStatus() != CuratedStatusActive {
+				continue
+			}
+			similarity := curatedContentSimilarity(mutation.Content, entry.Content)
+			if similarity < 0.72 {
+				continue
+			}
+			conflicts = append(conflicts, CuratedConflict{
+				MutationIndex: mutationIndex,
+				EntryID:       entry.ID,
+				Similarity:    mathRound(similarity, 3),
+				Reason:        "likely near-duplicate or conflicting active entry",
+			})
+			if len(conflicts) >= 8 {
+				return conflicts
+			}
+		}
+	}
+	return conflicts
+}
+
+func curatedContentSimilarity(left, right string) float64 {
+	leftTokens := lexicalTokenCounts(left)
+	rightTokens := lexicalTokenCounts(right)
+	if len(leftTokens) == 0 || len(rightTokens) == 0 {
+		return trigramSimilarity(left, right)
+	}
+	intersection := 0
+	union := len(leftTokens)
+	for token := range rightTokens {
+		if _, ok := leftTokens[token]; ok {
+			intersection++
+			continue
+		}
+		union++
+	}
+	jaccard := float64(intersection) / float64(union)
+	fuzzy := trigramSimilarity(left, right)
+	return (jaccard * 0.65) + (fuzzy * 0.35)
+}
+
+func mathRound(value float64, places int) float64 {
+	factor := 1.0
+	for range places {
+		factor *= 10
+	}
+	return float64(int(value*factor+0.5)) / factor
 }
 
 func curatedCharacters(entries []CuratedEntry) int {
@@ -594,6 +998,39 @@ func clonePendingChanges(changes []PendingCuratedChange) []PendingCuratedChange 
 		out[i].Mutations = append([]CuratedMutation(nil), changes[i].Mutations...)
 	}
 	return out
+}
+
+// lockCuratedDocument serializes read-modify-write transactions across store
+// instances in the same process. This matters when the gateway and
+// authenticated dashboard open the same structured store independently.
+func lockCuratedDocument(path string) (func(), error) {
+	for {
+		actual, _ := curatedDocumentLocks.LoadOrStore(path, &sync.Mutex{})
+		mu, ok := actual.(*sync.Mutex)
+		if !ok || mu == nil {
+			curatedDocumentLocks.CompareAndSwap(path, actual, &sync.Mutex{})
+			continue
+		}
+		mu.Lock()
+		fileUnlock, err := fileutil.LockFile(curatedDocumentLockPath(path))
+		if err != nil {
+			mu.Unlock()
+			return nil, fmt.Errorf("lock curated memory: %w", err)
+		}
+		return func() {
+			_ = fileUnlock()
+			mu.Unlock()
+		}, nil
+	}
+}
+
+func curatedDocumentLockPath(path string) string {
+	root := filepath.Dir(path)
+	if filepath.Base(root) == "users" {
+		root = filepath.Dir(root)
+	}
+	digest := sha256.Sum256([]byte(filepath.Clean(path)))
+	return filepath.Join(root, ".locks", "document_"+hex.EncodeToString(digest[:16]))
 }
 
 func pendingIDs(changes []PendingCuratedChange) map[string]struct{} {

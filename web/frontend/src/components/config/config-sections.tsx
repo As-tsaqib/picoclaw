@@ -6,9 +6,13 @@ import { useTranslation } from "react-i18next"
 import {
   type CoreConfigForm,
   DM_SCOPE_OPTIONS,
+  type EvolutionApplyPolicy,
+  type EvolutionColdPathTrigger,
+  type EvolutionMode,
   type LauncherForm,
   type MCPServerForm,
   type MCPServerType,
+  type MemoryApprovalMode,
   type MemoryNotificationMode,
   type MemoryRecallMode,
   type MemoryReviewModelOption,
@@ -242,14 +246,44 @@ export function MemoryRecallSection({
         />
       </Field>
 
+      <Field
+        label="Memory approval mode"
+        hint="Stage background-only changes or require approval for every model-initiated write. Legacy write_approval maps to background_only."
+        layout="setting-row"
+      >
+        <Select
+          value={form.memoryApprovalMode}
+          onValueChange={(value) => {
+            const mode = value as MemoryApprovalMode
+            onFieldChange("memoryApprovalMode", mode)
+            onFieldChange("memoryWriteApproval", mode !== "off")
+          }}
+        >
+          <SelectTrigger className="h-9 w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="off">off</SelectItem>
+            <SelectItem value="background_only">background_only</SelectItem>
+            <SelectItem value="all_writes">all_writes</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+
       <SwitchCardField
         label={t("pages.config.memory_write_approval")}
-        hint={t("pages.config.memory_write_approval_hint")}
+        hint="Compatibility control: enabled maps to background_only unless all_writes is already selected."
         layout="setting-row"
-        checked={form.memoryWriteApproval}
-        onCheckedChange={(checked) =>
+        checked={form.memoryApprovalMode !== "off"}
+        onCheckedChange={(checked) => {
+          const mode = checked
+            ? form.memoryApprovalMode === "all_writes"
+              ? "all_writes"
+              : "background_only"
+            : "off"
           onFieldChange("memoryWriteApproval", checked)
-        }
+          onFieldChange("memoryApprovalMode", mode)
+        }}
       />
 
       <Field
@@ -306,6 +340,188 @@ export function MemoryRecallSection({
           }
         />
       </Field>
+
+      <SwitchCardField
+        label="Query-aware memory retrieval"
+        hint="Select only pinned and query-relevant active entries instead of injecting the whole store."
+        layout="setting-row"
+        checked={form.memoryRetrievalEnabled}
+        onCheckedChange={(checked) =>
+          onFieldChange("memoryRetrievalEnabled", checked)
+        }
+      />
+
+      <Field
+        label="Retrieval engine"
+        hint="Lightweight local lexical scoring; embeddings are not required."
+        layout="setting-row"
+      >
+        <Select value={form.memoryRetrievalEngine} disabled>
+          <SelectTrigger className="h-9 w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="hybrid_lexical">hybrid_lexical</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+
+      <Field label="Maximum workspace memory results" layout="setting-row">
+        <Input
+          type="number"
+          min={1}
+          max={50}
+          value={form.memoryRetrievalMaxWorkspaceResults}
+          onChange={(event) =>
+            onFieldChange(
+              "memoryRetrievalMaxWorkspaceResults",
+              event.target.value,
+            )
+          }
+        />
+      </Field>
+
+      <Field label="Maximum current-user memory results" layout="setting-row">
+        <Input
+          type="number"
+          min={1}
+          max={50}
+          value={form.memoryRetrievalMaxUserResults}
+          onChange={(event) =>
+            onFieldChange("memoryRetrievalMaxUserResults", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field label="Maximum retrieved memory characters" layout="setting-row">
+        <Input
+          type="number"
+          min={1}
+          max={20000}
+          value={form.memoryRetrievalMaxTotalChars}
+          onChange={(event) =>
+            onFieldChange("memoryRetrievalMaxTotalChars", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field label="Pinned memory character budget" layout="setting-row">
+        <Input
+          type="number"
+          min={1}
+          max={10000}
+          value={form.memoryRetrievalPinnedCharBudget}
+          onChange={(event) =>
+            onFieldChange(
+              "memoryRetrievalPinnedCharBudget",
+              event.target.value,
+            )
+          }
+        />
+      </Field>
+
+      <Field label="Minimum relevance score" layout="setting-row">
+        <Input
+          type="number"
+          min={0}
+          max={10}
+          step="0.05"
+          value={form.memoryRetrievalMinimumScore}
+          onChange={(event) =>
+            onFieldChange("memoryRetrievalMinimumScore", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field label="Recency weight" layout="setting-row">
+        <Input
+          type="number"
+          min={0}
+          max={5}
+          step="0.05"
+          value={form.memoryRetrievalRecencyWeight}
+          onChange={(event) =>
+            onFieldChange("memoryRetrievalRecencyWeight", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field label="Recency half-life (days)" layout="setting-row">
+        <Input
+          type="number"
+          min={1}
+          max={3650}
+          value={form.memoryRetrievalRecencyHalfLifeDays}
+          onChange={(event) =>
+            onFieldChange(
+              "memoryRetrievalRecencyHalfLifeDays",
+              event.target.value,
+            )
+          }
+        />
+      </Field>
+
+      <Field label="Fuzzy/trigram weight" layout="setting-row">
+        <Input
+          type="number"
+          min={0}
+          max={5}
+          step="0.05"
+          value={form.memoryRetrievalFuzzyWeight}
+          onChange={(event) =>
+            onFieldChange("memoryRetrievalFuzzyWeight", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field label="Recent fallback count" layout="setting-row">
+        <Input
+          type="number"
+          min={0}
+          max={50}
+          value={form.memoryRetrievalRecentFallbackCount}
+          onChange={(event) =>
+            onFieldChange(
+              "memoryRetrievalRecentFallbackCount",
+              event.target.value,
+            )
+          }
+        />
+      </Field>
+
+      <Field label="Archived memory retention (days)" layout="setting-row">
+        <Input
+          type="number"
+          min={1}
+          max={3650}
+          value={form.memoryArchivedRetentionDays}
+          onChange={(event) =>
+            onFieldChange("memoryArchivedRetentionDays", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field label="Stale memory threshold (days)" layout="setting-row">
+        <Input
+          type="number"
+          min={1}
+          max={3650}
+          value={form.memoryStaleThresholdDays}
+          onChange={(event) =>
+            onFieldChange("memoryStaleThresholdDays", event.target.value)
+          }
+        />
+      </Field>
+
+      <SwitchCardField
+        label="Automatically archive expired entries"
+        hint="Expired entries are always excluded from prompts; this optionally archives them during maintenance."
+        layout="setting-row"
+        checked={form.memoryAutoArchiveExpired}
+        onCheckedChange={(checked) =>
+          onFieldChange("memoryAutoArchiveExpired", checked)
+        }
+      />
 
       <Field
         label={t("pages.config.memory_recall_mode")}
@@ -796,6 +1012,17 @@ export function EvolutionSection({
         }
       />
 
+      {form.evolutionEnabled && (
+        <div className="my-3 flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+          <IconAlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-amber-950 dark:text-amber-100">
+            Pattern review and draft generation can consume additional model
+            tokens/API calls. Evolution remains isolated from private user
+            memory.
+          </p>
+        </div>
+      )}
+
       <Field
         label={t("pages.config.evolution_mode")}
         hint={t("pages.config.evolution_mode_hint")}
@@ -803,7 +1030,9 @@ export function EvolutionSection({
       >
         <Select
           value={form.evolutionMode}
-          onValueChange={(value) => onFieldChange("evolutionMode", value)}
+          onValueChange={(value) =>
+            onFieldChange("evolutionMode", value as EvolutionMode)
+          }
         >
           <SelectTrigger aria-label={t("pages.config.evolution_mode")}>
             <SelectValue />
@@ -821,6 +1050,53 @@ export function EvolutionSection({
           </SelectContent>
         </Select>
       </Field>
+
+      <Field
+        label="Apply policy"
+        hint="Approval-required is the safe default. Automatic may apply a locally reviewed draft without an administrator decision."
+        layout="setting-row"
+      >
+        <Select
+          value={form.evolutionApplyPolicy}
+          onValueChange={(value) =>
+            onFieldChange(
+              "evolutionApplyPolicy",
+              value as EvolutionApplyPolicy,
+            )
+          }
+        >
+          <SelectTrigger aria-label="Evolution apply policy">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="approval_required">
+              approval_required
+            </SelectItem>
+            <SelectItem value="automatic">automatic</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+
+      {form.evolutionMode === "apply" &&
+        form.evolutionApplyPolicy === "automatic" && (
+          <div className="my-3 flex gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm">
+            <IconAlertTriangle className="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400" />
+            <p className="text-red-950 dark:text-red-100">
+              Automatic apply can change reusable skills without a separate
+              approval. Prefer approval_required and review the diff first.
+            </p>
+          </div>
+        )}
+
+      <SwitchCardField
+        label="Private-data scrubbing"
+        hint="Required while evolution is enabled. Personal identifiers and credentials are removed before procedural evidence is stored."
+        layout="setting-row"
+        checked={form.evolutionPrivateDataScrubbing}
+        onCheckedChange={(checked) =>
+          onFieldChange("evolutionPrivateDataScrubbing", checked)
+        }
+      />
 
       <Field
         label={t("pages.config.evolution_state_dir")}
@@ -841,10 +1117,59 @@ export function EvolutionSection({
       >
         <Input
           type="number"
-          min={1}
+          min={2}
+          max={500}
           value={form.evolutionMinTaskCount}
           onChange={(e) =>
             onFieldChange("evolutionMinTaskCount", e.target.value)
+          }
+        />
+      </Field>
+
+      <Field label="Draft timeout (seconds)" layout="setting-row">
+        <Input
+          type="number"
+          min={1}
+          max={300}
+          value={form.evolutionDraftTimeoutSeconds}
+          onChange={(event) =>
+            onFieldChange("evolutionDraftTimeoutSeconds", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field label="Maximum evidence records" layout="setting-row">
+        <Input
+          type="number"
+          min={2}
+          max={500}
+          value={form.evolutionMaxEvidenceRecords}
+          onChange={(event) =>
+            onFieldChange("evolutionMaxEvidenceRecords", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field label="Maximum draft characters" layout="setting-row">
+        <Input
+          type="number"
+          min={1}
+          max={50000}
+          value={form.evolutionMaxDraftChars}
+          onChange={(event) =>
+            onFieldChange("evolutionMaxDraftChars", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field label="Rollback version retention" layout="setting-row">
+        <Input
+          type="number"
+          min={1}
+          max={100}
+          value={form.evolutionRollbackRetention}
+          onChange={(event) =>
+            onFieldChange("evolutionRollbackRetention", event.target.value)
           }
         />
       </Field>
@@ -874,7 +1199,10 @@ export function EvolutionSection({
         <Select
           value={form.evolutionColdPathTrigger}
           onValueChange={(value) =>
-            onFieldChange("evolutionColdPathTrigger", value)
+            onFieldChange(
+              "evolutionColdPathTrigger",
+              value as EvolutionColdPathTrigger,
+            )
           }
         >
           <SelectTrigger

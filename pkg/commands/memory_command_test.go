@@ -7,8 +7,15 @@ import (
 
 func TestMemoryAndCheckpointCommandsDispatchRuntimeControls(t *testing.T) {
 	runtime := &Runtime{
-		MemoryStatus:     func() string { return "memory status" },
-		MemoryList:       func() (string, error) { return "memory list", nil },
+		MemoryStatus: func() string { return "memory status" },
+		MemoryList:   func() (string, error) { return "memory list", nil },
+		MemorySearch: func(query string) (string, error) { return "searched " + query, nil },
+		MemoryEdit: func(id, content string) (string, error) {
+			return "edited " + id + " to " + content, nil
+		},
+		MemoryEntryAction: func(action, id string) (string, error) {
+			return action + " " + id, nil
+		},
 		MemoryForget:     func(id string) (string, error) { return "forgot " + id, nil },
 		MemoryPending:    func() (string, error) { return "pending", nil },
 		MemoryApprove:    func(id string) (string, error) { return "approved " + id, nil },
@@ -25,6 +32,12 @@ func TestMemoryAndCheckpointCommandsDispatchRuntimeControls(t *testing.T) {
 	}{
 		{"/memory status", "memory status"},
 		{"/memory list", "memory list"},
+		{"/memory search Go workflow", "searched Go workflow"},
+		{"/memory edit mem_0000000000000000 concise replies", "edited mem_0000000000000000 to concise replies"},
+		{"/memory pin mem_0000000000000000", "pin mem_0000000000000000"},
+		{"/memory unpin mem_0000000000000000", "unpin mem_0000000000000000"},
+		{"/memory archive mem_0000000000000000", "archive mem_0000000000000000"},
+		{"/memory restore mem_0000000000000000", "restore mem_0000000000000000"},
 		{"/memory forget mem_0000000000000000", "forgot mem_0000000000000000"},
 		{"/memory pending", "pending"},
 		{"/memory approve all", "approved all"},

@@ -91,3 +91,10 @@ func structuredMemoryRoot(workspace, agentID string) string {
 	name := "agent_" + hex.EncodeToString(digest[:8])
 	return filepath.Join(workspace, "memory", "structured", name)
 }
+
+// StructuredMemoryRoot returns the backend-owned structured state root for a
+// trusted workspace and agent ID. Dashboard code uses this only with values
+// loaded from the authenticated local configuration, never request input.
+func StructuredMemoryRoot(workspace, agentID string) string {
+	return structuredMemoryRoot(workspace, agentID)
+}

@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/sipeed/picoclaw/pkg/skills"
 )
 
 type LifecycleRunSummary struct {
@@ -52,7 +50,7 @@ func ApplyLifecycleState(paths Paths, profile SkillProfile, next SkillStatus) er
 	if workspace == "" {
 		return fmt.Errorf("resolve lifecycle delete workspace for skill %q: workspace is required", profile.SkillName)
 	}
-	if err := skills.ValidateSkillName(profile.SkillName); err != nil {
+	if err := validateEvolutionSkillTarget(profile.SkillName); err != nil {
 		return fmt.Errorf("resolve lifecycle delete skill name: %w", err)
 	}
 

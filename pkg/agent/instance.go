@@ -225,7 +225,11 @@ func NewAgentInstance(
 		cfg.Memory,
 	)
 	if curatedMemory != nil {
-		toolsRegistry.Register(tools.NewMemoryManageTool(curatedMemory, cfg.Memory.WriteApproval, nil))
+		toolsRegistry.Register(tools.NewMemoryManageToolWithApprovalMode(
+			curatedMemory,
+			cfg.Memory.EffectiveApprovalMode(),
+			nil,
+		))
 	}
 	if checkpoints != nil {
 		toolsRegistry.Register(tools.NewTaskCheckpointTool(checkpoints))

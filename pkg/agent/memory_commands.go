@@ -31,7 +31,8 @@ func configureMemoryCommandRuntime(
 					rt.Config.Memory.BackgroundReview.Enabled,
 					rt.Config.Memory.BackgroundReview.EffectiveInterval(),
 				),
-				fmt.Sprintf("Write approval: %t", rt.Config.Memory.WriteApproval),
+				fmt.Sprintf("Approval mode: %s", rt.Config.Memory.EffectiveApprovalMode()),
+				fmt.Sprintf("Query-aware retrieval: %t (%s)", rt.Config.Memory.Retrieval.Enabled, rt.Config.Memory.Retrieval.EffectiveEngine()),
 				fmt.Sprintf("Notifications: %s", rt.Config.Memory.EffectiveNotificationMode()),
 			}
 			if workspaceErr == nil {
@@ -54,18 +55,67 @@ func configureMemoryCommandRuntime(
 			if err != nil {
 				return "", err
 			}
-			user, userErr := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
-			if userErr != nil && !errors.Is(userErr, memory.ErrUserScopeUnavailable) {
-				return "", userErr
-			}
 			if caller.GroupID != "" {
 				return formatMemoryEntries(workspace, nil) +
 					"\nCurrent-user memory is hidden in shared chats; use a direct chat to list it.", nil
 			}
+			user, userErr := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
+			if userErr != nil && !errors.Is(userErr, memory.ErrUserScopeUnavailable) {
+				return "", userErr
+			}
 			return formatMemoryEntries(workspace, user), nil
 		}
+		rt.MemorySearch = func(query string) (string, error) {
+			workspace, err := agent.CuratedMemory.Search(memory.CuratedTargetWorkspace, caller, query, 20)
+			if err != nil {
+				return "", err
+			}
+			if caller.GroupID != "" {
+				return formatMemoryEntries(workspace, nil) +
+					"\nCurrent-user memory search is available only in a direct chat.", nil
+			}
+			user, userErr := agent.CuratedMemory.Search(memory.CuratedTargetCurrentUser, caller, query, 20)
+			if userErr != nil && !errors.Is(userErr, memory.ErrUserScopeUnavailable) {
+				return "", userErr
+			}
+			return formatMemoryEntries(workspace, user), nil
+		}
+		rt.MemoryEdit = func(id, content string) (string, error) {
+			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, caller.GroupID == "")
+			if err != nil {
+				return "", err
+			}
+			_, err = agent.CuratedMemory.ApplyBatch(target, caller, []memory.CuratedMutation{{
+				Action: memory.CuratedActionReplace, ID: id, Content: content,
+				Provenance: memory.Provenance{Source: "user_command"},
+			}}, false)
+			if err != nil {
+				return "", err
+			}
+			return "Updated memory entry " + id + ".", nil
+		}
+		rt.MemoryEntryAction = func(action, id string) (string, error) {
+			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, caller.GroupID == "")
+			if err != nil {
+				return "", err
+			}
+			action = strings.ToLower(strings.TrimSpace(action))
+			switch action {
+			case memory.CuratedActionPin, memory.CuratedActionUnpin,
+				memory.CuratedActionArchive, memory.CuratedActionRestore:
+			default:
+				return "", memory.ErrCuratedInvalidAction
+			}
+			_, err = agent.CuratedMemory.ApplyBatch(target, caller, []memory.CuratedMutation{{
+				Action: action, ID: id, Provenance: memory.Provenance{Source: "user_command"},
+			}}, false)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Memory entry %s: %s.", id, action), nil
+		}
 		rt.MemoryForget = func(id string) (string, error) {
-			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id)
+			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, caller.GroupID == "")
 			if err != nil {
 				return "", err
 			}
@@ -178,6 +228,8 @@ func formatMemoryStats(stats memory.CuratedStats) string {
 
 func formatMemoryEntries(workspace, user []memory.CuratedEntry) string {
 	var lines []string
+	remainingChars := 6_000
+	remainingEntries := 100
 	appendEntries := func(title string, entries []memory.CuratedEntry) {
 		lines = append(lines, title)
 		if len(entries) == 0 {
@@ -185,22 +237,62 @@ func formatMemoryEntries(workspace, user []memory.CuratedEntry) string {
 			return
 		}
 		for _, entry := range entries {
+			if remainingEntries <= 0 || remainingChars <= 0 {
+				lines = append(lines, "- … additional entries omitted")
+				return
+			}
+			content := memory.RedactMemoryText(entry.Content)
+			content = truncateMemoryCommandText(content, remainingChars)
+			remainingChars -= len([]rune(content))
+			remainingEntries--
 			lines = append(
 				lines,
-				fmt.Sprintf("- `%s` — %s", entry.ID, memory.RedactMemoryText(entry.Content)),
+				fmt.Sprintf(
+					"- `%s` [%s/%s%s] — %s",
+					entry.ID,
+					entry.EffectiveType(),
+					entry.EffectiveStatus(),
+					map[bool]string{true: ", pinned"}[entry.Pinned],
+					content,
+				),
 			)
 		}
 	}
 	appendEntries("Workspace memory:", workspace)
-	appendEntries("Current-user memory:", user)
+	if user != nil {
+		appendEntries("Current-user memory:", user)
+	}
 	return strings.Join(lines, "\n")
 }
 
-func findMemoryEntryTarget(store *memory.CuratedStore, caller memory.CallerScope, id string) (string, error) {
-	if entries, err := store.List(memory.CuratedTargetCurrentUser, caller); err == nil {
-		for _, entry := range entries {
-			if entry.ID == id {
-				return memory.CuratedTargetCurrentUser, nil
+func truncateMemoryCommandText(value string, maximum int) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if maximum <= 0 {
+		return ""
+	}
+	if len(runes) <= maximum {
+		return value
+	}
+	if maximum == 1 {
+		return "…"
+	}
+	return string(runes[:maximum-1]) + "…"
+}
+
+func findMemoryEntryTarget(
+	store *memory.CuratedStore,
+	caller memory.CallerScope,
+	id string,
+	includeCurrentUser bool,
+) (string, error) {
+	if includeCurrentUser {
+		entries, err := store.List(memory.CuratedTargetCurrentUser, caller)
+		if err == nil {
+			for _, entry := range entries {
+				if entry.ID == id {
+					return memory.CuratedTargetCurrentUser, nil
+				}
 			}
 		}
 	}

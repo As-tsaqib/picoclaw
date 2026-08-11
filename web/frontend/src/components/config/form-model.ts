@@ -34,12 +34,18 @@ export interface CoreConfigForm {
   mcpDiscoveryUseRegex: boolean
   mcpServers: MCPServerForm[]
   evolutionEnabled: boolean
-  evolutionMode: string
+  evolutionMode: EvolutionMode
   evolutionStateDir: string
   evolutionMinTaskCount: string
   evolutionMinSuccessRatio: string
-  evolutionColdPathTrigger: string
+  evolutionColdPathTrigger: EvolutionColdPathTrigger
   evolutionColdPathTimesText: string
+  evolutionApplyPolicy: EvolutionApplyPolicy
+  evolutionPrivateDataScrubbing: boolean
+  evolutionDraftTimeoutSeconds: string
+  evolutionMaxEvidenceRecords: string
+  evolutionMaxDraftChars: string
+  evolutionRollbackRetention: string
   memoryEnabled: boolean
   memoryBackgroundReviewEnabled: boolean
   memoryReviewInterval: string
@@ -48,6 +54,7 @@ export interface CoreConfigForm {
   memoryReviewTimeoutSeconds: string
   memoryReviewMaxIterations: string
   memoryWriteApproval: boolean
+  memoryApprovalMode: MemoryApprovalMode
   memoryNotifications: MemoryNotificationMode
   memoryWorkspaceCharLimit: string
   memoryPerUserCharLimit: string
@@ -58,6 +65,20 @@ export interface CoreConfigForm {
   memoryCheckpointMaxCount: string
   memoryCheckpointMaxContextChars: string
   memoryCheckpointCompletedRetentionDays: string
+  memoryRetrievalEnabled: boolean
+  memoryRetrievalEngine: MemoryRetrievalEngine
+  memoryRetrievalMaxWorkspaceResults: string
+  memoryRetrievalMaxUserResults: string
+  memoryRetrievalMaxTotalChars: string
+  memoryRetrievalPinnedCharBudget: string
+  memoryRetrievalMinimumScore: string
+  memoryRetrievalRecencyWeight: string
+  memoryRetrievalRecencyHalfLifeDays: string
+  memoryRetrievalFuzzyWeight: string
+  memoryRetrievalRecentFallbackCount: string
+  memoryArchivedRetentionDays: string
+  memoryStaleThresholdDays: string
+  memoryAutoArchiveExpired: boolean
 }
 
 export type MCPServerType = "http" | "sse" | "stdio"
@@ -67,6 +88,11 @@ export type TurnProfileMode = "default" | "off" | "custom"
 export type MemoryNotificationMode = "off" | "on" | "verbose"
 
 export type MemoryRecallMode = "isolated" | "user_recall" | "group_recall"
+export type MemoryApprovalMode = "off" | "background_only" | "all_writes"
+export type MemoryRetrievalEngine = "hybrid_lexical"
+export type EvolutionMode = "observe" | "draft" | "apply"
+export type EvolutionColdPathTrigger = "after_turn" | "scheduled" | "manual"
+export type EvolutionApplyPolicy = "approval_required" | "automatic"
 
 export interface MemoryReviewModelOption {
   provider: string
@@ -84,6 +110,29 @@ export const MEMORY_RECALL_OPTIONS: readonly MemoryRecallMode[] = [
   "isolated",
   "user_recall",
   "group_recall",
+]
+
+export const MEMORY_APPROVAL_OPTIONS: readonly MemoryApprovalMode[] = [
+  "off",
+  "background_only",
+  "all_writes",
+]
+
+export const EVOLUTION_APPLY_POLICY_OPTIONS: readonly EvolutionApplyPolicy[] = [
+  "approval_required",
+  "automatic",
+]
+
+export const EVOLUTION_MODE_OPTIONS: readonly EvolutionMode[] = [
+  "observe",
+  "draft",
+  "apply",
+]
+
+export const EVOLUTION_COLD_PATH_TRIGGER_OPTIONS: readonly EvolutionColdPathTrigger[] = [
+  "after_turn",
+  "scheduled",
+  "manual",
 ]
 
 export interface TurnProfileForm {
@@ -199,6 +248,12 @@ export const EMPTY_FORM: CoreConfigForm = {
   evolutionMinSuccessRatio: "0.7",
   evolutionColdPathTrigger: "after_turn",
   evolutionColdPathTimesText: "",
+  evolutionApplyPolicy: "approval_required",
+  evolutionPrivateDataScrubbing: true,
+  evolutionDraftTimeoutSeconds: "45",
+  evolutionMaxEvidenceRecords: "50",
+  evolutionMaxDraftChars: "12000",
+  evolutionRollbackRetention: "10",
   memoryEnabled: true,
   memoryBackgroundReviewEnabled: true,
   memoryReviewInterval: "10",
@@ -207,6 +262,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   memoryReviewTimeoutSeconds: "30",
   memoryReviewMaxIterations: "2",
   memoryWriteApproval: false,
+  memoryApprovalMode: "off",
   memoryNotifications: "off",
   memoryWorkspaceCharLimit: "12000",
   memoryPerUserCharLimit: "8000",
@@ -217,6 +273,20 @@ export const EMPTY_FORM: CoreConfigForm = {
   memoryCheckpointMaxCount: "100",
   memoryCheckpointMaxContextChars: "2000",
   memoryCheckpointCompletedRetentionDays: "90",
+  memoryRetrievalEnabled: true,
+  memoryRetrievalEngine: "hybrid_lexical",
+  memoryRetrievalMaxWorkspaceResults: "6",
+  memoryRetrievalMaxUserResults: "6",
+  memoryRetrievalMaxTotalChars: "4000",
+  memoryRetrievalPinnedCharBudget: "1200",
+  memoryRetrievalMinimumScore: "0.35",
+  memoryRetrievalRecencyWeight: "0.25",
+  memoryRetrievalRecencyHalfLifeDays: "90",
+  memoryRetrievalFuzzyWeight: "0.75",
+  memoryRetrievalRecentFallbackCount: "2",
+  memoryArchivedRetentionDays: "365",
+  memoryStaleThresholdDays: "180",
+  memoryAutoArchiveExpired: false,
 }
 
 export const EMPTY_LAUNCHER_FORM: LauncherForm = {
@@ -333,6 +403,37 @@ function toMemoryRecallMode(value: unknown): MemoryRecallMode {
   return "isolated"
 }
 
+function toMemoryApprovalMode(
+  value: unknown,
+  legacyApproval: unknown,
+): MemoryApprovalMode {
+  if (value === "background_only" || value === "all_writes") {
+    return value
+  }
+  if (value === "off") {
+    return "off"
+  }
+  return legacyApproval === true ? "background_only" : "off"
+}
+
+function toEvolutionApplyPolicy(value: unknown): EvolutionApplyPolicy {
+  return value === "automatic" ? "automatic" : "approval_required"
+}
+
+function toEvolutionMode(value: unknown): EvolutionMode {
+  return value === "draft" || value === "apply" ? value : "observe"
+}
+
+function toEvolutionColdPathTrigger(value: unknown): EvolutionColdPathTrigger {
+  if (value === "scheduled") {
+    return "scheduled"
+  }
+  if (value === "manual" || value === "none" || value === "off") {
+    return "manual"
+  }
+  return "after_turn"
+}
+
 function allowListText(value: unknown): string {
   if (!Array.isArray(value)) {
     return ""
@@ -372,6 +473,8 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const memoryBackgroundReview = asRecord(memory.background_review)
   const memoryRecall = asRecord(memory.recall)
   const memoryCheckpoints = asRecord(memory.checkpoints)
+  const memoryRetrieval = asRecord(memory.retrieval)
+  const memoryLifecycle = asRecord(memory.lifecycle)
   const tools = asRecord(root.tools)
   const mcp = asRecord(tools.mcp)
   const mcpDiscovery = asRecord(mcp.discovery)
@@ -497,7 +600,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       evolution.enabled === undefined
         ? EMPTY_FORM.evolutionEnabled
         : asBool(evolution.enabled),
-    evolutionMode: asString(evolution.mode) || EMPTY_FORM.evolutionMode,
+    evolutionMode: toEvolutionMode(evolution.mode),
     evolutionStateDir:
       asString(evolution.state_dir) || EMPTY_FORM.evolutionStateDir,
     evolutionMinTaskCount: asNumberString(
@@ -508,14 +611,35 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       evolution.min_success_ratio,
       EMPTY_FORM.evolutionMinSuccessRatio,
     ),
-    evolutionColdPathTrigger:
-      asString(evolution.cold_path_trigger) ||
-      EMPTY_FORM.evolutionColdPathTrigger,
+    evolutionColdPathTrigger: toEvolutionColdPathTrigger(
+      evolution.cold_path_trigger,
+    ),
     evolutionColdPathTimesText: Array.isArray(evolution.cold_path_times)
       ? evolution.cold_path_times
           .filter((value): value is string => typeof value === "string")
           .join("\n")
       : EMPTY_FORM.evolutionColdPathTimesText,
+    evolutionApplyPolicy: toEvolutionApplyPolicy(evolution.apply_policy),
+    evolutionPrivateDataScrubbing:
+      evolution.private_data_scrubbing === undefined
+        ? EMPTY_FORM.evolutionPrivateDataScrubbing
+        : asBool(evolution.private_data_scrubbing),
+    evolutionDraftTimeoutSeconds: asNumberString(
+      evolution.draft_timeout_seconds,
+      EMPTY_FORM.evolutionDraftTimeoutSeconds,
+    ),
+    evolutionMaxEvidenceRecords: asNumberString(
+      evolution.max_evidence_records,
+      EMPTY_FORM.evolutionMaxEvidenceRecords,
+    ),
+    evolutionMaxDraftChars: asNumberString(
+      evolution.max_draft_chars,
+      EMPTY_FORM.evolutionMaxDraftChars,
+    ),
+    evolutionRollbackRetention: asNumberString(
+      evolution.rollback_retention,
+      EMPTY_FORM.evolutionRollbackRetention,
+    ),
     memoryEnabled:
       memory.enabled === undefined
         ? EMPTY_FORM.memoryEnabled
@@ -539,9 +663,12 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       EMPTY_FORM.memoryReviewMaxIterations,
     ),
     memoryWriteApproval:
-      memory.write_approval === undefined
-        ? EMPTY_FORM.memoryWriteApproval
-        : asBool(memory.write_approval),
+      toMemoryApprovalMode(memory.approval_mode, memory.write_approval) !==
+      "off",
+    memoryApprovalMode: toMemoryApprovalMode(
+      memory.approval_mode,
+      memory.write_approval,
+    ),
     memoryNotifications: toMemoryNotificationMode(memory.notifications),
     memoryWorkspaceCharLimit: asNumberString(
       memory.workspace_char_limit,
@@ -576,6 +703,59 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       memoryCheckpoints.completed_retention_days,
       EMPTY_FORM.memoryCheckpointCompletedRetentionDays,
     ),
+    memoryRetrievalEnabled:
+      memoryRetrieval.enabled === undefined
+        ? EMPTY_FORM.memoryRetrievalEnabled
+        : asBool(memoryRetrieval.enabled),
+    memoryRetrievalEngine: "hybrid_lexical",
+    memoryRetrievalMaxWorkspaceResults: asNumberString(
+      memoryRetrieval.max_workspace_results,
+      EMPTY_FORM.memoryRetrievalMaxWorkspaceResults,
+    ),
+    memoryRetrievalMaxUserResults: asNumberString(
+      memoryRetrieval.max_user_results,
+      EMPTY_FORM.memoryRetrievalMaxUserResults,
+    ),
+    memoryRetrievalMaxTotalChars: asNumberString(
+      memoryRetrieval.max_total_chars,
+      EMPTY_FORM.memoryRetrievalMaxTotalChars,
+    ),
+    memoryRetrievalPinnedCharBudget: asNumberString(
+      memoryRetrieval.pinned_char_budget,
+      EMPTY_FORM.memoryRetrievalPinnedCharBudget,
+    ),
+    memoryRetrievalMinimumScore: asNumberString(
+      memoryRetrieval.minimum_relevance_score,
+      EMPTY_FORM.memoryRetrievalMinimumScore,
+    ),
+    memoryRetrievalRecencyWeight: asNumberString(
+      memoryRetrieval.recency_weight,
+      EMPTY_FORM.memoryRetrievalRecencyWeight,
+    ),
+    memoryRetrievalRecencyHalfLifeDays: asNumberString(
+      memoryRetrieval.recency_half_life_days,
+      EMPTY_FORM.memoryRetrievalRecencyHalfLifeDays,
+    ),
+    memoryRetrievalFuzzyWeight: asNumberString(
+      memoryRetrieval.fuzzy_weight,
+      EMPTY_FORM.memoryRetrievalFuzzyWeight,
+    ),
+    memoryRetrievalRecentFallbackCount: asNumberString(
+      memoryRetrieval.recent_fallback_count,
+      EMPTY_FORM.memoryRetrievalRecentFallbackCount,
+    ),
+    memoryArchivedRetentionDays: asNumberString(
+      memoryLifecycle.archived_retention_days,
+      EMPTY_FORM.memoryArchivedRetentionDays,
+    ),
+    memoryStaleThresholdDays: asNumberString(
+      memoryLifecycle.stale_threshold_days,
+      EMPTY_FORM.memoryStaleThresholdDays,
+    ),
+    memoryAutoArchiveExpired:
+      memoryLifecycle.auto_archive_expired === undefined
+        ? EMPTY_FORM.memoryAutoArchiveExpired
+        : asBool(memoryLifecycle.auto_archive_expired),
   }
 }
 
@@ -628,6 +808,9 @@ export function buildMemoryConfigPatch(
   if (!MEMORY_RECALL_OPTIONS.includes(form.memoryRecallMode)) {
     throw new Error("Cross-topic recall mode is invalid.")
   }
+  if (!MEMORY_APPROVAL_OPTIONS.includes(form.memoryApprovalMode)) {
+    throw new Error("Memory approval mode is invalid.")
+  }
 
   const provider = form.memoryReviewProvider.trim()
   const model = form.memoryReviewModel.trim()
@@ -643,7 +826,8 @@ export function buildMemoryConfigPatch(
       "Per-user memory character limit",
       { min: 1 },
     ),
-    write_approval: form.memoryWriteApproval,
+    write_approval: form.memoryApprovalMode !== "off",
+    approval_mode: form.memoryApprovalMode,
     notifications: form.memoryNotifications,
     background_review: {
       enabled: form.memoryBackgroundReviewEnabled,
@@ -662,6 +846,68 @@ export function buildMemoryConfigPatch(
         "Maximum review iterations",
         { min: 1, max: 4 },
       ),
+    },
+    retrieval: {
+      enabled: form.memoryRetrievalEnabled,
+      engine: form.memoryRetrievalEngine,
+      max_workspace_results: parseIntField(
+        form.memoryRetrievalMaxWorkspaceResults,
+        "Maximum workspace memory results",
+        { min: 1, max: 50 },
+      ),
+      max_user_results: parseIntField(
+        form.memoryRetrievalMaxUserResults,
+        "Maximum user memory results",
+        { min: 1, max: 50 },
+      ),
+      max_total_chars: parseIntField(
+        form.memoryRetrievalMaxTotalChars,
+        "Maximum retrieved memory characters",
+        { min: 1, max: 20000 },
+      ),
+      pinned_char_budget: parseIntField(
+        form.memoryRetrievalPinnedCharBudget,
+        "Pinned memory character budget",
+        { min: 1, max: 10000 },
+      ),
+      minimum_relevance_score: parseFloatField(
+        form.memoryRetrievalMinimumScore,
+        "Minimum memory relevance score",
+        { min: 0, max: 10 },
+      ),
+      recency_weight: parseFloatField(
+        form.memoryRetrievalRecencyWeight,
+        "Memory recency weight",
+        { min: 0, max: 5 },
+      ),
+      recency_half_life_days: parseIntField(
+        form.memoryRetrievalRecencyHalfLifeDays,
+        "Memory recency half-life",
+        { min: 1, max: 3650 },
+      ),
+      fuzzy_weight: parseFloatField(
+        form.memoryRetrievalFuzzyWeight,
+        "Memory fuzzy weight",
+        { min: 0, max: 5 },
+      ),
+      recent_fallback_count: parseIntField(
+        form.memoryRetrievalRecentFallbackCount,
+        "Recent memory fallback count",
+        { min: 0, max: 50 },
+      ),
+    },
+    lifecycle: {
+      archived_retention_days: parseIntField(
+        form.memoryArchivedRetentionDays,
+        "Archived memory retention",
+        { min: 1, max: 3650 },
+      ),
+      stale_threshold_days: parseIntField(
+        form.memoryStaleThresholdDays,
+        "Stale memory threshold",
+        { min: 1, max: 3650 },
+      ),
+      auto_archive_expired: form.memoryAutoArchiveExpired,
     },
     recall: {
       mode: form.memoryRecallMode,
@@ -694,6 +940,89 @@ export function buildMemoryConfigPatch(
         { min: 1 },
       ),
     },
+  }
+}
+
+export function buildEvolutionConfigPatch(
+  form: CoreConfigForm,
+): Record<string, unknown> {
+  if (!EVOLUTION_MODE_OPTIONS.includes(form.evolutionMode)) {
+    throw new Error("Evolution mode is invalid.")
+  }
+  if (
+    !EVOLUTION_COLD_PATH_TRIGGER_OPTIONS.includes(
+      form.evolutionColdPathTrigger,
+    )
+  ) {
+    throw new Error("Evolution cold-path trigger is invalid.")
+  }
+  if (!EVOLUTION_APPLY_POLICY_OPTIONS.includes(form.evolutionApplyPolicy)) {
+    throw new Error("Evolution apply policy is invalid.")
+  }
+  if (form.evolutionEnabled && !form.evolutionPrivateDataScrubbing) {
+    throw new Error(
+      "Private-data scrubbing must remain enabled while evolution is enabled.",
+    )
+  }
+
+  const coldPathTimes = parseMultilineList(form.evolutionColdPathTimesText)
+  if (form.evolutionColdPathTrigger === "scheduled") {
+    if (coldPathTimes.length === 0) {
+      throw new Error(
+        "Scheduled evolution requires at least one cold-path time.",
+      )
+    }
+    const invalid = coldPathTimes.find(
+      (value) => !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value),
+    )
+    if (invalid) {
+      throw new Error(
+        `Evolution cold-path time ${invalid} must use 24-hour HH:MM format.`,
+      )
+    }
+  }
+
+  return {
+    enabled: form.evolutionEnabled,
+    mode: form.evolutionMode,
+    state_dir:
+      form.evolutionStateDir.trim() === ""
+        ? null
+        : form.evolutionStateDir.trim(),
+    min_task_count: parseIntField(
+      form.evolutionMinTaskCount,
+      "Evolution minimum task count",
+      { min: 2, max: 500 },
+    ),
+    min_success_ratio: parseFloatField(
+      form.evolutionMinSuccessRatio,
+      "Evolution minimum success ratio",
+      { min: 0.01, max: 1 },
+    ),
+    cold_path_trigger: form.evolutionColdPathTrigger,
+    cold_path_times: coldPathTimes,
+    apply_policy: form.evolutionApplyPolicy,
+    private_data_scrubbing: form.evolutionPrivateDataScrubbing,
+    draft_timeout_seconds: parseIntField(
+      form.evolutionDraftTimeoutSeconds,
+      "Evolution draft timeout",
+      { min: 1, max: 300 },
+    ),
+    max_evidence_records: parseIntField(
+      form.evolutionMaxEvidenceRecords,
+      "Evolution maximum evidence records",
+      { min: 2, max: 500 },
+    ),
+    max_draft_chars: parseIntField(
+      form.evolutionMaxDraftChars,
+      "Evolution maximum draft characters",
+      { min: 1, max: 50000 },
+    ),
+    rollback_retention: parseIntField(
+      form.evolutionRollbackRetention,
+      "Evolution rollback retention",
+      { min: 1, max: 100 },
+    ),
   }
 }
 

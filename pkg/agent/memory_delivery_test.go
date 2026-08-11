@@ -83,6 +83,46 @@ func TestFailedDeliveryDiscardsCheckpointProgress(t *testing.T) {
 	}
 }
 
+func TestCuratedLastUsedAdvancesOnlyAfterSuccessfulDelivery(t *testing.T) {
+	al, agent, caller := newMemoryReviewerHarness(t, &mockProvider{})
+	result, err := agent.CuratedMemory.ApplyBatch(
+		memory.CuratedTargetCurrentUser,
+		caller,
+		[]memory.CuratedMutation{{
+			Action: memory.CuratedActionAdd, Content: "Prefers concise Go explanations",
+			Type: memory.CuratedTypeCommunicationPreference,
+		}},
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ApplyBatch: %v", err)
+	}
+	id := result.Applied[0].ID
+	delivery := deferredMemoryDelivery{
+		agent: agent, caller: caller, turnID: "turn-memory-usage",
+		userContent: "Explain Go", assistantContent: "Delivered Go explanation",
+		curatedUsage: []memory.CuratedUsage{{Target: memory.CuratedTargetCurrentUser, IDs: []string{id}}},
+	}
+	al.commitMemoryDelivery(delivery, false)
+	entry, err := agent.CuratedMemory.Inspect(memory.CuratedTargetCurrentUser, caller, id)
+	if err != nil {
+		t.Fatalf("Inspect after failed delivery: %v", err)
+	}
+	if entry.LastUsedAt != nil {
+		t.Fatalf("failed delivery advanced LastUsedAt: %#v", entry.LastUsedAt)
+	}
+
+	delivery.turnID = "turn-memory-usage-delivered"
+	al.commitMemoryDelivery(delivery, true)
+	entry, err = agent.CuratedMemory.Inspect(memory.CuratedTargetCurrentUser, caller, id)
+	if err != nil {
+		t.Fatalf("Inspect after successful delivery: %v", err)
+	}
+	if entry.LastUsedAt == nil {
+		t.Fatal("successful delivery did not advance LastUsedAt")
+	}
+}
+
 func TestClearSessionMemoryStatePreservesCuratedMemoryAndDurableCheckpoint(t *testing.T) {
 	_, agent, caller := newMemoryReviewerHarness(t, &mockProvider{})
 	checkpoints, storeErr := memory.NewCheckpointStore(

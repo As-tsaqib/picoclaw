@@ -140,8 +140,8 @@ func TestRuntime_FinalizeTurnWritesRecordWithOverride(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("record file line count = %d, want 2", len(lines))
+	if len(lines) != 1 {
+		t.Fatalf("record file line count = %d, want 1", len(lines))
 	}
 
 	var first evolution.LearningRecord
@@ -154,8 +154,8 @@ func TestRuntime_FinalizeTurnWritesRecordWithOverride(t *testing.T) {
 	if first.CreatedAt != now {
 		t.Fatalf("first CreatedAt = %v, want %v", first.CreatedAt, now)
 	}
-	if first.SessionKey != "session-1" {
-		t.Fatalf("first SessionKey = %q, want %q", first.SessionKey, "session-1")
+	if first.SessionKey == "session-1" || !strings.HasPrefix(first.SessionKey, "session-") {
+		t.Fatalf("first SessionKey = %q, want opaque session reference", first.SessionKey)
 	}
 	if first.Summary != "summarize the release notes" {
 		t.Fatalf("first Summary = %q", first.Summary)
@@ -172,34 +172,12 @@ func TestRuntime_FinalizeTurnWritesRecordWithOverride(t *testing.T) {
 	if len(first.UsedSkillNames) != 0 {
 		t.Fatalf("first UsedSkillNames = %v, want empty", first.UsedSkillNames)
 	}
-	if len(first.ToolKinds) != 0 || len(first.ToolExecutions) != 0 || first.Source != nil || first.AttemptTrail != nil {
-		t.Fatalf("first record should be slimmed: %+v", first)
+	if len(first.ToolKinds) != 2 || len(first.ToolExecutions) != 2 ||
+		len(first.ActiveSkillNames) != 1 || first.Source != nil || first.AttemptTrail != nil {
+		t.Fatalf("first record should retain only bounded procedural evidence: %+v", first)
 	}
 	if first.TaskHash != "" || len(first.Signals) != 0 {
-		t.Fatalf("first record should not persist task_hash/signals: %+v", first)
-	}
-
-	var second evolution.LearningRecord
-	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
-		t.Fatalf("Unmarshal second record: %v", err)
-	}
-	if second.WorkspaceID != workspace {
-		t.Fatalf("second WorkspaceID = %q, want %q", second.WorkspaceID, workspace)
-	}
-	if second.SessionKey != "session-2" {
-		t.Fatalf("second SessionKey = %q, want %q", second.SessionKey, "session-2")
-	}
-	if second.Summary != "run the bash command" {
-		t.Fatalf("second Summary = %q", second.Summary)
-	}
-	if second.Success == nil || *second.Success {
-		t.Fatalf("second Success = %v, want false", second.Success)
-	}
-	if len(second.ToolExecutions) != 0 || second.Source != nil || second.AttemptTrail != nil {
-		t.Fatalf("second record should be slimmed: %+v", second)
-	}
-	if second.TaskHash != "" || len(second.Signals) != 0 {
-		t.Fatalf("second record should not persist task_hash/signals: %+v", second)
+		t.Fatalf("first record should not persist task_hash or unexpected findings: %+v", first)
 	}
 }
 
@@ -397,8 +375,10 @@ func TestRuntime_FinalizeTurnWritesPotentiallyLearnableSignal(t *testing.T) {
 	if got := record.AllLoadedSkillNames; len(got) != 0 {
 		t.Fatalf("AllLoadedSkillNames = %v, want empty", got)
 	}
-	if record.AttemptTrail != nil {
-		t.Fatalf("AttemptTrail = %+v, want nil", record.AttemptTrail)
+	if record.AttemptTrail == nil || len(record.AttemptTrail.FinalSuccessfulPath) != 1 ||
+		record.AttemptTrail.FinalSuccessfulPath[0] != "weather" ||
+		len(record.AttemptTrail.SkillContextSnapshots) != 2 {
+		t.Fatalf("AttemptTrail = %+v, want bounded successful path evidence", record.AttemptTrail)
 	}
 }
 
@@ -521,6 +501,7 @@ func TestRuntime_FinalizeTurnPrefersExplicitAttemptTrail(t *testing.T) {
 		SessionKey:          "session-explicit-trail",
 		AgentID:             "agent-1",
 		Status:              "completed",
+		FinalContent:        "the theorem workflow completed",
 		ToolKinds:           []string{"web"},
 		ActiveSkillNames:    []string{"weather"},
 		AttemptedSkillNames: []string{"geocode", "weather"},
@@ -548,8 +529,10 @@ func TestRuntime_FinalizeTurnPrefersExplicitAttemptTrail(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &record); err != nil {
 		t.Fatalf("Unmarshal record: %v", err)
 	}
-	if record.AttemptTrail != nil {
-		t.Fatalf("AttemptTrail = %+v, want nil", record.AttemptTrail)
+	if record.AttemptTrail == nil || len(record.AttemptTrail.AttemptedSkills) != 2 ||
+		len(record.AttemptTrail.FinalSuccessfulPath) != 2 ||
+		len(record.AttemptTrail.SkillContextSnapshots) != 2 {
+		t.Fatalf("AttemptTrail = %+v, want explicit bounded trail", record.AttemptTrail)
 	}
 	if got := record.UsedSkillNames; len(got) != 2 || got[0] != "geocode" || got[1] != "weather" {
 		t.Fatalf("UsedSkillNames = %v, want [geocode weather]", got)

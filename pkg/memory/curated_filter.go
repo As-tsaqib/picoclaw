@@ -42,6 +42,19 @@ var curatedInjectionPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)<\/?(?:curated_memory|task_checkpoints|transcript_snapshot)(?:\s|>)`),
 }
 
+var curatedPrivateFactPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(?:my name is|nama saya|call me|panggil saya|my timezone is|zona waktu saya|my role is|jabatan saya|i prefer|saya lebih suka)\b`),
+	regexp.MustCompile(`(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b`),
+	regexp.MustCompile(`(?i)(?:\+?\d[\d .()-]{7,}\d)`),
+	regexp.MustCompile(`(?i)\b(?:telegram|discord|slack|whatsapp|account|user)[ _-]?(?:id|handle)\s*[:=]`),
+	regexp.MustCompile(`(?i)\b(?:user|customer|client|owner)(?:'s)?\s+(?:name|timezone|location|address|phone|email|role|preference|prefers|likes|dislikes)\b`),
+	regexp.MustCompile(`(?i)\b(?:he|she|they|dia)\s+(?:lives?|resides?|works?|prefers?|likes?|dislikes?)\b`),
+	regexp.MustCompile(`(?i)\b(?:user|pengguna)\s+[a-z0-9][a-z0-9._-]{0,39}\s+(?:prefers?|likes?|dislikes?|wants?|lebih suka|menyukai|tidak suka|ingin)\b`),
+	regexp.MustCompile(`\b[A-Z][A-Za-z'’-]{1,39}(?:\s+[A-Z][A-Za-z'’-]{1,39}){0,2}\s+(?:prefers?|likes?|dislikes?|wants?|lebih suka|menyukai|tidak suka|ingin)\b`),
+	regexp.MustCompile(`(?i)\b(?:user|pengguna)\s+[a-z0-9][a-z0-9._-]{0,39}\s+(?:lives|works|is located|tinggal|berdomisili|berada|bekerja)\b`),
+	regexp.MustCompile(`\b[A-Z][A-Za-z'’-]{1,39}(?:\s+[A-Z][A-Za-z'’-]{1,39}){0,2}\s+(?:lives|works as|is located|tinggal|berdomisili|berada|bekerja sebagai)\b`),
+}
+
 // ValidateCuratedContent rejects secrets, prompt-injection-shaped control
 // text, invalid UTF-8, and hidden/control characters before anything reaches
 // durable storage. It intentionally returns category-only errors so rejected
@@ -89,6 +102,21 @@ func RedactMemoryText(content string) string {
 		}
 	}
 	return b.String()
+}
+
+func validateCuratedTargetContent(target, entryType, content string) error {
+	if strings.EqualFold(strings.TrimSpace(target), CuratedTargetCurrentUser) {
+		return nil
+	}
+	if !curatedTypeAllowedForTarget(target, entryType) {
+		return ErrCuratedInvalidTarget
+	}
+	for _, pattern := range curatedPrivateFactPatterns {
+		if pattern.MatchString(content) {
+			return ErrCuratedInvalidTarget
+		}
+	}
+	return nil
 }
 
 // isBidiControl covers the Unicode Bidirectional_Control property without

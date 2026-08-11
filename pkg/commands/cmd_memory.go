@@ -12,6 +12,12 @@ func memoryCommand() Definition {
 		SubCommands: []SubCommand{
 			{Name: "status", Description: "Show memory configuration and capacity", Handler: memoryStatusHandler},
 			{Name: "list", Description: "List current workspace/user entries", Handler: memoryListHandler},
+			{Name: "search", Description: "Search current scoped memory", ArgsUsage: "<query>", Handler: memorySearchHandler},
+			{Name: "edit", Description: "Replace an entry's content", ArgsUsage: "<id> <content>", Handler: memoryEditHandler},
+			{Name: "pin", Description: "Pin an active entry", ArgsUsage: "<id>", Handler: memoryEntryActionHandler("pin")},
+			{Name: "unpin", Description: "Unpin an entry", ArgsUsage: "<id>", Handler: memoryEntryActionHandler("unpin")},
+			{Name: "archive", Description: "Archive an entry", ArgsUsage: "<id>", Handler: memoryEntryActionHandler("archive")},
+			{Name: "restore", Description: "Restore an archived entry", ArgsUsage: "<id>", Handler: memoryEntryActionHandler("restore")},
 			{
 				Name: "forget", Description: "Remove a current-user memory entry",
 				ArgsUsage: "<id>", Handler: memoryForgetHandler,
@@ -27,6 +33,54 @@ func memoryCommand() Definition {
 			},
 			{Name: "review", Description: "Run one bounded review of delivered turns", Handler: memoryReviewHandler},
 		},
+	}
+}
+
+func memorySearchHandler(_ context.Context, req Request, rt *Runtime) error {
+	if rt == nil || rt.MemorySearch == nil {
+		return req.Reply(unavailableMsg)
+	}
+	query := strings.TrimSpace(afterNthToken(req.Text, 2))
+	if query == "" {
+		return req.Reply("Usage: /memory search <query>")
+	}
+	response, err := rt.MemorySearch(query)
+	if err != nil {
+		return req.Reply("Failed to search memory: " + err.Error())
+	}
+	return req.Reply(response)
+}
+
+func memoryEditHandler(_ context.Context, req Request, rt *Runtime) error {
+	if rt == nil || rt.MemoryEdit == nil {
+		return req.Reply(unavailableMsg)
+	}
+	id := strings.TrimSpace(nthToken(req.Text, 2))
+	content := strings.TrimSpace(afterNthToken(req.Text, 3))
+	if id == "" || content == "" {
+		return req.Reply("Usage: /memory edit <id> <content>")
+	}
+	response, err := rt.MemoryEdit(id, content)
+	if err != nil {
+		return req.Reply("Failed to edit memory: " + err.Error())
+	}
+	return req.Reply(response)
+}
+
+func memoryEntryActionHandler(action string) Handler {
+	return func(_ context.Context, req Request, rt *Runtime) error {
+		if rt == nil || rt.MemoryEntryAction == nil {
+			return req.Reply(unavailableMsg)
+		}
+		id := strings.TrimSpace(nthToken(req.Text, 2))
+		if id == "" {
+			return req.Reply("Usage: /memory " + action + " <id>")
+		}
+		response, err := rt.MemoryEntryAction(action, id)
+		if err != nil {
+			return req.Reply("Failed to " + action + " memory: " + err.Error())
+		}
+		return req.Reply(response)
 	}
 }
 
@@ -113,4 +167,12 @@ func memoryReviewHandler(ctx context.Context, req Request, rt *Runtime) error {
 		return req.Reply("Failed to start memory review: " + err.Error())
 	}
 	return req.Reply(response)
+}
+
+func afterNthToken(input string, n int) string {
+	parts := strings.Fields(input)
+	if n < 0 || n >= len(parts) {
+		return ""
+	}
+	return strings.Join(parts[n:], " ")
 }

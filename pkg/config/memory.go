@@ -15,6 +15,12 @@ const (
 	MemoryRecallUserRecall  = "user_recall"
 	MemoryRecallGroupRecall = "group_recall"
 
+	MemoryApprovalOff            = "off"
+	MemoryApprovalBackgroundOnly = "background_only"
+	MemoryApprovalAllWrites      = "all_writes"
+
+	MemoryRetrievalHybridLexical = "hybrid_lexical"
+
 	DefaultWorkspaceMemoryCharLimit = 12_000
 	DefaultPerUserMemoryCharLimit   = 8_000
 	DefaultMemoryReviewInterval     = 10
@@ -26,6 +32,17 @@ const (
 	DefaultCheckpointCount          = 100
 	DefaultCheckpointContextChars   = 2_000
 	DefaultCheckpointRetentionDays  = 90
+	DefaultMemoryWorkspaceResults   = 6
+	DefaultMemoryUserResults        = 6
+	DefaultMemoryRetrievalChars     = 4_000
+	DefaultMemoryPinnedChars        = 1_200
+	DefaultMemoryMinRelevance       = 0.35
+	DefaultMemoryRecencyWeight      = 0.25
+	DefaultMemoryRecencyHalfLife    = 90
+	DefaultMemoryFuzzyWeight        = 0.75
+	DefaultMemoryRecentFallback     = 2
+	DefaultMemoryArchivedRetention  = 365
+	DefaultMemoryStaleThreshold     = 180
 
 	MaxMemoryReviewIterations = 4
 	MaxMemoryRecallResults    = 20
@@ -33,6 +50,10 @@ const (
 	MaxMemoryRecallRecords    = 20_000
 	MaxCheckpointCount        = 1_000
 	MaxCheckpointContextChars = 20_000
+	MaxMemoryRetrievalResults = 50
+	MaxMemoryRetrievalChars   = 20_000
+	MaxMemoryPinnedChars      = 10_000
+	MaxMemoryLifecycleDays    = 3_650
 )
 
 // MemoryConfig controls structured curated memory, bounded transcript recall,
@@ -44,10 +65,33 @@ type MemoryConfig struct {
 	WorkspaceCharLimit int                    `json:"workspace_char_limit,omitempty" env:"PICOCLAW_MEMORY_WORKSPACE_CHAR_LIMIT"`
 	PerUserCharLimit   int                    `json:"per_user_char_limit,omitempty"  env:"PICOCLAW_MEMORY_PER_USER_CHAR_LIMIT"`
 	WriteApproval      bool                   `json:"write_approval,omitempty"       env:"PICOCLAW_MEMORY_WRITE_APPROVAL"`
+	ApprovalMode       string                 `json:"approval_mode,omitempty"        env:"PICOCLAW_MEMORY_APPROVAL_MODE"`
 	Notifications      string                 `json:"notifications,omitempty"        env:"PICOCLAW_MEMORY_NOTIFICATIONS"`
 	BackgroundReview   MemoryReviewConfig     `json:"background_review,omitempty"`
+	Retrieval          MemoryRetrievalConfig  `json:"retrieval,omitempty"`
+	Lifecycle          MemoryLifecycleConfig  `json:"lifecycle,omitempty"`
 	Recall             MemoryRecallConfig     `json:"recall,omitempty"`
 	Checkpoints        MemoryCheckpointConfig `json:"checkpoints,omitempty"`
+}
+
+type MemoryRetrievalConfig struct {
+	Enabled             bool    `json:"enabled"`
+	Engine              string  `json:"engine,omitempty"`
+	MaxWorkspaceResults int     `json:"max_workspace_results,omitempty"`
+	MaxUserResults      int     `json:"max_user_results,omitempty"`
+	MaxTotalChars       int     `json:"max_total_chars,omitempty"`
+	PinnedCharBudget    int     `json:"pinned_char_budget,omitempty"`
+	MinimumScore        float64 `json:"minimum_relevance_score,omitempty"`
+	RecencyWeight       float64 `json:"recency_weight,omitempty"`
+	RecencyHalfLifeDays int     `json:"recency_half_life_days,omitempty"`
+	FuzzyWeight         float64 `json:"fuzzy_weight,omitempty"`
+	RecentFallbackCount int     `json:"recent_fallback_count,omitempty"`
+}
+
+type MemoryLifecycleConfig struct {
+	ArchivedRetentionDays int  `json:"archived_retention_days,omitempty"`
+	StaleThresholdDays    int  `json:"stale_threshold_days,omitempty"`
+	AutoArchiveExpired    bool `json:"auto_archive_expired,omitempty"`
 }
 
 // MemoryReviewConfig controls the bounded best-effort reviewer that may run
@@ -103,6 +147,118 @@ func (c MemoryConfig) EffectiveNotificationMode() string {
 	default:
 		return MemoryNotificationOff
 	}
+}
+
+func (c MemoryConfig) EffectiveApprovalMode() string {
+	switch strings.ToLower(strings.TrimSpace(c.ApprovalMode)) {
+	case MemoryApprovalOff:
+		return MemoryApprovalOff
+	case MemoryApprovalBackgroundOnly:
+		return MemoryApprovalBackgroundOnly
+	case MemoryApprovalAllWrites:
+		return MemoryApprovalAllWrites
+	default:
+		if c.WriteApproval {
+			return MemoryApprovalBackgroundOnly
+		}
+		return MemoryApprovalOff
+	}
+}
+
+func (c MemoryConfig) ShouldStageMemoryWrite(background bool) bool {
+	switch c.EffectiveApprovalMode() {
+	case MemoryApprovalAllWrites:
+		return true
+	case MemoryApprovalBackgroundOnly:
+		return background
+	default:
+		return false
+	}
+}
+
+func (c MemoryRetrievalConfig) EffectiveEngine() string {
+	if strings.EqualFold(strings.TrimSpace(c.Engine), MemoryRetrievalHybridLexical) {
+		return MemoryRetrievalHybridLexical
+	}
+	return MemoryRetrievalHybridLexical
+}
+
+func (c MemoryRetrievalConfig) EffectiveMaxWorkspaceResults() int {
+	return boundedPositive(c.MaxWorkspaceResults, DefaultMemoryWorkspaceResults, MaxMemoryRetrievalResults)
+}
+
+func (c MemoryRetrievalConfig) EffectiveMaxUserResults() int {
+	return boundedPositive(c.MaxUserResults, DefaultMemoryUserResults, MaxMemoryRetrievalResults)
+}
+
+func (c MemoryRetrievalConfig) EffectiveMaxTotalChars() int {
+	return boundedPositive(c.MaxTotalChars, DefaultMemoryRetrievalChars, MaxMemoryRetrievalChars)
+}
+
+func (c MemoryRetrievalConfig) EffectivePinnedCharBudget() int {
+	return boundedPositive(c.PinnedCharBudget, DefaultMemoryPinnedChars, MaxMemoryPinnedChars)
+}
+
+func (c MemoryRetrievalConfig) EffectiveMinimumScore() float64 {
+	if c.MinimumScore < 0 {
+		return 0
+	}
+	if c.MinimumScore > 10 {
+		return 10
+	}
+	return c.MinimumScore
+}
+
+func (c MemoryRetrievalConfig) EffectiveRecencyWeight() float64 {
+	if c.RecencyWeight < 0 {
+		return 0
+	}
+	if c.RecencyWeight > 5 {
+		return 5
+	}
+	return c.RecencyWeight
+}
+
+func (c MemoryRetrievalConfig) EffectiveRecencyHalfLifeDays() int {
+	return boundedPositive(c.RecencyHalfLifeDays, DefaultMemoryRecencyHalfLife, MaxMemoryLifecycleDays)
+}
+
+func (c MemoryRetrievalConfig) EffectiveFuzzyWeight() float64 {
+	if c.FuzzyWeight < 0 {
+		return 0
+	}
+	if c.FuzzyWeight > 5 {
+		return 5
+	}
+	return c.FuzzyWeight
+}
+
+func (c MemoryRetrievalConfig) EffectiveRecentFallbackCount() int {
+	if c.RecentFallbackCount < 0 {
+		return 0
+	}
+	if c.RecentFallbackCount > MaxMemoryRetrievalResults {
+		return MaxMemoryRetrievalResults
+	}
+	return c.RecentFallbackCount
+}
+
+func (c MemoryLifecycleConfig) EffectiveArchivedRetentionDays() int {
+	return boundedPositive(c.ArchivedRetentionDays, DefaultMemoryArchivedRetention, MaxMemoryLifecycleDays)
+}
+
+func (c MemoryLifecycleConfig) EffectiveStaleThresholdDays() int {
+	return boundedPositive(c.StaleThresholdDays, DefaultMemoryStaleThreshold, MaxMemoryLifecycleDays)
+}
+
+func boundedPositive(value, fallback, maximum int) int {
+	if value <= 0 {
+		return fallback
+	}
+	if value > maximum {
+		return maximum
+	}
+	return value
 }
 
 func (c MemoryReviewConfig) EffectiveInterval() int {
@@ -224,6 +380,13 @@ func (c MemoryConfig) Validate() error {
 	default:
 		validationErrors = append(validationErrors, "memory.notifications must be off, on, or verbose")
 	}
+	if strings.TrimSpace(c.ApprovalMode) != "" {
+		switch strings.ToLower(strings.TrimSpace(c.ApprovalMode)) {
+		case MemoryApprovalOff, MemoryApprovalBackgroundOnly, MemoryApprovalAllWrites:
+		default:
+			validationErrors = append(validationErrors, "memory.approval_mode must be off, background_only, or all_writes")
+		}
+	}
 	positive("memory.background_review.interval", c.BackgroundReview.Interval)
 	positive("memory.background_review.timeout_seconds", c.BackgroundReview.TimeoutSeconds)
 	bounded(
@@ -252,6 +415,28 @@ func (c MemoryConfig) Validate() error {
 		"memory.checkpoints.completed_retention_days",
 		c.Checkpoints.CompletedRetentionDays,
 	)
+	if !strings.EqualFold(strings.TrimSpace(c.Retrieval.Engine), MemoryRetrievalHybridLexical) {
+		validationErrors = append(validationErrors, "memory.retrieval.engine must be hybrid_lexical")
+	}
+	bounded("memory.retrieval.max_workspace_results", c.Retrieval.MaxWorkspaceResults, MaxMemoryRetrievalResults)
+	bounded("memory.retrieval.max_user_results", c.Retrieval.MaxUserResults, MaxMemoryRetrievalResults)
+	bounded("memory.retrieval.max_total_chars", c.Retrieval.MaxTotalChars, MaxMemoryRetrievalChars)
+	bounded("memory.retrieval.pinned_char_budget", c.Retrieval.PinnedCharBudget, MaxMemoryPinnedChars)
+	if c.Retrieval.MinimumScore < 0 || c.Retrieval.MinimumScore > 10 {
+		validationErrors = append(validationErrors, "memory.retrieval.minimum_relevance_score must be between 0 and 10")
+	}
+	if c.Retrieval.RecencyWeight < 0 || c.Retrieval.RecencyWeight > 5 {
+		validationErrors = append(validationErrors, "memory.retrieval.recency_weight must be between 0 and 5")
+	}
+	bounded("memory.retrieval.recency_half_life_days", c.Retrieval.RecencyHalfLifeDays, MaxMemoryLifecycleDays)
+	if c.Retrieval.FuzzyWeight < 0 || c.Retrieval.FuzzyWeight > 5 {
+		validationErrors = append(validationErrors, "memory.retrieval.fuzzy_weight must be between 0 and 5")
+	}
+	if c.Retrieval.RecentFallbackCount < 0 || c.Retrieval.RecentFallbackCount > MaxMemoryRetrievalResults {
+		validationErrors = append(validationErrors, fmt.Sprintf("memory.retrieval.recent_fallback_count must be between 0 and %d", MaxMemoryRetrievalResults))
+	}
+	bounded("memory.lifecycle.archived_retention_days", c.Lifecycle.ArchivedRetentionDays, MaxMemoryLifecycleDays)
+	bounded("memory.lifecycle.stale_threshold_days", c.Lifecycle.StaleThresholdDays, MaxMemoryLifecycleDays)
 
 	if len(validationErrors) == 0 {
 		return nil

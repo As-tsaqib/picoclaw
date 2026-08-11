@@ -1,6 +1,7 @@
 package evolution
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -8,9 +9,9 @@ import (
 )
 
 type DraftPreview struct {
-	CurrentBody  string
-	RenderedBody string
-	DiffPreview  string
+	CurrentBody  string `json:"current_body"`
+	RenderedBody string `json:"rendered_body"`
+	DiffPreview  string `json:"diff_preview"`
 }
 
 func BuildDraftPreview(workspace string, draft SkillDraft) (DraftPreview, error) {
@@ -32,6 +33,14 @@ func BuildDraftPreview(workspace string, draft SkillDraft) (DraftPreview, error)
 }
 
 func loadCurrentSkillBody(workspace, skillName string) (string, bool, error) {
+	workspace = strings.TrimSpace(workspace)
+	skillName = strings.TrimSpace(skillName)
+	if workspace == "" {
+		return "", false, fmt.Errorf("workspace is required")
+	}
+	if err := validateEvolutionSkillTarget(skillName); err != nil {
+		return "", false, fmt.Errorf("invalid or forbidden evolution skill target")
+	}
 	skillPath := filepath.Join(workspace, "skills", skillName, "SKILL.md")
 	data, err := os.ReadFile(skillPath)
 	if os.IsNotExist(err) {

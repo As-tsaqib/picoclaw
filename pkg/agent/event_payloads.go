@@ -53,6 +53,9 @@ type TurnEndPayload struct {
 	SkillContextSnapshots []SkillContextSnapshot
 	ToolKinds             []string
 	ToolExecutions        []ToolExecutionRecord
+	NoHistory             bool
+	SuppressLearning      bool
+	Depth                 int
 }
 
 // LLMRequestPayload describes an outbound LLM request.

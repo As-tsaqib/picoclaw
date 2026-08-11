@@ -14,6 +14,8 @@ type Paths struct {
 	SkillDrafts     string
 	ProfilesDir     string
 	BackupsDir      string
+	VersionsDir     string
+	AuditLog        string
 }
 
 func NewPaths(workspace, override string) Paths {
@@ -31,5 +33,7 @@ func NewPaths(workspace, override string) Paths {
 		SkillDrafts:     filepath.Join(root, "skill-drafts.json"),
 		ProfilesDir:     filepath.Join(root, "profiles"),
 		BackupsDir:      filepath.Join(root, "backups"),
+		VersionsDir:     filepath.Join(root, "versions"),
+		AuditLog:        filepath.Join(root, "audit.jsonl"),
 	}
 }

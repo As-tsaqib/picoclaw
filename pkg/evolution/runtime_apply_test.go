@@ -27,12 +27,10 @@ func TestRuntime_RunColdPathOnce_ApplyModeWritesSkillAndProfile(t *testing.T) {
 		Status:      evolution.RecordStatus("ready"),
 		EventCount:  4,
 	}
-	if err := store.AppendLearningRecords([]evolution.LearningRecord{rule}); err != nil {
-		t.Fatalf("AppendLearningRecords: %v", err)
-	}
+	seedVerifiedEvolutionRule(t, store, rule)
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config: config.EvolutionConfig{Enabled: true, Mode: "apply"},
+		Config: config.EvolutionConfig{Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyAutomatic},
 		Now:    func() time.Time { return time.Unix(1700001000, 0).UTC() },
 		Store:  store,
 		Applier: evolution.NewApplier(evolution.NewPaths(root, ""), func() time.Time {
@@ -120,9 +118,7 @@ func TestRuntime_RunColdPathOnce_DraftModeKeepsCandidateDraft(t *testing.T) {
 		Status:      evolution.RecordStatus("ready"),
 		EventCount:  4,
 	}
-	if err := store.AppendLearningRecords([]evolution.LearningRecord{rule}); err != nil {
-		t.Fatalf("AppendLearningRecords: %v", err)
-	}
+	seedVerifiedEvolutionRule(t, store, rule)
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
 		Config: config.EvolutionConfig{Enabled: true, Mode: "draft"},
@@ -284,9 +280,7 @@ func TestRuntime_RunColdPathOnce_ApplyModeAppliesExistingCandidateDraft(t *testi
 		Status:      evolution.RecordStatus("ready"),
 		EventCount:  4,
 	}
-	if err := store.AppendLearningRecords([]evolution.LearningRecord{rule}); err != nil {
-		t.Fatalf("AppendLearningRecords: %v", err)
-	}
+	seedVerifiedEvolutionRule(t, store, rule)
 	if err := store.SaveDrafts([]evolution.SkillDraft{
 		{
 			ID:              "draft-1",
@@ -304,7 +298,7 @@ func TestRuntime_RunColdPathOnce_ApplyModeAppliesExistingCandidateDraft(t *testi
 	}
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config: config.EvolutionConfig{Enabled: true, Mode: "apply"},
+		Config: config.EvolutionConfig{Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyAutomatic},
 		Now:    func() time.Time { return time.Unix(1700001000, 0).UTC() },
 		Store:  store,
 		Applier: evolution.NewApplier(evolution.NewPaths(root, ""), func() time.Time {
@@ -372,9 +366,7 @@ func TestRuntime_RunColdPathOnce_ApplyModeSkipsOrphanCandidateDraft(t *testing.T
 		Status:      evolution.RecordStatus("ready"),
 		EventCount:  4,
 	}
-	if err := store.AppendLearningRecords([]evolution.LearningRecord{rule}); err != nil {
-		t.Fatalf("AppendLearningRecords: %v", err)
-	}
+	seedVerifiedEvolutionRule(t, store, rule)
 	if err := store.SaveDrafts([]evolution.SkillDraft{
 		{
 			ID:              "draft-orphan",
@@ -392,7 +384,7 @@ func TestRuntime_RunColdPathOnce_ApplyModeSkipsOrphanCandidateDraft(t *testing.T
 	}
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config: config.EvolutionConfig{Enabled: true, Mode: "apply"},
+		Config: config.EvolutionConfig{Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyAutomatic},
 		Now:    func() time.Time { return time.Unix(1700001000, 0).UTC() },
 		Store:  store,
 		Applier: evolution.NewApplier(evolution.NewPaths(root, ""), func() time.Time {
@@ -458,9 +450,7 @@ func TestRuntime_RunColdPathOnce_ApplyModeNormalizesExistingCombinedCandidateDra
 		SuccessRate: 1,
 		WinningPath: []string{"three-one-theorem", "four-two-theorem", "five-three-theorem"},
 	}
-	if err := store.AppendLearningRecords([]evolution.LearningRecord{rule}); err != nil {
-		t.Fatalf("AppendLearningRecords: %v", err)
-	}
+	seedVerifiedEvolutionRule(t, store, rule)
 	if err := store.SaveDrafts([]evolution.SkillDraft{
 		{
 			ID:              "draft-1",
@@ -486,7 +476,7 @@ func TestRuntime_RunColdPathOnce_ApplyModeNormalizesExistingCombinedCandidateDra
 	}
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config: config.EvolutionConfig{Enabled: true, Mode: "apply"},
+		Config: config.EvolutionConfig{Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyAutomatic},
 		Now:    func() time.Time { return time.Unix(1700001000, 0).UTC() },
 		Store:  store,
 		Applier: evolution.NewApplier(
@@ -554,12 +544,10 @@ func TestRuntime_RunColdPathOnce_ApplyModeRetargetsStableMultiSkillPathIntoCombi
 		SuccessRate: 1,
 		WinningPath: []string{"three-one-theorem", "four-two-theorem", "five-three-theorem"},
 	}
-	if err := store.AppendLearningRecords([]evolution.LearningRecord{rule}); err != nil {
-		t.Fatalf("AppendLearningRecords: %v", err)
-	}
+	seedVerifiedEvolutionRule(t, store, rule)
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config: config.EvolutionConfig{Enabled: true, Mode: "apply"},
+		Config: config.EvolutionConfig{Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyAutomatic},
 		Now:    func() time.Time { return time.Unix(1700001000, 0).UTC() },
 		Store:  store,
 		Applier: evolution.NewApplier(evolution.NewPaths(root, ""), func() time.Time {
@@ -682,12 +670,10 @@ func TestRuntime_RunColdPathOnce_CombinedShortcutKeepsReadableLongGuidance(t *te
 		SuccessRate: 1,
 		WinningPath: []string{"three-one-theorem", "four-two-theorem"},
 	}
-	if err := store.AppendLearningRecords([]evolution.LearningRecord{rule}); err != nil {
-		t.Fatalf("AppendLearningRecords: %v", err)
-	}
+	seedVerifiedEvolutionRule(t, store, rule)
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config: config.EvolutionConfig{Enabled: true, Mode: "apply"},
+		Config: config.EvolutionConfig{Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyAutomatic},
 		Now:    func() time.Time { return time.Unix(1700001000, 0).UTC() },
 		Store:  store,
 		Applier: evolution.NewApplier(
@@ -789,9 +775,7 @@ func TestRuntime_RunColdPathOnce_ApplyFailureQuarantinesDraftAndWritesRollbackAu
 		Status:      evolution.RecordStatus("ready"),
 		EventCount:  4,
 	}
-	if err := store.AppendLearningRecords([]evolution.LearningRecord{rule}); err != nil {
-		t.Fatalf("AppendLearningRecords: %v", err)
-	}
+	seedVerifiedEvolutionRule(t, store, rule)
 
 	skillDir := filepath.Join(root, "skills", "weather")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
@@ -804,7 +788,7 @@ func TestRuntime_RunColdPathOnce_ApplyFailureQuarantinesDraftAndWritesRollbackAu
 	}
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config: config.EvolutionConfig{Enabled: true, Mode: "apply"},
+		Config: config.EvolutionConfig{Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyAutomatic},
 		Now:    func() time.Time { return time.Unix(1700001000, 0).UTC() },
 		Store:  store,
 		Applier: evolution.NewApplier(evolution.NewPaths(root, ""), func() time.Time {
@@ -888,12 +872,10 @@ func TestRuntime_RunColdPathOnce_FirstApplyFailureDoesNotCreateGhostProfile(t *t
 		Status:      evolution.RecordStatus("ready"),
 		EventCount:  4,
 	}
-	if err := store.AppendLearningRecords([]evolution.LearningRecord{rule}); err != nil {
-		t.Fatalf("AppendLearningRecords: %v", err)
-	}
+	seedVerifiedEvolutionRule(t, store, rule)
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config: config.EvolutionConfig{Enabled: true, Mode: "apply"},
+		Config: config.EvolutionConfig{Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyAutomatic},
 		Now:    func() time.Time { return time.Unix(1700001000, 0).UTC() },
 		Store:  store,
 		Applier: evolution.NewApplier(evolution.NewPaths(root, ""), func() time.Time {
@@ -949,9 +931,7 @@ func TestRuntime_RunColdPathOnce_DraftSaveFailureRollsBackAppliedSkill(t *testin
 		Status:      evolution.RecordStatus("ready"),
 		EventCount:  4,
 	}
-	if err := store.AppendLearningRecords([]evolution.LearningRecord{rule}); err != nil {
-		t.Fatalf("AppendLearningRecords: %v", err)
-	}
+	seedVerifiedEvolutionRule(t, store, rule)
 
 	if err := os.Chmod(paths.RootDir, 0o555); err != nil {
 		t.Fatalf("Chmod(root read-only): %v", err)
@@ -961,7 +941,7 @@ func TestRuntime_RunColdPathOnce_DraftSaveFailureRollsBackAppliedSkill(t *testin
 	})
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config: config.EvolutionConfig{Enabled: true, Mode: "apply"},
+		Config: config.EvolutionConfig{Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyAutomatic},
 		Now:    func() time.Time { return time.Unix(1700001000, 0).UTC() },
 		Store:  store,
 		Applier: evolution.NewApplier(paths, func() time.Time {
@@ -1046,7 +1026,7 @@ func TestRuntime_RunColdPathOnce_AutoRunsLifecycleMaintenance(t *testing.T) {
 	}
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config: config.EvolutionConfig{Enabled: true, Mode: "apply"},
+		Config: config.EvolutionConfig{Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyAutomatic},
 		Now:    func() time.Time { return now },
 		Store:  store,
 		Applier: evolution.NewApplier(paths, func() time.Time {
@@ -1104,9 +1084,7 @@ func TestRuntime_RunColdPathOnce_ProfileSaveFailureRollsBackSkillAndQuarantinesD
 		Status:      evolution.RecordStatus("ready"),
 		EventCount:  4,
 	}
-	if err := store.AppendLearningRecords([]evolution.LearningRecord{rule}); err != nil {
-		t.Fatalf("AppendLearningRecords: %v", err)
-	}
+	seedVerifiedEvolutionRule(t, store, rule)
 
 	if err := os.MkdirAll(filepath.Dir(paths.ProfilesDir), 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -1116,7 +1094,7 @@ func TestRuntime_RunColdPathOnce_ProfileSaveFailureRollsBackSkillAndQuarantinesD
 	}
 
 	rt, err := evolution.NewRuntime(evolution.RuntimeOptions{
-		Config: config.EvolutionConfig{Enabled: true, Mode: "apply"},
+		Config: config.EvolutionConfig{Enabled: true, Mode: "apply", ApplyPolicy: config.EvolutionApplyAutomatic},
 		Now:    func() time.Time { return time.Unix(1700001000, 0).UTC() },
 		Store:  store,
 		Applier: evolution.NewApplier(paths, func() time.Time {
@@ -1166,5 +1144,30 @@ func TestRuntime_RunColdPathOnce_ProfileSaveFailureRollsBackSkillAndQuarantinesD
 	}
 	if len(drafts[0].ScanFindings) == 0 {
 		t.Fatal("expected scan findings for profile save failure")
+	}
+}
+
+func seedVerifiedEvolutionRule(
+	t *testing.T,
+	store *evolution.Store,
+	rule evolution.LearningRecord,
+) {
+	t.Helper()
+	success := true
+	rule.TaskRecordIDs = []string{rule.ID + "-task-1", rule.ID + "-task-2"}
+	tasks := make([]evolution.LearningRecord, 0, len(rule.TaskRecordIDs))
+	for index, id := range rule.TaskRecordIDs {
+		tasks = append(tasks, evolution.LearningRecord{
+			ID: id, Kind: evolution.RecordKindTask, WorkspaceID: rule.WorkspaceID,
+			CreatedAt: rule.CreatedAt.Add(time.Duration(index) * time.Second),
+			Summary:   rule.Summary, FinalOutput: "verified successful procedure",
+			Status: evolution.RecordStatus("clustered"), Success: &success,
+		})
+	}
+	if err := store.AppendTaskRecords(context.Background(), tasks); err != nil {
+		t.Fatalf("AppendTaskRecords: %v", err)
+	}
+	if err := store.AppendPatternRecords([]evolution.LearningRecord{rule}); err != nil {
+		t.Fatalf("AppendPatternRecords: %v", err)
 	}
 }

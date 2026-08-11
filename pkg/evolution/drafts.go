@@ -100,9 +100,13 @@ func (g *DefaultDraftGenerator) GenerateDraftWithEvidence(
 		target = "learned-skill"
 	}
 
-	_, hasExisting, err := g.loadBaseSkillContent(target, matches)
-	if err != nil {
-		return SkillDraft{}, err
+	hasExisting := false
+	if validateEvolutionSkillTarget(target) == nil {
+		var err error
+		_, hasExisting, err = g.loadBaseSkillContent(target, matches)
+		if err != nil {
+			return SkillDraft{}, err
+		}
 	}
 
 	draftType := DraftTypeWorkflow

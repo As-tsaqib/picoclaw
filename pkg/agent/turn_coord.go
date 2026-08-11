@@ -59,6 +59,9 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState, pipeline *Pipel
 				SkillContextSnapshots: skillContextSnapshots,
 				ToolKinds:             ts.toolKindsSnapshot(),
 				ToolExecutions:        ts.toolExecutionsSnapshot(),
+				NoHistory:             ts.opts.NoHistory,
+				SuppressLearning:      ts.opts.SuppressMemoryReview,
+				Depth:                 ts.depth,
 			},
 		)
 	}()

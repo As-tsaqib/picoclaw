@@ -5,7 +5,13 @@ import (
 	"time"
 )
 
-func SaveAppliedProfile(store *Store, workspace string, draft SkillDraft, now time.Time) error {
+func SaveAppliedProfile(
+	store *Store,
+	workspace string,
+	draft SkillDraft,
+	now time.Time,
+	maximumHistory int,
+) error {
 	return store.UpdateProfile(workspace, draft.TargetSkillName, func(profile *SkillProfile, exists bool) error {
 		if !exists {
 			*profile = SkillProfile{
@@ -29,6 +35,12 @@ func SaveAppliedProfile(store *Store, workspace string, draft SkillDraft, now ti
 		if profile.RetentionScore <= 0 {
 			profile.RetentionScore = 1
 		}
+		if draft.PreviousVersion != "" && !profileHasVersion(profile, draft.PreviousVersion) {
+			profile.VersionHistory = append(profile.VersionHistory, SkillVersionEntry{
+				Version: draft.PreviousVersion, Action: "baseline", Timestamp: now,
+				Summary: "Snapshot before evolved skill apply",
+			})
+		}
 		profile.VersionHistory = append(profile.VersionHistory, SkillVersionEntry{
 			Version:   draft.ID,
 			Action:    string(draft.ChangeKind),
@@ -36,8 +48,23 @@ func SaveAppliedProfile(store *Store, workspace string, draft SkillDraft, now ti
 			DraftID:   draft.ID,
 			Summary:   draft.HumanSummary,
 		})
+		if maximumHistory > 0 && len(profile.VersionHistory) > maximumHistory {
+			profile.VersionHistory = profile.VersionHistory[len(profile.VersionHistory)-maximumHistory:]
+		}
 		return nil
 	})
+}
+
+func profileHasVersion(profile *SkillProfile, version string) bool {
+	if profile == nil {
+		return false
+	}
+	for _, entry := range profile.VersionHistory {
+		if entry.Version == version {
+			return true
+		}
+	}
+	return false
 }
 
 func inferIntendedUseCases(rule LearningRecord) []string {

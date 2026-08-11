@@ -11,7 +11,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/sipeed/picoclaw/pkg/fileutil"
-	"github.com/sipeed/picoclaw/pkg/skills"
 )
 
 type Applier struct {
@@ -48,7 +47,7 @@ func (a *Applier) applyDraftWithRollback(
 		return nil, ctx.Err()
 	default:
 	}
-	if validateErr := skills.ValidateSkillName(draft.TargetSkillName); validateErr != nil {
+	if validateErr := validateEvolutionSkillTarget(draft.TargetSkillName); validateErr != nil {
 		return nil, validateErr
 	}
 
@@ -88,7 +87,7 @@ func (a *Applier) applyDraftWithRollback(
 func (a *Applier) backupCurrentSkill(
 	workspace, skillName string,
 ) (currentBody, backupPath string, hadOriginal bool, err error) {
-	if validateErr := skills.ValidateSkillName(skillName); validateErr != nil {
+	if validateErr := validateEvolutionSkillTarget(skillName); validateErr != nil {
 		return "", "", false, validateErr
 	}
 

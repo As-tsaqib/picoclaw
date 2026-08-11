@@ -195,6 +195,7 @@ func TestMemoryReviewerStagesBackgroundWritesWhenApprovalEnabled(t *testing.T) {
 		"content": "Prefers concise progress updates",
 	}}
 	al, agent, caller := newMemoryReviewerHarness(t, provider)
+	caller.GroupID, caller.ChatID, caller.TopicID, caller.TopicName = "", "user-a", "", ""
 	al.cfg.Memory.WriteApproval = true
 	appendReviewerTurn(t, agent, caller, "turn-1")
 	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {

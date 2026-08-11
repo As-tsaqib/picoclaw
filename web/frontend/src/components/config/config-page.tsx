@@ -17,6 +17,10 @@ import {
 } from "@/api/system"
 import { ConfigChangeNotice } from "@/components/config-change-notice"
 import {
+  EvolutionManagementSection,
+  MemoryManagementSection,
+} from "@/components/config/memory-evolution-management"
+import {
   AgentDefaultsSection,
   CronSection,
   DevicesSection,
@@ -34,11 +38,11 @@ import {
   type LauncherForm,
   type MCPServerForm,
   type TurnProfileForm,
+  buildEvolutionConfigPatch,
   buildFormFromConfig,
   buildMemoryConfigPatch,
   buildMemoryReviewOptions,
   parseCIDRText,
-  parseFloatField,
   parseIntField,
   parseJSONObjectField,
   parseMultilineList,
@@ -363,6 +367,7 @@ export function ConfigPage() {
         )
         const turnProfile = buildTurnProfilePatch(form.turnProfile)
         const memoryConfigPatch = buildMemoryConfigPatch(form)
+        const evolutionConfigPatch = buildEvolutionConfigPatch(form)
         const heartbeatInterval = parseIntField(
           form.heartbeatInterval,
           "Heartbeat interval",
@@ -372,16 +377,6 @@ export function ConfigPage() {
           form.cronExecTimeoutMinutes,
           "Cron exec timeout",
           { min: 0 },
-        )
-        const evolutionMinTaskCount = parseIntField(
-          form.evolutionMinTaskCount,
-          "Evolution minimum task count",
-          { min: 1 },
-        )
-        const evolutionMinSuccessRatio = parseFloatField(
-          form.evolutionMinSuccessRatio,
-          "Evolution minimum success ratio",
-          { min: 0.01, max: 1 },
         )
         const mcpDiscoveryValidationEnabled =
           form.mcpEnabled && form.mcpDiscoveryEnabled
@@ -604,20 +599,7 @@ export function ConfigPage() {
             dm_scope: dmScope,
           },
           memory: memoryConfigPatch,
-          evolution: {
-            enabled: form.evolutionEnabled,
-            mode: form.evolutionMode,
-            state_dir:
-              form.evolutionStateDir.trim() === ""
-                ? null
-                : form.evolutionStateDir.trim(),
-            min_task_count: evolutionMinTaskCount,
-            min_success_ratio: evolutionMinSuccessRatio,
-            cold_path_trigger: form.evolutionColdPathTrigger,
-            cold_path_times: parseMultilineList(
-              form.evolutionColdPathTimesText,
-            ),
-          },
+          evolution: evolutionConfigPatch,
           tools: {
             cron: {
               allow_command: form.allowCommand,
@@ -833,7 +815,11 @@ export function ConfigPage() {
                 reviewModels={memoryReviewOptions.models}
               />
 
+              <MemoryManagementSection />
+
               <EvolutionSection form={form} onFieldChange={updateField} />
+
+              <EvolutionManagementSection />
 
               <MCPSection
                 form={form}

@@ -51,6 +51,7 @@ func TestMemoryConfigValidateEnumsAndBounds(t *testing.T) {
 		mutate func(*MemoryConfig)
 	}{
 		{"notification", func(cfg *MemoryConfig) { cfg.Notifications = "sometimes" }},
+		{"approval mode", func(cfg *MemoryConfig) { cfg.ApprovalMode = "sometimes" }},
 		{"review interval", func(cfg *MemoryConfig) { cfg.BackgroundReview.Interval = 0 }},
 		{"review timeout", func(cfg *MemoryConfig) { cfg.BackgroundReview.TimeoutSeconds = 0 }},
 		{"review iterations", func(cfg *MemoryConfig) { cfg.BackgroundReview.MaxIterations = 5 }},
@@ -63,6 +64,18 @@ func TestMemoryConfigValidateEnumsAndBounds(t *testing.T) {
 		{"checkpoint count", func(cfg *MemoryConfig) { cfg.Checkpoints.MaxCount = 1_001 }},
 		{"checkpoint context", func(cfg *MemoryConfig) { cfg.Checkpoints.MaxContextChars = 20_001 }},
 		{"checkpoint retention", func(cfg *MemoryConfig) { cfg.Checkpoints.CompletedRetentionDays = 0 }},
+		{"retrieval engine", func(cfg *MemoryConfig) { cfg.Retrieval.Engine = "vector" }},
+		{"retrieval workspace results", func(cfg *MemoryConfig) { cfg.Retrieval.MaxWorkspaceResults = 51 }},
+		{"retrieval user results", func(cfg *MemoryConfig) { cfg.Retrieval.MaxUserResults = 51 }},
+		{"retrieval chars", func(cfg *MemoryConfig) { cfg.Retrieval.MaxTotalChars = 20_001 }},
+		{"pinned chars", func(cfg *MemoryConfig) { cfg.Retrieval.PinnedCharBudget = 10_001 }},
+		{"minimum relevance", func(cfg *MemoryConfig) { cfg.Retrieval.MinimumScore = 10.1 }},
+		{"recency weight", func(cfg *MemoryConfig) { cfg.Retrieval.RecencyWeight = 5.1 }},
+		{"recency half life", func(cfg *MemoryConfig) { cfg.Retrieval.RecencyHalfLifeDays = 3_651 }},
+		{"fuzzy weight", func(cfg *MemoryConfig) { cfg.Retrieval.FuzzyWeight = 5.1 }},
+		{"fallback count", func(cfg *MemoryConfig) { cfg.Retrieval.RecentFallbackCount = 51 }},
+		{"archive retention", func(cfg *MemoryConfig) { cfg.Lifecycle.ArchivedRetentionDays = 3_651 }},
+		{"stale threshold", func(cfg *MemoryConfig) { cfg.Lifecycle.StaleThresholdDays = 3_651 }},
 	}
 
 	for _, test := range tests {
@@ -73,5 +86,37 @@ func TestMemoryConfigValidateEnumsAndBounds(t *testing.T) {
 				t.Fatal("Validate() error = nil, want validation failure")
 			}
 		})
+	}
+}
+
+func TestMemoryApprovalModeLegacyMappingAndExplicitPrecedence(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  MemoryConfig
+		want string
+	}{
+		{name: "legacy false", cfg: MemoryConfig{WriteApproval: false}, want: MemoryApprovalOff},
+		{name: "legacy true", cfg: MemoryConfig{WriteApproval: true}, want: MemoryApprovalBackgroundOnly},
+		{name: "explicit off wins", cfg: MemoryConfig{WriteApproval: true, ApprovalMode: MemoryApprovalOff}, want: MemoryApprovalOff},
+		{name: "explicit background", cfg: MemoryConfig{ApprovalMode: MemoryApprovalBackgroundOnly}, want: MemoryApprovalBackgroundOnly},
+		{name: "explicit all writes", cfg: MemoryConfig{ApprovalMode: MemoryApprovalAllWrites}, want: MemoryApprovalAllWrites},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.cfg.EffectiveApprovalMode(); got != test.want {
+				t.Fatalf("EffectiveApprovalMode()=%q, want %q", got, test.want)
+			}
+		})
+	}
+	if (MemoryConfig{ApprovalMode: MemoryApprovalOff}).ShouldStageMemoryWrite(true) {
+		t.Fatal("off staged background write")
+	}
+	background := MemoryConfig{ApprovalMode: MemoryApprovalBackgroundOnly}
+	if !background.ShouldStageMemoryWrite(true) || background.ShouldStageMemoryWrite(false) {
+		t.Fatal("background_only staging semantics are incorrect")
+	}
+	all := MemoryConfig{ApprovalMode: MemoryApprovalAllWrites}
+	if !all.ShouldStageMemoryWrite(true) || !all.ShouldStageMemoryWrite(false) {
+		t.Fatal("all_writes did not stage every model write")
 	}
 }

@@ -5,17 +5,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/fileutil"
-	"github.com/sipeed/picoclaw/pkg/skills"
 )
 
 type Store struct {
@@ -77,15 +79,22 @@ func (s *Store) appendJSONLRecords(ctx context.Context, path string, records []L
 	default:
 	}
 
-	unlock := lockStoreFile(path)
+	unlock, err := lockStoreFile(path)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 
-	if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o755); mkdirErr != nil {
+	if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o700); mkdirErr != nil {
 		return mkdirErr
 	}
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
+		return err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = f.Close()
 		return err
 	}
 	defer func() {
@@ -101,7 +110,7 @@ func (s *Store) appendJSONLRecords(ctx context.Context, path string, records []L
 			return ctx.Err()
 		default:
 		}
-		if err := enc.Encode(record); err != nil {
+		if err := enc.Encode(sanitizeLearningRecordForPersistence(record)); err != nil {
 			return err
 		}
 	}
@@ -151,7 +160,7 @@ func (s *Store) loadRecordsFromPath(path string) ([]LearningRecord, error) {
 		if err := json.Unmarshal(line, &record); err != nil {
 			return err
 		}
-		records = append(records, record)
+		records = append(records, sanitizeLearningRecordForPersistence(record))
 		return nil
 	}); err != nil {
 		return nil, err
@@ -207,7 +216,10 @@ func (s *Store) MarkTaskRecordsClustered(ids []string) error {
 		return nil
 	}
 
-	unlock := lockStoreFile(s.paths.TaskRecords)
+	unlock, err := lockStoreFile(s.paths.TaskRecords)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 
 	current, err := s.loadRecordsFromPath(s.paths.TaskRecords)
@@ -258,7 +270,10 @@ func (s *Store) MergePatternRecords(records []LearningRecord) error {
 		return nil
 	}
 
-	unlock := lockStoreFile(s.paths.PatternRecords)
+	unlock, err := lockStoreFile(s.paths.PatternRecords)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 
 	current, err := s.loadRecordsFromPath(s.paths.PatternRecords)
@@ -274,25 +289,28 @@ func (s *Store) MergePatternRecords(records []LearningRecord) error {
 }
 
 func (s *Store) saveJSONLRecords(path string, records []LearningRecord) error {
-	unlock := lockStoreFile(path)
+	unlock, err := lockStoreFile(path)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 
 	return s.saveJSONLRecordsLocked(path, records)
 }
 
 func (s *Store) saveJSONLRecordsLocked(path string, records []LearningRecord) error {
-	if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o755); mkdirErr != nil {
+	if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o700); mkdirErr != nil {
 		return mkdirErr
 	}
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	for _, record := range records {
-		if err := enc.Encode(record); err != nil {
+		if err := enc.Encode(sanitizeLearningRecordForPersistence(record)); err != nil {
 			return err
 		}
 	}
-	return fileutil.WriteFileAtomic(path, buf.Bytes(), 0o644)
+	return fileutil.WriteFileAtomic(path, buf.Bytes(), 0o600)
 }
 
 func mergeLearningRecordsByID(base, updates []LearningRecord) []LearningRecord {
@@ -330,7 +348,10 @@ func learningRecordMergeKey(record LearningRecord) string {
 }
 
 func (s *Store) SaveDrafts(drafts []SkillDraft) error {
-	unlock := lockStoreFile(s.paths.SkillDrafts)
+	unlock, err := lockStoreFile(s.paths.SkillDrafts)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 
 	existing, err := s.LoadDrafts()
@@ -344,6 +365,7 @@ func (s *Store) SaveDrafts(drafts []SkillDraft) error {
 	}
 
 	for _, draft := range drafts {
+		draft, _ = sanitizeSkillDraftForPersistence(draft)
 		key := draftKey(draft.WorkspaceID, draft.ID)
 		if idx, ok := indexByKey[key]; ok {
 			existing[idx] = draft
@@ -357,7 +379,7 @@ func (s *Store) SaveDrafts(drafts []SkillDraft) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteFileAtomic(s.paths.SkillDrafts, data, 0o644)
+	return fileutil.WriteFileAtomic(s.paths.SkillDrafts, data, 0o600)
 }
 
 func (s *Store) LoadDrafts() ([]SkillDraft, error) {
@@ -376,7 +398,264 @@ func (s *Store) LoadDrafts() ([]SkillDraft, error) {
 	if err := json.Unmarshal(data, &drafts); err != nil {
 		return nil, err
 	}
+	for i := range drafts {
+		drafts[i], _ = sanitizeSkillDraftForPersistence(drafts[i])
+	}
 	return drafts, nil
+}
+
+func (s *Store) UpdateDraft(
+	workspace, id string,
+	update func(*SkillDraft) error,
+) (SkillDraft, error) {
+	workspace = strings.TrimSpace(workspace)
+	id = strings.TrimSpace(id)
+	if workspace == "" || !validEvolutionControlID(id) || update == nil {
+		return SkillDraft{}, fmt.Errorf("invalid evolution draft update")
+	}
+	unlock, err := lockStoreFile(s.paths.SkillDrafts)
+	if err != nil {
+		return SkillDraft{}, err
+	}
+	defer unlock()
+	drafts, err := s.LoadDrafts()
+	if err != nil {
+		return SkillDraft{}, err
+	}
+	index := -1
+	for i := range drafts {
+		if drafts[i].WorkspaceID == workspace && drafts[i].ID == id {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return SkillDraft{}, os.ErrNotExist
+	}
+	if err := update(&drafts[index]); err != nil {
+		return SkillDraft{}, err
+	}
+	drafts[index], _ = sanitizeSkillDraftForPersistence(drafts[index])
+	data, err := json.MarshalIndent(drafts, "", "  ")
+	if err != nil {
+		return SkillDraft{}, err
+	}
+	if err := fileutil.WriteFileAtomic(s.paths.SkillDrafts, data, 0o600); err != nil {
+		return SkillDraft{}, err
+	}
+	return drafts[index], nil
+}
+
+func (s *Store) AppendAudit(event AuditEvent) error {
+	if strings.TrimSpace(event.Action) == "" || strings.TrimSpace(event.Workspace) == "" {
+		return fmt.Errorf("evolution audit action and workspace are required")
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	if event.ID == "" {
+		sum := sha256.Sum256([]byte(strings.Join([]string{
+			event.Workspace, event.Action, event.DraftID, event.SkillName,
+			event.Timestamp.UTC().Format(time.RFC3339Nano),
+		}, "\x00")))
+		event.ID = "audit-" + hex.EncodeToString(sum[:8])
+	}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	unlock, err := lockStoreFile(s.paths.AuditLog)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := os.MkdirAll(filepath.Dir(s.paths.AuditLog), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(s.paths.AuditLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	return os.Chmod(s.paths.AuditLog, 0o600)
+}
+
+func (s *Store) LoadAudit(limit int) ([]AuditEvent, error) {
+	var events []AuditEvent
+	if err := decodeJSONLLines(s.paths.AuditLog, func(line []byte) error {
+		var event AuditEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			return err
+		}
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if len(events) > limit {
+		events = events[len(events)-limit:]
+	}
+	return events, nil
+}
+
+func (s *Store) LoadAuditForWorkspace(workspace string, limit int) ([]AuditEvent, error) {
+	filtered := make([]AuditEvent, 0)
+	if err := decodeJSONLLines(s.paths.AuditLog, func(line []byte) error {
+		var event AuditEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			return err
+		}
+		if event.Workspace == workspace {
+			filtered = append(filtered, event)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if len(filtered) > limit {
+		filtered = filtered[len(filtered)-limit:]
+	}
+	return filtered, nil
+}
+
+func (s *Store) SaveSkillVersion(snapshot SkillVersionSnapshot) error {
+	path, err := s.skillVersionPath(snapshot.Workspace, snapshot.SkillName, snapshot.Version)
+	if err != nil {
+		return err
+	}
+	if snapshot.CreatedAt.IsZero() {
+		snapshot.CreatedAt = time.Now().UTC()
+	}
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return err
+	}
+	unlock, err := lockStoreFile(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return fileutil.WriteFileAtomic(path, data, 0o600)
+}
+
+func (s *Store) LoadSkillVersion(workspace, skillName, version string) (SkillVersionSnapshot, error) {
+	path, err := s.skillVersionPath(workspace, skillName, version)
+	if err != nil {
+		return SkillVersionSnapshot{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return SkillVersionSnapshot{}, err
+	}
+	var snapshot SkillVersionSnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return SkillVersionSnapshot{}, err
+	}
+	if snapshot.Workspace != workspace || snapshot.SkillName != skillName || snapshot.Version != version {
+		return SkillVersionSnapshot{}, fmt.Errorf("evolution version scope mismatch")
+	}
+	return snapshot, nil
+}
+
+func (s *Store) PruneSkillVersions(
+	workspace,
+	skillName string,
+	keep int,
+	protectedVersions ...string,
+) error {
+	probe, err := s.skillVersionPath(workspace, skillName, "retention-probe")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(probe)
+	unlock, err := lockStoreFile(dir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	protected := make(map[string]struct{}, len(protectedVersions))
+	for _, version := range protectedVersions {
+		if version = strings.TrimSpace(version); version != "" {
+			protected[version] = struct{}{}
+		}
+	}
+	type versionFile struct {
+		path     string
+		snapshot SkillVersionSnapshot
+	}
+	versions := make([]versionFile, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		var snapshot SkillVersionSnapshot
+		if decodeErr := json.Unmarshal(data, &snapshot); decodeErr != nil {
+			return decodeErr
+		}
+		if snapshot.Workspace != workspace || snapshot.SkillName != skillName {
+			return fmt.Errorf("evolution version scope mismatch")
+		}
+		versions = append(versions, versionFile{path: path, snapshot: snapshot})
+	}
+	sort.SliceStable(versions, func(i, j int) bool {
+		if !versions[i].snapshot.CreatedAt.Equal(versions[j].snapshot.CreatedAt) {
+			return versions[i].snapshot.CreatedAt.After(versions[j].snapshot.CreatedAt)
+		}
+		return versions[i].snapshot.Version < versions[j].snapshot.Version
+	})
+	if keep < 1 {
+		keep = 1
+	}
+	kept := 0
+	for _, version := range versions {
+		_, preserve := protected[version.snapshot.Version]
+		if preserve || kept < keep {
+			kept++
+			continue
+		}
+		if err := os.Remove(version.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) skillVersionPath(workspace, skillName, version string) (string, error) {
+	if err := validateEvolutionSkillTarget(skillName); err != nil {
+		return "", err
+	}
+	workspace = strings.TrimSpace(workspace)
+	version = strings.TrimSpace(version)
+	if workspace == "" || version == "" || len(version) > 256 || strings.ContainsRune(version, '\x00') {
+		return "", fmt.Errorf("invalid evolution version scope")
+	}
+	digest := sha256.Sum256([]byte(version))
+	name := "version-" + hex.EncodeToString(digest[:16]) + ".json"
+	return filepath.Join(s.paths.VersionsDir, workspaceScopeDir(workspace), skillName, name), nil
 }
 
 func (s *Store) SaveProfile(profile SkillProfile) error {
@@ -384,10 +663,13 @@ func (s *Store) SaveProfile(profile SkillProfile) error {
 	if err != nil {
 		return err
 	}
-	unlock := lockStoreFile(path)
+	unlock, err := lockStoreFile(path)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 
-	if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o755); mkdirErr != nil {
+	if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o700); mkdirErr != nil {
 		return mkdirErr
 	}
 
@@ -395,7 +677,23 @@ func (s *Store) SaveProfile(profile SkillProfile) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteFileAtomic(path, data, 0o644)
+	return fileutil.WriteFileAtomic(path, data, 0o600)
+}
+
+func (s *Store) DeleteProfile(workspaceID, skillName string) error {
+	path, err := s.profilePath(workspaceID, skillName)
+	if err != nil {
+		return err
+	}
+	unlock, err := lockStoreFile(path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) LoadProfile(skillName string) (SkillProfile, error) {
@@ -411,7 +709,10 @@ func (s *Store) UpdateProfile(
 		return err
 	}
 
-	unlock := lockStoreFile(targetPath)
+	unlock, err := lockStoreFile(targetPath)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 
 	profile, err := s.loadProfileForWorkspace(workspaceID, skillName)
@@ -428,7 +729,7 @@ func (s *Store) UpdateProfile(
 	if !exists && isZeroSkillProfile(profile) {
 		return nil
 	}
-	if mkdirErr := os.MkdirAll(filepath.Dir(targetPath), 0o755); mkdirErr != nil {
+	if mkdirErr := os.MkdirAll(filepath.Dir(targetPath), 0o700); mkdirErr != nil {
 		return mkdirErr
 	}
 
@@ -436,7 +737,7 @@ func (s *Store) UpdateProfile(
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteFileAtomic(targetPath, data, 0o644)
+	return fileutil.WriteFileAtomic(targetPath, data, 0o600)
 }
 
 func (s *Store) loadProfileForWorkspace(workspaceID, skillName string) (SkillProfile, error) {
@@ -557,7 +858,7 @@ func isInvalidJSON(err error) bool {
 	return errors.As(err, &syntaxErr)
 }
 
-func lockStoreFile(path string) func() {
+func lockStoreFile(path string) (func(), error) {
 	for {
 		actual, _ := storeFileLocks.LoadOrStore(path, &sync.Mutex{})
 		mu, ok := actual.(*sync.Mutex)
@@ -570,12 +871,22 @@ func lockStoreFile(path string) func() {
 			continue
 		}
 		mu.Lock()
-		return mu.Unlock
+		fileUnlock, err := fileutil.LockFile(path)
+		if err != nil {
+			mu.Unlock()
+			return nil, fmt.Errorf("lock evolution state: %w", err)
+		}
+		return func() {
+			if fileUnlock != nil {
+				_ = fileUnlock()
+			}
+			mu.Unlock()
+		}, nil
 	}
 }
 
 func (s *Store) profilePath(workspaceID, skillName string) (string, error) {
-	if err := skills.ValidateSkillName(skillName); err != nil {
+	if err := validateEvolutionSkillTarget(skillName); err != nil {
 		return "", err
 	}
 	workspaceID = strings.TrimSpace(workspaceID)
@@ -619,7 +930,7 @@ func (s *Store) loadProfileFromPath(path string) (SkillProfile, error) {
 }
 
 func (s *Store) profileLookupPaths(workspaceID, skillName string) ([]string, error) {
-	if err := skills.ValidateSkillName(skillName); err != nil {
+	if err := validateEvolutionSkillTarget(skillName); err != nil {
 		return nil, err
 	}
 
@@ -683,4 +994,25 @@ func sanitizeWorkspaceComponent(value string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-")
+}
+
+func validEvolutionControlID(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 256 {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// ValidControlID reports whether value is safe to use as an evolution draft
+// or version selector. Store methods still enforce workspace ownership.
+func ValidControlID(value string) bool {
+	return validEvolutionControlID(value)
 }

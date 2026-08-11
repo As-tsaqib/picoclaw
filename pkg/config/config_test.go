@@ -434,10 +434,20 @@ func TestEvolutionConfig_ModeSemantics(t *testing.T) {
 			wantAutoApply: false,
 		},
 		{
-			name: "apply runs cold path and auto applies",
+			name: "apply runs cold path but requires approval by default",
 			cfg: EvolutionConfig{
 				Enabled: true,
 				Mode:    "apply",
+			},
+			wantRunsCold:  true,
+			wantAutoApply: false,
+		},
+		{
+			name: "automatic apply policy is explicit",
+			cfg: EvolutionConfig{
+				Enabled:     true,
+				Mode:        "apply",
+				ApplyPolicy: EvolutionApplyAutomatic,
 			},
 			wantRunsCold:  true,
 			wantAutoApply: true,
@@ -536,7 +546,7 @@ func TestLoadConfig_EvolutionEnabledWithoutModeUsesObserveSemantics(t *testing.T
 	assert.False(t, cfg.Evolution.AutoAppliesDrafts())
 }
 
-func TestLoadConfig_EvolutionExplicitApplyModeAutoApplies(t *testing.T) {
+func TestLoadConfig_EvolutionExplicitApplyModeStillRequiresApprovalByDefault(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
 	raw := `{
@@ -559,7 +569,32 @@ func TestLoadConfig_EvolutionExplicitApplyModeAutoApplies(t *testing.T) {
 	assert.Equal(t, "apply", cfg.Evolution.Mode)
 	assert.Equal(t, "apply", cfg.Evolution.EffectiveMode())
 	assert.True(t, cfg.Evolution.RunsColdPathAutomatically())
+	assert.False(t, cfg.Evolution.AutoAppliesDrafts())
+	assert.Equal(t, EvolutionApplyApprovalRequired, cfg.Evolution.EffectiveApplyPolicy())
+}
+
+func TestLoadConfig_EvolutionAutomaticPolicyMustBeExplicit(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	raw := `{
+		"version": 3,
+		"evolution": {
+			"enabled": true,
+			"mode": "apply",
+			"apply_policy": "automatic"
+		}
+	}`
+	if err := os.WriteFile(configPath, []byte(raw), 0o644); err != nil {
+		t.Fatalf("WriteFile(configPath): %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+
 	assert.True(t, cfg.Evolution.AutoAppliesDrafts())
+	assert.Equal(t, EvolutionApplyAutomatic, cfg.Evolution.EffectiveApplyPolicy())
 }
 
 func TestSaveConfig_DisabledEvolutionOmitsApplyMode(t *testing.T) {

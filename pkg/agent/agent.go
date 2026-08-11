@@ -461,6 +461,9 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	al.mu.Lock()
 	oldRegistry := al.registry
 	oldEvolution := al.evolution
+	if oldEvolution != nil && newEvolution != nil {
+		oldEvolution.transferPendingTurnsTo(newEvolution)
+	}
 
 	// Store new values
 	al.cfg = cfg

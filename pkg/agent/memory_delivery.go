@@ -2,6 +2,7 @@ package agent
 
 import (
 	"strings"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -15,13 +16,14 @@ type deferredMemoryDelivery struct {
 	userContent      string
 	assistantContent string
 	reviewEligible   bool
+	curatedUsage     []memory.CuratedUsage
 }
 
 func (al *AgentLoop) deferTurnMemoryDelivery(ts *turnState, assistantContent string) {
 	if al == nil || ts == nil || ts.agent == nil {
 		return
 	}
-	if ts.opts.NoHistory || ts.depth > 0 || (ts.agent.RecallMemory == nil && ts.agent.Checkpoints == nil) {
+	if ts.opts.NoHistory || ts.depth > 0 || !al.turnDeliveryCommitNeeded(ts.agent) {
 		al.discardTurnMemory(ts)
 		return
 	}
@@ -37,11 +39,15 @@ func (al *AgentLoop) deferTurnMemoryDelivery(ts *turnState, assistantContent str
 		userContent:      ts.userMessage,
 		assistantContent: assistantContent,
 		reviewEligible:   memoryReviewEligible(ts, caller),
+		curatedUsage:     ts.stagedCuratedUsage(),
 	}
 	if previous, loaded := al.pendingMemoryDeliveries.LoadOrStore(caller.SessionKey, delivery); loaded {
 		if prior, ok := previous.(deferredMemoryDelivery); ok {
 			if prior.agent != nil && prior.agent.Checkpoints != nil {
 				prior.agent.Checkpoints.DiscardTurn(prior.turnID)
+			}
+			if bridge := al.currentEvolutionBridge(); bridge != nil {
+				bridge.DiscardTurn(prior.turnID)
 			}
 		}
 		al.pendingMemoryDeliveries.Store(caller.SessionKey, delivery)
@@ -68,7 +74,7 @@ func (al *AgentLoop) finishTurnMemoryDelivery(ts *turnState, assistantContent st
 	if ts == nil || ts.agent == nil {
 		return
 	}
-	if ts.opts.NoHistory || ts.depth > 0 || (ts.agent.RecallMemory == nil && ts.agent.Checkpoints == nil) {
+	if ts.opts.NoHistory || ts.depth > 0 || !al.turnDeliveryCommitNeeded(ts.agent) {
 		al.discardTurnMemory(ts)
 		return
 	}
@@ -84,6 +90,7 @@ func (al *AgentLoop) finishTurnMemoryDelivery(ts *turnState, assistantContent st
 		userContent:      ts.userMessage,
 		assistantContent: assistantContent,
 		reviewEligible:   memoryReviewEligible(ts, caller),
+		curatedUsage:     ts.stagedCuratedUsage(),
 	}
 	al.commitMemoryDelivery(delivery, delivered)
 }
@@ -93,6 +100,7 @@ func (al *AgentLoop) commitMemoryDelivery(delivery deferredMemoryDelivery, deliv
 	if agent == nil {
 		return
 	}
+	al.acknowledgeEvolutionTurn(delivery.turnID, delivered)
 	if !delivered {
 		if agent.Checkpoints != nil {
 			agent.Checkpoints.DiscardTurn(delivery.turnID)
@@ -107,6 +115,13 @@ func (al *AgentLoop) commitMemoryDelivery(delivery deferredMemoryDelivery, deliv
 			"",
 		); err != nil {
 			logger.WarnCF("memory", "Failed to commit delivered task checkpoint", safeMemoryLogFields(err))
+		}
+	}
+	if agent.CuratedMemory != nil {
+		for _, usage := range delivery.curatedUsage {
+			if err := agent.CuratedMemory.MarkUsed(usage.Target, delivery.caller, usage.IDs, time.Time{}); err != nil {
+				logger.WarnCF("memory", "Failed to commit curated memory usage", safeMemoryLogFields(err))
+			}
 		}
 	}
 	if agent.RecallMemory == nil {
@@ -131,6 +146,25 @@ func (al *AgentLoop) commitMemoryDelivery(delivery deferredMemoryDelivery, deliv
 func (al *AgentLoop) discardTurnMemory(ts *turnState) {
 	if ts != nil && ts.agent != nil && ts.agent.Checkpoints != nil {
 		ts.agent.Checkpoints.DiscardTurn(ts.turnID)
+	}
+	if ts != nil {
+		if bridge := al.currentEvolutionBridge(); bridge != nil {
+			bridge.DiscardTurn(ts.turnID)
+		}
+	}
+}
+
+func (al *AgentLoop) turnDeliveryCommitNeeded(agent *AgentInstance) bool {
+	if agent != nil && (agent.CuratedMemory != nil || agent.RecallMemory != nil || agent.Checkpoints != nil) {
+		return true
+	}
+	bridge := al.currentEvolutionBridge()
+	return bridge != nil && bridge.cfg.Enabled
+}
+
+func (al *AgentLoop) acknowledgeEvolutionTurn(turnID string, delivered bool) {
+	if bridge := al.currentEvolutionBridge(); bridge != nil {
+		bridge.AcknowledgeTurn(turnID, delivered)
 	}
 }
 

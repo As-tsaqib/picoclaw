@@ -25,6 +25,13 @@ type ReviewCursor struct {
 	LastAttemptAt          time.Time `json:"last_attempt_at,omitempty"`
 }
 
+type ReviewStateSummary struct {
+	Sessions               int       `json:"sessions"`
+	SuccessfulTurnsPending int       `json:"successful_turns_pending"`
+	LastSuccessfulReviewAt time.Time `json:"last_successful_review_at,omitempty"`
+	LastAttemptAt          time.Time `json:"last_attempt_at,omitempty"`
+}
+
 type reviewStateDocument struct {
 	Version int                     `json:"version"`
 	Cursors map[string]ReviewCursor `json:"cursors"`
@@ -187,6 +194,26 @@ func (s *ReviewStateStore) ForgetSession(sessionRef string) error {
 		}
 	}
 	return s.writeDocument(doc)
+}
+
+func (s *ReviewStateStore) Summary() (ReviewStateSummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc, err := s.readDocument()
+	if err != nil {
+		return ReviewStateSummary{}, err
+	}
+	summary := ReviewStateSummary{Sessions: len(doc.Cursors)}
+	for _, cursor := range doc.Cursors {
+		summary.SuccessfulTurnsPending += cursor.SuccessfulTurns
+		if cursor.LastSuccessfulReviewAt.After(summary.LastSuccessfulReviewAt) {
+			summary.LastSuccessfulReviewAt = cursor.LastSuccessfulReviewAt
+		}
+		if cursor.LastAttemptAt.After(summary.LastAttemptAt) {
+			summary.LastAttemptAt = cursor.LastAttemptAt
+		}
+	}
+	return summary, nil
 }
 
 func reviewCursorIdentity(caller CallerScope) (string, ReviewCursor, error) {

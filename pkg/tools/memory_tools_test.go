@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/memory"
 )
 
@@ -46,6 +47,8 @@ func TestMemoryManageToolCRUDScopeAndApproval(t *testing.T) {
 	}
 	callerA := toolMemoryCaller("session-a", "user-a", "group-1", "10")
 	callerB := toolMemoryCaller("session-b", "user-b", "group-1", "20")
+	callerA.GroupID, callerA.ChatID, callerA.TopicID = "", "user-a", ""
+	callerB.GroupID, callerB.ChatID, callerB.TopicID = "", "user-b", ""
 	tool := NewMemoryManageTool(store, false, nil)
 	added := decodeToolResult(t, tool.Execute(toolContext(callerA, "turn-a"), map[string]any{
 		"action": "add", "target": "current_user", "content": "Prefers concise responses",
@@ -72,6 +75,87 @@ func TestMemoryManageToolCRUDScopeAndApproval(t *testing.T) {
 	workspaceEntries, err := store.List(memory.CuratedTargetWorkspace, callerA)
 	if err != nil || len(workspaceEntries) != 0 {
 		t.Fatalf("approval write was applied immediately: %#v, %v", workspaceEntries, err)
+	}
+}
+
+func TestMemoryManageToolApprovalModesDistinguishInteractiveAndCuratorWrites(t *testing.T) {
+	tests := []struct {
+		name       string
+		mode       string
+		background bool
+		wantStaged bool
+	}{
+		{name: "off interactive", mode: config.MemoryApprovalOff},
+		{name: "off curator", mode: config.MemoryApprovalOff, background: true},
+		{name: "background only interactive", mode: config.MemoryApprovalBackgroundOnly},
+		{name: "background only curator", mode: config.MemoryApprovalBackgroundOnly, background: true, wantStaged: true},
+		{name: "all writes interactive", mode: config.MemoryApprovalAllWrites, wantStaged: true},
+		{name: "all writes curator", mode: config.MemoryApprovalAllWrites, background: true, wantStaged: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, err := memory.NewCuratedStore(filepath.Join(t.TempDir(), "curated"), memory.CuratedStoreOptions{
+				WorkspaceCharLimit: 1_000,
+				PerUserCharLimit:   1_000,
+			})
+			if err != nil {
+				t.Fatalf("NewCuratedStore() error = %v", err)
+			}
+			caller := toolMemoryCaller("session-a", "user-a", "", "")
+			caller.ChatID = "user-a"
+			tool := NewMemoryManageToolWithApprovalMode(store, test.mode, nil)
+			ctx := toolContext(caller, "turn-a")
+			if test.background {
+				ctx = WithBackgroundMemoryReview(ctx, true)
+			}
+			result := tool.Execute(ctx, map[string]any{
+				"action": "add", "target": "current_user",
+				"content": "Prefers concise Indonesian updates",
+				"type":    "communication_preference",
+			})
+			if result.IsError {
+				t.Fatalf("memory write failed: %s", result.ContentForLLM())
+			}
+			entries, listErr := store.List(memory.CuratedTargetCurrentUser, caller)
+			if listErr != nil {
+				t.Fatalf("List() error = %v", listErr)
+			}
+			pending, pendingErr := store.Pending(memory.CuratedTargetCurrentUser, caller)
+			if pendingErr != nil {
+				t.Fatalf("Pending() error = %v", pendingErr)
+			}
+			if test.wantStaged {
+				if len(entries) != 0 || len(pending) != 1 {
+					t.Fatalf("staged write entries=%d pending=%d", len(entries), len(pending))
+				}
+			} else if len(entries) != 1 || len(pending) != 0 {
+				t.Fatalf("immediate write entries=%d pending=%d", len(entries), len(pending))
+			}
+		})
+	}
+}
+
+func TestMemoryManageToolRejectsCurrentUserAccessFromSharedGroup(t *testing.T) {
+	store, err := memory.NewCuratedStore(filepath.Join(t.TempDir(), "curated"), memory.CuratedStoreOptions{
+		WorkspaceCharLimit: 1_000,
+		PerUserCharLimit:   1_000,
+	})
+	if err != nil {
+		t.Fatalf("NewCuratedStore() error = %v", err)
+	}
+	caller := toolMemoryCaller("session-a", "user-a", "group-1", "10")
+	tool := NewMemoryManageToolWithApprovalMode(store, config.MemoryApprovalOff, nil)
+	result := tool.Execute(toolContext(caller, "turn-a"), map[string]any{
+		"action": "add", "target": "current_user",
+		"content": "Prefers concise replies",
+	})
+	if !result.IsError {
+		t.Fatalf("shared-group current-user mutation succeeded: %s", result.ContentForLLM())
+	}
+	payload := decodeToolResult(t, result)
+	errorPayload, _ := payload["error"].(map[string]any)
+	if errorPayload["code"] != "private_context_required" {
+		t.Fatalf("shared-group error payload = %#v", payload)
 	}
 }
 

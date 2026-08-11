@@ -283,3 +283,39 @@ func TestCuratedStoreConcurrentAdds(t *testing.T) {
 		t.Fatalf("concurrent entry count = %d, %v, want %d", len(entries), err, workers)
 	}
 }
+
+func TestCuratedStoreConcurrentInstancesPreserveEveryWrite(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "curated")
+	first := newTestCuratedStore(t, root, 100_000, 100_000)
+	second := newTestCuratedStore(t, root, 100_000, 100_000)
+	caller := testCaller("telegram:user-1")
+	const workers = 40
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for index := range workers {
+		store := first
+		if index%2 == 1 {
+			store = second
+		}
+		wg.Add(1)
+		go func(store *CuratedStore, value int) {
+			defer wg.Done()
+			_, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+				Action:  CuratedActionAdd,
+				Content: fmt.Sprintf("Cross-instance preference number %d", value),
+			}}, false)
+			errs <- err
+		}(store, index)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("cross-instance ApplyBatch() error = %v", err)
+		}
+	}
+	entries, err := first.List(CuratedTargetCurrentUser, caller)
+	if err != nil || len(entries) != workers {
+		t.Fatalf("cross-instance entry count = %d, %v, want %d", len(entries), err, workers)
+	}
+}

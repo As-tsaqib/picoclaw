@@ -98,6 +98,51 @@ func TestMemoryPromptUsesBoundedWorkspaceCurrentUserAndCurrentTopicCheckpoint(t 
 	}
 }
 
+func TestMemoryPromptExcludesCurrentUserMemoryFromSharedChat(t *testing.T) {
+	cfg := config.DefaultConfig()
+	store, err := memory.NewCuratedStore(t.TempDir(), memory.CuratedStoreOptions{
+		WorkspaceCharLimit: 1_000,
+		PerUserCharLimit:   1_000,
+	})
+	if err != nil {
+		t.Fatalf("NewCuratedStore() error = %v", err)
+	}
+	caller := memory.CallerScope{
+		AgentID: "main", UserKey: "telegram:user-a", Channel: "telegram",
+		Account: "personal", ChatID: "group-1/10", GroupID: "group-1",
+		TopicID: "10", SessionKey: "topic-a", SessionRef: "session-a",
+	}
+	if _, err := store.ApplyBatch(memory.CuratedTargetWorkspace, caller, []memory.CuratedMutation{{
+		Action: memory.CuratedActionAdd, Content: "Workspace convention remains safe in groups",
+	}}, false); err != nil {
+		t.Fatalf("ApplyBatch(workspace) error = %v", err)
+	}
+	if _, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, caller, []memory.CuratedMutation{{
+		Action: memory.CuratedActionAdd, Content: "Private timezone is Asia/Makassar",
+	}}, false); err != nil {
+		t.Fatalf("ApplyBatch(current user) error = %v", err)
+	}
+
+	ts := &turnState{
+		agent:       &AgentInstance{ID: "main", CuratedMemory: store},
+		userMessage: "Which conventions apply?",
+	}
+	parts, _ := memoryPromptPartsForTurn(ts, cfg, caller)
+	if !promptPartsContain(parts, "Workspace convention remains safe in groups") {
+		t.Fatal("shared-chat prompt omitted workspace memory")
+	}
+	if promptPartsContain(parts, "Private timezone is Asia/Makassar") ||
+		promptPartsContain(parts, "target=\"current_user\"") {
+		t.Fatal("shared-chat prompt exposed current-user memory")
+	}
+	usage := ts.stagedCuratedUsage()
+	for _, item := range usage {
+		if item.Target == memory.CuratedTargetCurrentUser {
+			t.Fatalf("shared-chat prompt staged private usage: %#v", usage)
+		}
+	}
+}
+
 func TestCuratedMemoryChangesAppearOnNextPromptAssembly(t *testing.T) {
 	cfg := config.DefaultConfig()
 	store, err := memory.NewCuratedStore(t.TempDir(), memory.CuratedStoreOptions{
@@ -121,6 +166,137 @@ func TestCuratedMemoryChangesAppearOnNextPromptAssembly(t *testing.T) {
 	parts, _ = memoryPromptPartsForTurn(ts, cfg, caller)
 	if !promptPartsContain(parts, "New durable convention") {
 		t.Fatal("memory change was not visible on the next prompt assembly")
+	}
+}
+
+func TestMemoryPromptRetrievalIncludesPinnedAndRelevantButExcludesIrrelevant(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Memory.Retrieval.RecentFallbackCount = 0
+	cfg.Memory.Retrieval.MinimumScore = 0.1
+	store, err := memory.NewCuratedStore(t.TempDir(), memory.CuratedStoreOptions{
+		WorkspaceCharLimit: 5_000,
+		PerUserCharLimit:   5_000,
+	})
+	if err != nil {
+		t.Fatalf("NewCuratedStore() error = %v", err)
+	}
+	caller := memory.CallerScope{
+		AgentID: "main", UserKey: "telegram:user-a", Channel: "telegram",
+		Account: "personal", SessionKey: "topic-a", SessionRef: "session-a",
+	}
+	add := func(target, content, entryType string) memory.CuratedEntry {
+		t.Helper()
+		result, addErr := store.ApplyBatch(target, caller, []memory.CuratedMutation{{
+			Action: memory.CuratedActionAdd, Content: content, Type: entryType,
+		}}, false)
+		if addErr != nil {
+			t.Fatalf("ApplyBatch(%q) error = %v", content, addErr)
+		}
+		return result.Applied[0]
+	}
+	workspaceRelevant := add(
+		memory.CuratedTargetWorkspace,
+		"Go repositories use remote GitHub Actions validation",
+		memory.CuratedTypeProjectFact,
+	)
+	userRelevant := add(
+		memory.CuratedTargetCurrentUser,
+		"Prefers concise Go explanations in Indonesian",
+		memory.CuratedTypeCommunicationPreference,
+	)
+	pinned := add(
+		memory.CuratedTargetCurrentUser,
+		"Verified profile preference applies to technical answers",
+		memory.CuratedTypeIdentity,
+	)
+	if _, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, caller, []memory.CuratedMutation{{
+		Action: memory.CuratedActionPin, ID: pinned.ID,
+	}}, false); err != nil {
+		t.Fatalf("pin error = %v", err)
+	}
+	irrelevant := add(
+		memory.CuratedTargetCurrentUser,
+		"Enjoys gardening books on weekends",
+		memory.CuratedTypeOther,
+	)
+
+	ts := &turnState{
+		agent:       &AgentInstance{ID: "main", CuratedMemory: store},
+		userMessage: "Explain the Go CI workflow concisely",
+	}
+	parts, _ := memoryPromptPartsForTurn(ts, cfg, caller)
+	var prompt strings.Builder
+	for _, part := range parts {
+		prompt.WriteString(part.Content)
+		prompt.WriteByte('\n')
+	}
+	content := prompt.String()
+	for _, expected := range []string{
+		workspaceRelevant.Content,
+		userRelevant.Content,
+		pinned.Content,
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("query-aware prompt missing %q: %s", expected, content)
+		}
+	}
+	if strings.Contains(content, irrelevant.Content) {
+		t.Fatalf("query-aware prompt injected irrelevant entry: %s", content)
+	}
+	usage := ts.stagedCuratedUsage()
+	if len(usage) != 2 {
+		t.Fatalf("staged usage = %#v, want separate workspace and user records", usage)
+	}
+}
+
+func TestMemoryPromptRetrievalDisabledPreservesBoundedLegacySelection(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Memory.Retrieval.Enabled = false
+	store, err := memory.NewCuratedStore(t.TempDir(), memory.CuratedStoreOptions{
+		WorkspaceCharLimit: 5_000,
+		PerUserCharLimit:   5_000,
+	})
+	if err != nil {
+		t.Fatalf("NewCuratedStore() error = %v", err)
+	}
+	caller := memory.CallerScope{AgentID: "main", UserKey: "user-a", SessionKey: "topic-a"}
+	active, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, caller, []memory.CuratedMutation{{
+		Action: memory.CuratedActionAdd, Content: "Legacy selection keeps unrelated active memory",
+	}}, false)
+	if err != nil {
+		t.Fatalf("ApplyBatch(active) error = %v", err)
+	}
+	archived, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, caller, []memory.CuratedMutation{{
+		Action: memory.CuratedActionAdd, Content: "Archived memory must stay excluded",
+	}}, false)
+	if err != nil {
+		t.Fatalf("ApplyBatch(archived) error = %v", err)
+	}
+	if _, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, caller, []memory.CuratedMutation{{
+		Action: memory.CuratedActionArchive, ID: archived.Applied[0].ID,
+	}}, false); err != nil {
+		t.Fatalf("archive error = %v", err)
+	}
+	ts := &turnState{
+		agent:       &AgentInstance{ID: "main", CuratedMemory: store},
+		userMessage: "completely unrelated query",
+	}
+	parts, _ := memoryPromptPartsForTurn(ts, cfg, caller)
+	if !promptPartsContain(parts, active.Applied[0].Content) {
+		t.Fatal("retrieval-disabled mode did not preserve active legacy selection")
+	}
+	if promptPartsContain(parts, archived.Applied[0].Content) {
+		t.Fatal("retrieval-disabled mode injected archived memory")
+	}
+}
+
+func TestCuratedPromptBudgetsRemainSeparateByTarget(t *testing.T) {
+	retrieval := config.MemoryRetrievalConfig{MaxTotalChars: 101}
+	if workspace := curatedPromptCharBudget(retrieval, memory.CuratedTargetWorkspace); workspace != 50 {
+		t.Fatalf("workspace budget = %d, want 50", workspace)
+	}
+	if user := curatedPromptCharBudget(retrieval, memory.CuratedTargetCurrentUser); user != 51 {
+		t.Fatalf("user budget = %d, want 51", user)
 	}
 }
 

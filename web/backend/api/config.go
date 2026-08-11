@@ -80,6 +80,10 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Invalid memory config: %v", err), http.StatusBadRequest)
 		return
 	}
+	if err = applyEvolutionDefaults(normalizedBody, &cfg); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid evolution config: %v", err), http.StatusBadRequest)
+		return
+	}
 	cfg.Session.ApplyDmScope()
 	cfg.Session.DeriveDmScope()
 	if execAllowRemoteOmitted(body) {
@@ -146,6 +150,24 @@ func applyMemoryDefaults(body []byte, cfg *config.Config) error {
 		}
 	}
 	cfg.Memory = memoryCfg
+	return nil
+}
+
+func applyEvolutionDefaults(body []byte, cfg *config.Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return err
+	}
+	evolutionCfg := config.DefaultConfig().Evolution
+	if data, ok := raw["evolution"]; ok && string(data) != "null" {
+		if err := json.Unmarshal(data, &evolutionCfg); err != nil {
+			return err
+		}
+	}
+	cfg.Evolution = evolutionCfg
 	return nil
 }
 
@@ -357,6 +379,9 @@ func validateConfig(cfg *config.Config) []string {
 	}
 
 	if err := cfg.Memory.Validate(); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := cfg.Evolution.Validate(); err != nil {
 		errs = append(errs, err.Error())
 	}
 
