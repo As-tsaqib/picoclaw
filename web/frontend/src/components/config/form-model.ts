@@ -129,11 +129,8 @@ export const EVOLUTION_MODE_OPTIONS: readonly EvolutionMode[] = [
   "apply",
 ]
 
-export const EVOLUTION_COLD_PATH_TRIGGER_OPTIONS: readonly EvolutionColdPathTrigger[] = [
-  "after_turn",
-  "scheduled",
-  "manual",
-]
+export const EVOLUTION_COLD_PATH_TRIGGER_OPTIONS: readonly EvolutionColdPathTrigger[] =
+  ["after_turn", "scheduled", "manual"]
 
 export interface TurnProfileForm {
   enabled: boolean
@@ -950,9 +947,7 @@ export function buildEvolutionConfigPatch(
     throw new Error("Evolution mode is invalid.")
   }
   if (
-    !EVOLUTION_COLD_PATH_TRIGGER_OPTIONS.includes(
-      form.evolutionColdPathTrigger,
-    )
+    !EVOLUTION_COLD_PATH_TRIGGER_OPTIONS.includes(form.evolutionColdPathTrigger)
   ) {
     throw new Error("Evolution cold-path trigger is invalid.")
   }

@@ -17,10 +17,6 @@ import {
 } from "@/api/system"
 import { ConfigChangeNotice } from "@/components/config-change-notice"
 import {
-  EvolutionManagementSection,
-  MemoryManagementSection,
-} from "@/components/config/memory-evolution-management"
-import {
   AgentDefaultsSection,
   CronSection,
   DevicesSection,
@@ -47,6 +43,10 @@ import {
   parseJSONObjectField,
   parseMultilineList,
 } from "@/components/config/form-model"
+import {
+  EvolutionManagementSection,
+  MemoryManagementSection,
+} from "@/components/config/memory-evolution-management"
 import { PageHeader } from "@/components/page-header"
 import {
   AlertDialog,

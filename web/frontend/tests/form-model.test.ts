@@ -199,8 +199,7 @@ test("evolution dropdown choices are preserved", () => {
     const patch = buildEvolutionConfigPatch({
       ...EMPTY_FORM,
       evolutionColdPathTrigger: trigger,
-      evolutionColdPathTimesText:
-        trigger === "scheduled" ? "03:00\n15:30" : "",
+      evolutionColdPathTimesText: trigger === "scheduled" ? "03:00\n15:30" : "",
     })
     assert.equal(patch.cold_path_trigger, trigger)
   }

@@ -412,10 +412,7 @@ export function MemoryRecallSection({
           max={10000}
           value={form.memoryRetrievalPinnedCharBudget}
           onChange={(event) =>
-            onFieldChange(
-              "memoryRetrievalPinnedCharBudget",
-              event.target.value,
-            )
+            onFieldChange("memoryRetrievalPinnedCharBudget", event.target.value)
           }
         />
       </Field>
@@ -1059,19 +1056,14 @@ export function EvolutionSection({
         <Select
           value={form.evolutionApplyPolicy}
           onValueChange={(value) =>
-            onFieldChange(
-              "evolutionApplyPolicy",
-              value as EvolutionApplyPolicy,
-            )
+            onFieldChange("evolutionApplyPolicy", value as EvolutionApplyPolicy)
           }
         >
           <SelectTrigger aria-label="Evolution apply policy">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="approval_required">
-              approval_required
-            </SelectItem>
+            <SelectItem value="approval_required">approval_required</SelectItem>
             <SelectItem value="automatic">automatic</SelectItem>
           </SelectContent>
         </Select>

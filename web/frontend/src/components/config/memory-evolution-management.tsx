@@ -188,7 +188,9 @@ export function MemoryManagementSection() {
       ? `?query=${encodeURIComponent(search.trim())}`
       : ""
     const [entryData, pendingData, statusData] = await Promise.all([
-      managementJSON<{ entries: MemoryEntry[] }>(`/api/memory/workspace${suffix}`),
+      managementJSON<{ entries: MemoryEntry[] }>(
+        `/api/memory/workspace${suffix}`,
+      ),
       managementJSON<{ pending: PendingDiff[] }>("/api/memory/pending"),
       managementJSON<MemoryStatus>("/api/memory/status"),
     ])
@@ -198,7 +200,9 @@ export function MemoryManagementSection() {
   }, [])
 
   useEffect(() => {
-    void reload("").catch(() => toast.error("Failed to load memory management data"))
+    void reload("").catch(() =>
+      toast.error("Failed to load memory management data"),
+    )
   }, [reload])
 
   const mutate = async (body: Record<string, unknown>, message: string) => {
@@ -260,9 +264,18 @@ export function MemoryManagementSection() {
       <CardContent className="space-y-5 pt-5">
         {status && (
           <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-            <StatusTile label="Usage" value={`${status.workspace.characters}/${status.workspace.capacity}`} />
-            <StatusTile label="Entries" value={String(status.workspace.entries)} />
-            <StatusTile label="Pending" value={String(status.workspace.pending_count)} />
+            <StatusTile
+              label="Usage"
+              value={`${status.workspace.characters}/${status.workspace.capacity}`}
+            />
+            <StatusTile
+              label="Entries"
+              value={String(status.workspace.entries)}
+            />
+            <StatusTile
+              label="Pending"
+              value={String(status.workspace.pending_count)}
+            />
             <StatusTile
               label="Next review"
               value={`${Math.max(0, status.review_interval - status.review.successful_turns_pending)} turns`}
@@ -277,10 +290,19 @@ export function MemoryManagementSection() {
             placeholder="Compact durable workspace fact"
             className="min-h-20 sm:col-span-4"
           />
-          <Select value={entryType} onValueChange={(value) => setEntryType(value as MemoryType)}>
-            <SelectTrigger aria-label="Memory type"><SelectValue /></SelectTrigger>
+          <Select
+            value={entryType}
+            onValueChange={(value) => setEntryType(value as MemoryType)}
+          >
+            <SelectTrigger aria-label="Memory type">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
-              {workspaceMemoryTypes.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}
+              {workspaceMemoryTypes.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {value}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Input
@@ -292,7 +314,11 @@ export function MemoryManagementSection() {
             onChange={(event) => setConfidence(event.target.value)}
             aria-label="Memory confidence"
           />
-          <Button disabled={busy} onClick={() => void addEntry()} className="sm:col-start-4">
+          <Button
+            disabled={busy}
+            onClick={() => void addEntry()}
+            className="sm:col-start-4"
+          >
             Add entry
           </Button>
         </div>
@@ -320,45 +346,142 @@ export function MemoryManagementSection() {
         </div>
 
         <div className="space-y-3">
-          {entries.length === 0 && <p className="text-muted-foreground text-sm">No matching workspace entries.</p>}
+          {entries.length === 0 && (
+            <p className="text-muted-foreground text-sm">
+              No matching workspace entries.
+            </p>
+          )}
           {entries.map((entry) => (
             <div key={entry.id} className="rounded-lg border p-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 space-y-2">
                   <div className="flex flex-wrap gap-1.5">
                     <Badge variant="outline">{entry.type || "other"}</Badge>
-                    <Badge variant={entry.status === "active" ? "secondary" : "outline"}>{entry.status || "active"}</Badge>
-                    {entry.pinned && <Badge><IconPin className="mr-1 size-3" />pinned</Badge>}
-                    <span className="text-muted-foreground font-mono text-xs">{entry.id}</span>
+                    <Badge
+                      variant={
+                        entry.status === "active" ? "secondary" : "outline"
+                      }
+                    >
+                      {entry.status || "active"}
+                    </Badge>
+                    {entry.pinned && (
+                      <Badge>
+                        <IconPin className="mr-1 size-3" />
+                        pinned
+                      </Badge>
+                    )}
+                    <span className="text-muted-foreground font-mono text-xs">
+                      {entry.id}
+                    </span>
                   </div>
                   {editingID === entry.id ? (
-                    <Textarea value={editingContent} onChange={(event) => setEditingContent(event.target.value)} />
+                    <Textarea
+                      value={editingContent}
+                      onChange={(event) =>
+                        setEditingContent(event.target.value)
+                      }
+                    />
                   ) : (
-                    <p className="text-sm break-words whitespace-pre-wrap">{entry.content}</p>
+                    <p className="text-sm break-words whitespace-pre-wrap">
+                      {entry.content}
+                    </p>
                   )}
                   <p className="text-muted-foreground text-xs">
-                    {entry.provenance?.source || "legacy"} · updated {shortTime(entry.updated_at)}
+                    {entry.provenance?.source || "legacy"} · updated{" "}
+                    {shortTime(entry.updated_at)}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-1.5">
                   {editingID === entry.id ? (
                     <>
-                      <Button size="sm" disabled={busy} onClick={() => {
-                        void mutate({ action: "replace", id: entry.id, content: editingContent.trim(), type: entry.type }, "Memory entry updated")
-                        setEditingID("")
-                      }}><IconCheck className="size-4" /></Button>
-                      <Button size="sm" variant="ghost" onClick={() => setEditingID("")}><IconX className="size-4" /></Button>
+                      <Button
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => {
+                          void mutate(
+                            {
+                              action: "replace",
+                              id: entry.id,
+                              content: editingContent.trim(),
+                              type: entry.type,
+                            },
+                            "Memory entry updated",
+                          )
+                          setEditingID("")
+                        }}
+                      >
+                        <IconCheck className="size-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditingID("")}
+                      >
+                        <IconX className="size-4" />
+                      </Button>
                     </>
                   ) : (
-                    <Button size="sm" variant="outline" onClick={() => { setEditingID(entry.id); setEditingContent(entry.content) }}>Edit</Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setEditingID(entry.id)
+                        setEditingContent(entry.content)
+                      }}
+                    >
+                      Edit
+                    </Button>
                   )}
-                  <Button size="sm" variant="outline" disabled={busy} onClick={() => void mutate({ action: entry.pinned ? "unpin" : "pin", id: entry.id }, entry.pinned ? "Memory unpinned" : "Memory pinned")}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() =>
+                      void mutate(
+                        {
+                          action: entry.pinned ? "unpin" : "pin",
+                          id: entry.id,
+                        },
+                        entry.pinned ? "Memory unpinned" : "Memory pinned",
+                      )
+                    }
+                  >
                     <IconPin className="size-4" />
                   </Button>
-                  <Button size="sm" variant="outline" disabled={busy} onClick={() => void mutate({ action: entry.status === "archived" ? "restore" : "archive", id: entry.id }, entry.status === "archived" ? "Memory restored" : "Memory archived")}>
-                    {entry.status === "archived" ? <IconRestore className="size-4" /> : <IconArchive className="size-4" />}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() =>
+                      void mutate(
+                        {
+                          action:
+                            entry.status === "archived" ? "restore" : "archive",
+                          id: entry.id,
+                        },
+                        entry.status === "archived"
+                          ? "Memory restored"
+                          : "Memory archived",
+                      )
+                    }
+                  >
+                    {entry.status === "archived" ? (
+                      <IconRestore className="size-4" />
+                    ) : (
+                      <IconArchive className="size-4" />
+                    )}
                   </Button>
-                  <Button size="sm" variant="destructive" disabled={busy} onClick={() => void mutate({ action: "remove", id: entry.id }, "Memory removed")}>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={busy}
+                    onClick={() =>
+                      void mutate(
+                        { action: "remove", id: entry.id },
+                        "Memory removed",
+                      )
+                    }
+                  >
                     <IconTrash className="size-4" />
                   </Button>
                 </div>
@@ -371,19 +494,56 @@ export function MemoryManagementSection() {
           <div className="space-y-3 border-t pt-5">
             <div>
               <h3 className="text-sm font-medium">Pending redacted diffs</h3>
-              <p className="text-muted-foreground text-xs">Only bounded workspace previews are displayed.</p>
+              <p className="text-muted-foreground text-xs">
+                Only bounded workspace previews are displayed.
+              </p>
             </div>
             {pending.map((diff) => (
-              <div key={`${diff.pending_id}-${diff.mutation_index}`} className="rounded-lg border p-3 text-sm">
+              <div
+                key={`${diff.pending_id}-${diff.mutation_index}`}
+                className="rounded-lg border p-3 text-sm"
+              >
                 <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
                   <div className="min-w-0 space-y-1">
-                    <p><span className="font-mono text-xs">{diff.pending_id}</span> · {diff.action} · {diff.type || "other"}</p>
-                    {diff.old_value && <p className="text-muted-foreground break-words">Old: {diff.old_value}</p>}
-                    {diff.proposed_value && <p className="break-words">Proposed: {diff.proposed_value}</p>}
+                    <p>
+                      <span className="font-mono text-xs">
+                        {diff.pending_id}
+                      </span>{" "}
+                      · {diff.action} · {diff.type || "other"}
+                    </p>
+                    {diff.old_value && (
+                      <p className="text-muted-foreground break-words">
+                        Old: {diff.old_value}
+                      </p>
+                    )}
+                    {diff.proposed_value && (
+                      <p className="break-words">
+                        Proposed: {diff.proposed_value}
+                      </p>
+                    )}
                   </div>
                   <div className="flex shrink-0 gap-2">
-                    <Button size="sm" disabled={busy} onClick={() => void resolvePending(diff.pending_id, "approve")}><IconCheck className="size-4" />Approve</Button>
-                    <Button size="sm" variant="outline" disabled={busy} onClick={() => void resolvePending(diff.pending_id, "reject")}><IconX className="size-4" />Reject</Button>
+                    <Button
+                      size="sm"
+                      disabled={busy}
+                      onClick={() =>
+                        void resolvePending(diff.pending_id, "approve")
+                      }
+                    >
+                      <IconCheck className="size-4" />
+                      Approve
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() =>
+                        void resolvePending(diff.pending_id, "reject")
+                      }
+                    >
+                      <IconX className="size-4" />
+                      Reject
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -413,13 +573,20 @@ export function EvolutionManagementSection() {
   }, [])
 
   useEffect(() => {
-    void reload().catch(() => toast.error("Failed to load evolution management data"))
+    void reload().catch(() =>
+      toast.error("Failed to load evolution management data"),
+    )
   }, [reload])
 
-  const decision = async (draft: EvolutionDraft, action: "approve" | "reject" | "apply") => {
+  const decision = async (
+    draft: EvolutionDraft,
+    action: "approve" | "reject" | "apply",
+  ) => {
     setBusy(true)
     try {
-      await managementPOST(`/api/evolution/drafts/${encodeURIComponent(draft.id)}/${action}`)
+      await managementPOST(
+        `/api/evolution/drafts/${encodeURIComponent(draft.id)}/${action}`,
+      )
       await reload()
       toast.success(`Evolution draft ${action} completed`)
     } catch (error) {
@@ -433,8 +600,12 @@ export function EvolutionManagementSection() {
     setBusy(true)
     try {
       const [nextPreview, nextProfile] = await Promise.all([
-        managementJSON<DraftPreview>(`/api/evolution/drafts/${encodeURIComponent(draft.id)}/preview`),
-        managementJSON<SkillProfile>(`/api/evolution/versions/${encodeURIComponent(draft.target_skill_name)}`).catch(() => null),
+        managementJSON<DraftPreview>(
+          `/api/evolution/drafts/${encodeURIComponent(draft.id)}/preview`,
+        ),
+        managementJSON<SkillProfile>(
+          `/api/evolution/versions/${encodeURIComponent(draft.target_skill_name)}`,
+        ).catch(() => null),
       ])
       setSelected(draft)
       setPreview(nextPreview)
@@ -462,7 +633,10 @@ export function EvolutionManagementSection() {
   const rollback = async (skillName: string, version: string) => {
     setBusy(true)
     try {
-      await managementPOST("/api/evolution/rollback", { skill_name: skillName, version })
+      await managementPOST("/api/evolution/rollback", {
+        skill_name: skillName,
+        version,
+      })
       await reload()
       toast.success("Skill rollback completed")
     } catch (error) {
@@ -484,45 +658,120 @@ export function EvolutionManagementSection() {
       <CardContent className="space-y-5 pt-5">
         {status && (
           <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-            <StatusTile label="Mode" value={status.enabled ? status.mode : "disabled"} />
-            <StatusTile label="Tasks / patterns" value={`${status.task_records}/${status.pattern_records}`} />
-            <StatusTile label="Drafts pending" value={String(status.pending_drafts)} />
+            <StatusTile
+              label="Mode"
+              value={status.enabled ? status.mode : "disabled"}
+            />
+            <StatusTile
+              label="Tasks / patterns"
+              value={`${status.task_records}/${status.pattern_records}`}
+            />
+            <StatusTile
+              label="Drafts pending"
+              value={String(status.pending_drafts)}
+            />
             <StatusTile label="Apply policy" value={status.apply_policy} />
           </div>
         )}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-muted-foreground text-xs">
-            Last observation: {shortTime(status?.last_observation)} · Last audit: {shortTime(status?.last_audit)}
+            Last observation: {shortTime(status?.last_observation)} · Last
+            audit: {shortTime(status?.last_audit)}
           </p>
-          <Button variant="outline" disabled={busy || !status?.enabled} onClick={() => void runReview()}>
-            <IconRefresh className="size-4" />Run bounded review
+          <Button
+            variant="outline"
+            disabled={busy || !status?.enabled}
+            onClick={() => void runReview()}
+          >
+            <IconRefresh className="size-4" />
+            Run bounded review
           </Button>
         </div>
 
         <div className="space-y-3">
-          {drafts.length === 0 && <p className="text-muted-foreground text-sm">No evolution drafts.</p>}
+          {drafts.length === 0 && (
+            <p className="text-muted-foreground text-sm">
+              No evolution drafts.
+            </p>
+          )}
           {drafts.map((draft) => (
             <div key={draft.id} className="rounded-lg border p-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
                 <div className="min-w-0 space-y-2">
                   <div className="flex flex-wrap gap-1.5">
                     <Badge variant="outline">{draft.change_kind}</Badge>
-                    <Badge variant={draft.status === "quarantined" ? "destructive" : "secondary"}>{draft.status}</Badge>
-                    <Badge variant="outline">{draft.evidence_count || 0} evidence</Badge>
-                    <Badge variant="outline">{Math.round((draft.success_ratio || 0) * 100)}% success</Badge>
+                    <Badge
+                      variant={
+                        draft.status === "quarantined"
+                          ? "destructive"
+                          : "secondary"
+                      }
+                    >
+                      {draft.status}
+                    </Badge>
+                    <Badge variant="outline">
+                      {draft.evidence_count || 0} evidence
+                    </Badge>
+                    <Badge variant="outline">
+                      {Math.round((draft.success_ratio || 0) * 100)}% success
+                    </Badge>
                   </div>
-                  <p className="text-sm font-medium break-words">{draft.target_skill_name}</p>
-                  <p className="text-muted-foreground text-sm break-words">{draft.human_summary}</p>
+                  <p className="text-sm font-medium break-words">
+                    {draft.target_skill_name}
+                  </p>
+                  <p className="text-muted-foreground text-sm break-words">
+                    {draft.human_summary}
+                  </p>
                   {(draft.scan_findings || []).map((finding) => (
-                    <p key={finding} className="text-destructive text-xs">{finding}</p>
+                    <p key={finding} className="text-destructive text-xs">
+                      {finding}
+                    </p>
                   ))}
-                  <p className="text-muted-foreground font-mono text-xs">{draft.id}</p>
+                  <p className="text-muted-foreground font-mono text-xs">
+                    {draft.id}
+                  </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-1.5">
-                  <Button size="sm" variant="outline" disabled={busy} onClick={() => void showPreview(draft)}>Preview</Button>
-                  {draft.status === "candidate" && <Button size="sm" disabled={busy} onClick={() => void decision(draft, "approve")}><IconCheck className="size-4" />Approve</Button>}
-                  {(draft.status === "candidate" || draft.status === "approved") && <Button size="sm" variant="outline" disabled={busy} onClick={() => void decision(draft, "reject")}><IconX className="size-4" />Reject</Button>}
-                  {draft.status === "approved" && <Button size="sm" disabled={busy || status?.mode !== "apply"} onClick={() => void decision(draft, "apply")}><IconPlayerPlay className="size-4" />Apply</Button>}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => void showPreview(draft)}
+                  >
+                    Preview
+                  </Button>
+                  {draft.status === "candidate" && (
+                    <Button
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => void decision(draft, "approve")}
+                    >
+                      <IconCheck className="size-4" />
+                      Approve
+                    </Button>
+                  )}
+                  {(draft.status === "candidate" ||
+                    draft.status === "approved") && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => void decision(draft, "reject")}
+                    >
+                      <IconX className="size-4" />
+                      Reject
+                    </Button>
+                  )}
+                  {draft.status === "approved" && (
+                    <Button
+                      size="sm"
+                      disabled={busy || status?.mode !== "apply"}
+                      onClick={() => void decision(draft, "apply")}
+                    >
+                      <IconPlayerPlay className="size-4" />
+                      Apply
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
@@ -531,21 +780,45 @@ export function EvolutionManagementSection() {
 
         {selected && preview && (
           <div className="space-y-3 border-t pt-5">
-            <h3 className="text-sm font-medium">Diff preview: {selected.target_skill_name}</h3>
-            <pre className="bg-muted max-h-96 overflow-auto rounded-lg p-3 text-xs whitespace-pre-wrap">{preview.diff_preview}</pre>
+            <h3 className="text-sm font-medium">
+              Diff preview: {selected.target_skill_name}
+            </h3>
+            <pre className="bg-muted max-h-96 overflow-auto rounded-lg p-3 text-xs whitespace-pre-wrap">
+              {preview.diff_preview}
+            </pre>
             {profile && profile.version_history.length > 0 && (
               <div className="space-y-2">
-                <h4 className="flex items-center gap-2 text-sm font-medium"><IconHistory className="size-4" />Version history</h4>
-                {profile.version_history.slice().reverse().map((version, index) => (
-                  <div key={`${version.version}-${index}`} className="flex flex-col gap-2 rounded border p-2 text-xs sm:flex-row sm:items-center sm:justify-between">
-                    <span className="break-all">{version.version} · {version.action} · {shortTime(version.timestamp)}</span>
-                    {version.version !== profile.current_version && (
-                      <Button size="sm" variant="outline" disabled={busy} onClick={() => void rollback(profile.skill_name, version.version)}>
-                        <IconRestore className="size-4" />Rollback
-                      </Button>
-                    )}
-                  </div>
-                ))}
+                <h4 className="flex items-center gap-2 text-sm font-medium">
+                  <IconHistory className="size-4" />
+                  Version history
+                </h4>
+                {profile.version_history
+                  .slice()
+                  .reverse()
+                  .map((version, index) => (
+                    <div
+                      key={`${version.version}-${index}`}
+                      className="flex flex-col gap-2 rounded border p-2 text-xs sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <span className="break-all">
+                        {version.version} · {version.action} ·{" "}
+                        {shortTime(version.timestamp)}
+                      </span>
+                      {version.version !== profile.current_version && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() =>
+                            void rollback(profile.skill_name, version.version)
+                          }
+                        >
+                          <IconRestore className="size-4" />
+                          Rollback
+                        </Button>
+                      )}
+                    </div>
+                  ))}
               </div>
             )}
           </div>
@@ -559,7 +832,7 @@ function StatusTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="bg-muted/50 min-w-0 rounded-lg border p-2.5">
       <p className="text-muted-foreground truncate">{label}</p>
-      <p className="mt-1 break-words font-medium">{value}</p>
+      <p className="mt-1 font-medium break-words">{value}</p>
     </div>
   )
 }
