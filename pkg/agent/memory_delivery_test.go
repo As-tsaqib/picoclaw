@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
+	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/memory"
 )
@@ -184,5 +186,84 @@ func TestClearSessionMemoryStatePreservesCuratedMemoryAndDurableCheckpoint(t *te
 	cursor, err := agent.MemoryReviewState.Get(caller)
 	if err != nil || cursor.SuccessfulTurns != 0 || cursor.LastReviewedSequence != 0 {
 		t.Fatalf("review cursor was not cleared: %#v, %v", cursor, err)
+	}
+}
+
+func TestClearLifecycleFlushesShortSessionBeforeReset(t *testing.T) {
+	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+		"action": "add", "target": "current_user",
+		"content":          "Prefers concise progress updates",
+		"type":             memory.CuratedTypeCommunicationPreference,
+		"evidence_kind":    memory.CuratedEvidenceExplicit,
+		"preference_key":   "communication.verbosity",
+		"preference_value": "concise",
+	}}
+	al, agent, _ := newMemoryReviewerHarness(t, provider)
+	tracker := &trackingContextManager{}
+	al.contextManager = tracker
+	opts := &processOptions{Dispatch: DispatchRequest{
+		SessionKey: "short-session",
+		InboundContext: &bus.InboundContext{
+			Channel: "telegram", Account: "personal", ChatID: "user-a", ChatType: "direct", SenderID: "user-a",
+		},
+	}}
+	caller := callerScopeForTurn(agent.ID, al.cfg, *opts)
+	appendReviewerTurn(t, agent, caller, "turn-short")
+	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
+		t.Fatal(err)
+	}
+	agent.Sessions.AddMessage(opts.Dispatch.SessionKey, "user", "Mulai sekarang saya lebih suka update singkat")
+
+	if err := al.clearHistoryWithMemoryFlush(context.Background(), agent, opts); err != nil {
+		t.Fatalf("clearHistoryWithMemoryFlush() error = %v", err)
+	}
+	if tracker.clearCalls.Load() != 1 {
+		t.Fatalf("context clear calls = %d, want 1", tracker.clearCalls.Load())
+	}
+	entries, err := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
+	if err != nil || len(entries) != 1 || entries[0].PreferenceValue != "concise" {
+		t.Fatalf("short-session preference was not flushed durably: %#v, %v", entries, err)
+	}
+	records, _, err := agent.RecallMemory.RecordsAfter(caller, 0, 4_000)
+	if err != nil || len(records) != 0 {
+		t.Fatalf("session recall survived successful clear: %#v, %v", records, err)
+	}
+}
+
+func TestClearLifecycleFailsClosedWhenMemoryFlushFails(t *testing.T) {
+	provider := &scriptedMemoryReviewProvider{disallowed: "exec"}
+	al, agent, _ := newMemoryReviewerHarness(t, provider)
+	tracker := &trackingContextManager{}
+	al.contextManager = tracker
+	opts := &processOptions{Dispatch: DispatchRequest{
+		SessionKey: "fail-closed-session",
+		InboundContext: &bus.InboundContext{
+			Channel: "telegram", Account: "personal", ChatID: "user-a", ChatType: "direct", SenderID: "user-a",
+		},
+	}}
+	caller := callerScopeForTurn(agent.ID, al.cfg, *opts)
+	appendReviewerTurn(t, agent, caller, "turn-unreviewed")
+	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
+		t.Fatal(err)
+	}
+	agent.Sessions.AddMessage(opts.Dispatch.SessionKey, "user", "durable unreviewed preference")
+
+	err := al.clearHistoryWithMemoryFlush(context.Background(), agent, opts)
+	if err == nil {
+		t.Fatal("clearHistoryWithMemoryFlush() error = nil, want flush failure")
+	}
+	if tracker.clearCalls.Load() != 0 {
+		t.Fatalf("context was cleared despite flush failure: %d calls", tracker.clearCalls.Load())
+	}
+	records, _, recallErr := agent.RecallMemory.RecordsAfter(caller, 0, 4_000)
+	if recallErr != nil || len(records) != 2 {
+		t.Fatalf("unreviewed recall was lost after failed clear: %#v, %v", records, recallErr)
+	}
+	cursor, cursorErr := agent.MemoryReviewState.Get(caller)
+	if cursorErr != nil || cursor.LastReviewedSequence != 0 || cursor.SuccessfulTurns != 1 {
+		t.Fatalf("review cursor advanced after failed clear: %#v, %v", cursor, cursorErr)
+	}
+	if history := agent.Sessions.GetHistory(opts.Dispatch.SessionKey); len(history) != 1 {
+		t.Fatalf("session history was cleared after failed flush: %#v", history)
 	}
 }

@@ -239,7 +239,7 @@ type turnState struct {
 	critical        bool               // Whether this SubTurn should continue after parent ends
 	parentTurnState *turnState         // Reference to parent turnState
 	parentEnded     atomic.Bool        // Whether parent has ended
-	closeOnce       sync.Once          // Ensures pendingResults channel is closed once
+	closeOnce       sync.Once          // Ensures finishedChan is closed once
 	finishedChan    chan struct{}      // Closed when turn finishes
 
 	// Token budget tracking
@@ -797,15 +797,15 @@ func (ts *turnState) interruptHintMessage() providers.Message {
 // SubTurn-related methods
 // =============================================================================
 
-// Finish marks the turn as finished and closes the pendingResults channel
+// Finish marks the turn as finished and closes the finish signal exactly once.
+// pendingResults is intentionally not closed: asynchronous child delivery can
+// race with Finish(), while Finished() is the safe cancellation signal for
+// producers and consumers. The channel becomes garbage-collectable with the
+// turn state after active references are released.
 func (ts *turnState) Finish(isHardAbort bool) {
 	ts.isFinished.Store(true)
 
-	// Close pendingResults channel exactly once
 	ts.closeOnce.Do(func() {
-		if ts.pendingResults != nil {
-			close(ts.pendingResults)
-		}
 		ts.mu.Lock()
 		if ts.finishedChan == nil {
 			ts.finishedChan = make(chan struct{})

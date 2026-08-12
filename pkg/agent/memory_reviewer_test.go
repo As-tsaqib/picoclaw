@@ -157,8 +157,8 @@ func TestMemoryReviewerUsesRestrictedToolsAndDoesNotTouchSessionHistory(t *testi
 	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
 		t.Fatalf("RecordSuccessfulTurn() error = %v", err)
 	}
-	if err := al.runMemoryReview(context.Background(), agent, caller); err != nil {
-		t.Fatalf("runMemoryReview() error = %v", err)
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+		t.Fatalf("runMemoryReview() error = %v", reviewErr)
 	}
 
 	entries, err := agent.CuratedMemory.List(memory.CuratedTargetWorkspace, caller)
@@ -201,8 +201,8 @@ func TestMemoryReviewerStagesBackgroundWritesWhenApprovalEnabled(t *testing.T) {
 	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
 		t.Fatalf("RecordSuccessfulTurn() error = %v", err)
 	}
-	if err := al.runMemoryReview(context.Background(), agent, caller); err != nil {
-		t.Fatalf("runMemoryReview() error = %v", err)
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+		t.Fatalf("runMemoryReview() error = %v", reviewErr)
 	}
 	entries, err := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
 	if err != nil || len(entries) != 0 {
@@ -400,5 +400,122 @@ func TestMemoryReviewerHighSalienceCanTriggerBeforeInterval(t *testing.T) {
 	case <-provider.finished:
 	case <-time.After(2 * time.Second):
 		t.Fatal("high-salience reviewer did not stop")
+	}
+}
+
+func TestUnreviewedRecallSurvivesStoreRestartAndCanBeCurated(t *testing.T) {
+	root := t.TempDir()
+	curatedPath := filepath.Join(root, "curated")
+	recallPath := filepath.Join(root, "recall")
+	reviewPath := filepath.Join(root, "review")
+	caller := memory.CallerScope{
+		AgentID: "main", UserKey: "telegram:user-restart", Channel: "telegram", Account: "personal",
+		SessionKey: "restart-session", SessionRef: "restart-session-ref",
+	}
+	curated, err := memory.NewCuratedStore(curatedPath, memory.CuratedStoreOptions{
+		WorkspaceCharLimit: 10_000, PerUserCharLimit: 10_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recall, err := memory.NewRecallStore(recallPath, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewState, err := memory.NewReviewStateStore(reviewPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, appendErr := recall.AppendDeliveredTurn(
+		caller, "turn-before-restart", "I prefer detailed explanations", "Understood.", "assistant-message",
+	); appendErr != nil {
+		t.Fatal(appendErr)
+	}
+	if _, recordErr := reviewState.RecordSuccessfulTurn(caller); recordErr != nil {
+		t.Fatal(recordErr)
+	}
+	_ = curated // created before restart to prove all stores can be reopened together
+
+	// Recreate all stores as a process restart would. The unreviewed transcript
+	// and cursor must remain durable even without a shutdown-time model call.
+	reopenedCurated, err := memory.NewCuratedStore(curatedPath, memory.CuratedStoreOptions{
+		WorkspaceCharLimit: 10_000, PerUserCharLimit: 10_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopenedRecall, err := memory.NewRecallStore(recallPath, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopenedReview, err := memory.NewReviewStateStore(reviewPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, latest, err := reopenedRecall.RecordsAfter(caller, 0, 4_000)
+	if err != nil || len(records) != 2 || latest == 0 {
+		t.Fatalf("unreviewed recall did not survive restart: %#v latest=%d err=%v", records, latest, err)
+	}
+	cursor, err := reopenedReview.Get(caller)
+	if err != nil || cursor.SuccessfulTurns != 1 || cursor.LastReviewedSequence != 0 {
+		t.Fatalf("review cursor did not survive restart: %#v err=%v", cursor, err)
+	}
+
+	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+		"action": "add", "target": "current_user",
+		"content":          "Prefers detailed explanations",
+		"type":             memory.CuratedTypeCommunicationPreference,
+		"evidence_kind":    memory.CuratedEvidenceExplicit,
+		"preference_key":   "communication.verbosity",
+		"preference_value": "detailed",
+	}}
+	cfg := config.DefaultConfig()
+	cfg.Memory.Enabled = true
+	cfg.Memory.BackgroundReview.Enabled = true
+	cfg.Memory.BackgroundReview.MaxIterations = 2
+	al := &AgentLoop{cfg: cfg}
+	agent := &AgentInstance{
+		ID: "main", Model: "review-test", Provider: provider,
+		Tools: tools.NewToolRegistry(), CuratedMemory: reopenedCurated, RecallMemory: reopenedRecall,
+		MemoryReviewState: reopenedReview, memoryReviewer: &memoryReviewController{},
+	}
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+		t.Fatalf("post-restart review failed: %v", reviewErr)
+	}
+	entries, err := reopenedCurated.List(memory.CuratedTargetCurrentUser, caller)
+	if err != nil || len(entries) != 1 || entries[0].PreferenceValue != "detailed" {
+		t.Fatalf("post-restart curator did not preserve preference: %#v err=%v", entries, err)
+	}
+}
+
+func TestRepeatedReviewWithoutNewRecallDoesNotDuplicateMemory(t *testing.T) {
+	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+		"action": "add", "target": "current_user",
+		"content":          "Prefers concise progress updates",
+		"type":             memory.CuratedTypeCommunicationPreference,
+		"evidence_kind":    memory.CuratedEvidenceExplicit,
+		"preference_key":   "communication.verbosity",
+		"preference_value": "concise",
+	}}
+	al, agent, caller := newMemoryReviewerHarness(t, provider)
+	caller.GroupID, caller.ChatID, caller.TopicID, caller.TopicName = "", "user-a", "", ""
+	appendReviewerTurn(t, agent, caller, "turn-once")
+	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
+		t.Fatal(err)
+	}
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+		t.Fatal(reviewErr)
+	}
+	callsAfterFirst, _, _ := provider.snapshot()
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+		t.Fatal(reviewErr)
+	}
+	callsAfterSecond, _, _ := provider.snapshot()
+	if callsAfterSecond != callsAfterFirst {
+		t.Fatalf("reviewer called provider without new recall: first=%d second=%d", callsAfterFirst, callsAfterSecond)
+	}
+	entries, err := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("repeat review duplicated memory: %#v err=%v", entries, err)
 	}
 }

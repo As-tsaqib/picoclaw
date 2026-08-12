@@ -81,7 +81,7 @@ func TestClearAndResetUseSameHistorySemantics(t *testing.T) {
 			return nil
 		},
 	})
-	for _, command := range []string{"/clear", "/reset"} {
+	for _, command := range []string{"/clear", "/reset", "/new"} {
 		result := executor.Execute(context.Background(), Request{
 			Channel: "telegram", Text: command, Reply: func(string) error { return nil },
 		})
@@ -89,7 +89,7 @@ func TestClearAndResetUseSameHistorySemantics(t *testing.T) {
 			t.Fatalf("Execute(%q) outcome=%v err=%v", command, result.Outcome, result.Err)
 		}
 	}
-	if calls != 2 {
-		t.Fatalf("ClearHistory calls = %d, want 2", calls)
+	if calls != 3 {
+		t.Fatalf("ClearHistory calls = %d, want 3", calls)
 	}
 }

@@ -257,9 +257,11 @@ func (s *CuratedStore) prepareMutations(
 ) ([]CuratedMutation, error) {
 	known := make(map[string]struct{}, len(doc.Entries)+len(mutations))
 	knownStatus := make(map[string]string, len(doc.Entries)+len(mutations))
+	knownPreferenceKey := make(map[string]string, len(doc.Entries)+len(mutations))
 	for _, entry := range doc.Entries {
 		known[entry.ID] = struct{}{}
 		knownStatus[entry.ID] = entry.EffectiveStatus()
+		knownPreferenceKey[entry.ID] = NormalizePreferenceKey(entry.PreferenceKey)
 	}
 	prepared := make([]CuratedMutation, 0, len(mutations))
 	for _, mutation := range mutations {
@@ -334,12 +336,17 @@ func (s *CuratedStore) prepareMutations(
 				if status := knownStatus[mutation.Supersedes]; status != CuratedStatusActive {
 					return nil, ErrCuratedInvalidAction
 				}
+				if priorKey := knownPreferenceKey[mutation.Supersedes]; mutation.PreferenceKey != "" &&
+					priorKey != "" && priorKey != mutation.PreferenceKey {
+					return nil, ErrCuratedInvalidPreferenceKey
+				}
 			}
 			if mutation.ExpiresAt != nil && !mutation.ExpiresAt.After(now) {
 				return nil, ErrCuratedInvalidAction
 			}
 			known[mutation.ID] = struct{}{}
 			knownStatus[mutation.ID] = CuratedStatusActive
+			knownPreferenceKey[mutation.ID] = mutation.PreferenceKey
 			if mutation.Supersedes != "" {
 				knownStatus[mutation.Supersedes] = CuratedStatusSuperseded
 			}
@@ -374,6 +381,10 @@ func (s *CuratedStore) prepareMutations(
 			if mutation.Confidence != nil && (*mutation.Confidence <= 0 || *mutation.Confidence > 1) {
 				return nil, ErrCuratedInvalidAction
 			}
+			effectivePreferenceKey := mutation.PreferenceKey
+			if effectivePreferenceKey == "" {
+				effectivePreferenceKey = knownPreferenceKey[mutation.ID]
+			}
 			if mutation.Supersedes != "" && mutation.Supersedes != mutation.ID {
 				if !validStableEntryID(mutation.Supersedes) {
 					return nil, ErrCuratedInvalidAction
@@ -381,7 +392,16 @@ func (s *CuratedStore) prepareMutations(
 				if _, exists := known[mutation.Supersedes]; !exists {
 					return nil, ErrCuratedEntryNotFound
 				}
+				if status := knownStatus[mutation.Supersedes]; status != CuratedStatusActive {
+					return nil, ErrCuratedInvalidAction
+				}
+				if priorKey := knownPreferenceKey[mutation.Supersedes]; effectivePreferenceKey != "" &&
+					priorKey != "" && priorKey != effectivePreferenceKey {
+					return nil, ErrCuratedInvalidPreferenceKey
+				}
+				knownStatus[mutation.Supersedes] = CuratedStatusSuperseded
 			}
+			knownPreferenceKey[mutation.ID] = effectivePreferenceKey
 		case CuratedActionRemove,
 			CuratedActionPin,
 			CuratedActionUnpin,
@@ -544,10 +564,15 @@ func applyCuratedMutations(
 			} else if mutation.LastVerifiedAt != nil {
 				entries[idx].LastVerifiedAt = mutation.LastVerifiedAt
 				entries[idx].LastConfirmedAt = mutation.LastVerifiedAt
-			} else if entries[idx].EffectiveEvidenceKind() == CuratedEvidenceExplicit {
+			} else if NormalizeEvidenceKind(mutation.EvidenceKind) == CuratedEvidenceExplicit {
+				// Only a mutation that explicitly carries direct-user evidence refreshes
+				// confirmation. A curator rewrite of an existing explicit memory does not.
 				confirmed := now
 				entries[idx].LastConfirmedAt = &confirmed
 				entries[idx].LastVerifiedAt = &confirmed
+			} else if mutation.EvidenceKind != "" {
+				entries[idx].LastConfirmedAt = nil
+				entries[idx].LastVerifiedAt = nil
 			}
 			if mutation.Supersedes != "" && mutation.Supersedes != mutation.ID {
 				entries[idx].Supersedes = mutation.Supersedes
@@ -595,8 +620,32 @@ func applyCuratedMutations(
 			entries[idx].ArchivedAt = nil
 			entries[idx].UpdatedAt = now
 			entries[idx].Provenance = mutation.Provenance
+			// Restoring a structured preference may also be a deliberate
+			// reaffirmation. Only apply an evidence override when the caller
+			// supplied one; background/generic restores otherwise preserve the
+			// original authority and confirmation time.
+			if NormalizePreferenceKey(entries[idx].PreferenceKey) != "" &&
+				strings.TrimSpace(mutation.EvidenceKind) != "" {
+				entries[idx].EvidenceKind = NormalizeEvidenceKind(mutation.EvidenceKind)
+				confidence := DefaultConfidenceForEvidence(entries[idx].EvidenceKind)
+				if mutation.Confidence != nil {
+					confidence = *mutation.Confidence
+				}
+				entries[idx].Confidence = normalizeConfidenceForEvidence(entries[idx].EvidenceKind, confidence)
+				if entries[idx].EvidenceKind == CuratedEvidenceExplicit {
+					confirmed := now
+					entries[idx].LastConfirmedAt = &confirmed
+					entries[idx].LastVerifiedAt = &confirmed
+				} else {
+					entries[idx].LastConfirmedAt = nil
+					entries[idx].LastVerifiedAt = nil
+				}
+			}
 			entries[idx] = normalizedCuratedEntry(entries[idx])
-			applied = append(applied, entries[idx])
+			reconcilePreferenceKey(entries, mutation.ID, now)
+			if current, ok := curatedEntryByID(entries, mutation.ID); ok {
+				applied = append(applied, current)
+			}
 		default:
 			return nil, nil, ErrCuratedInvalidAction
 		}

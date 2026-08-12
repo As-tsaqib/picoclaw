@@ -125,6 +125,27 @@ func DefaultConfidenceForEvidence(evidence string) float64 {
 	}
 }
 
+func maxConfidenceForEvidence(evidence string) float64 {
+	switch NormalizeEvidenceKind(evidence) {
+	case CuratedEvidenceInferred:
+		return 0.60
+	case CuratedEvidenceObserved:
+		return 0.85
+	default:
+		return 1.0
+	}
+}
+
+func normalizeConfidenceForEvidence(evidence string, confidence float64) float64 {
+	if confidence <= 0 {
+		confidence = DefaultConfidenceForEvidence(evidence)
+	}
+	if maxConfidence := maxConfidenceForEvidence(evidence); confidence > maxConfidence {
+		return maxConfidence
+	}
+	return confidence
+}
+
 func (entry CuratedEntry) EffectiveConfidence() float64 {
 	if entry.Confidence > 0 {
 		if entry.Confidence > 1 {
@@ -195,16 +216,6 @@ func normalizedCuratedEntry(entry CuratedEntry) CuratedEntry {
 	legacyBackgroundInference := rawEvidence == "" &&
 		strings.EqualFold(strings.TrimSpace(entry.Provenance.Source), "background_review")
 	entry.EvidenceKind = entry.EffectiveEvidenceKind()
-	if legacyBackgroundInference {
-		// V1 background-review records were historically stored as confidence=1
-		// and auto-verified even though they could be model inference. On upgrade,
-		// reinterpret only this known-unsafe legacy provenance conservatively.
-		entry.Confidence = DefaultConfidenceForEvidence(CuratedEvidenceInferred)
-		entry.LastConfirmedAt = nil
-		entry.LastVerifiedAt = nil
-	} else {
-		entry.Confidence = entry.EffectiveConfidence()
-	}
 	entry.PreferenceKey = NormalizePreferenceKey(entry.PreferenceKey)
 	entry.PreferenceValue = strings.TrimSpace(entry.PreferenceValue)
 	if entry.EvidenceCount < 0 {
@@ -212,6 +223,31 @@ func normalizedCuratedEntry(entry CuratedEntry) CuratedEntry {
 	}
 	if entry.ObservationCount < 0 {
 		entry.ObservationCount = 0
+	}
+	if entry.EvidenceKind == CuratedEvidenceObserved {
+		if entry.ObservationCount == 0 {
+			entry.ObservationCount = entry.EvidenceCount
+		}
+		// "observed" means repeated behavior. A single observation is only a
+		// cautious inference and must not receive observed authority.
+		if entry.ObservationCount < 2 {
+			entry.EvidenceKind = CuratedEvidenceInferred
+			entry.Confidence = DefaultConfidenceForEvidence(CuratedEvidenceInferred)
+		}
+	}
+	if legacyBackgroundInference {
+		// V1 background-review records were historically stored as confidence=1
+		// and auto-verified even though they could be model inference. On upgrade,
+		// reinterpret only this known-unsafe legacy provenance conservatively.
+		entry.Confidence = DefaultConfidenceForEvidence(CuratedEvidenceInferred)
+	} else {
+		entry.Confidence = normalizeConfidenceForEvidence(entry.EvidenceKind, entry.EffectiveConfidence())
+	}
+	if entry.EvidenceKind == CuratedEvidenceObserved || entry.EvidenceKind == CuratedEvidenceInferred {
+		// Confirmation is direct user evidence. If a record is no longer explicit,
+		// stale confirmation timestamps must not make it look user-verified.
+		entry.LastConfirmedAt = nil
+		entry.LastVerifiedAt = nil
 	}
 	return entry
 }

@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"encoding/json"
 	"hash/fnv"
 	"sort"
 	"strings"
@@ -44,10 +45,11 @@ type UserProfileOptions struct {
 }
 
 type cachedUserProfile struct {
-	Revision uint64
-	MaxChars int
-	MinScore float64
-	Snapshot UserProfileSnapshot
+	Revision   uint64
+	MaxChars   int
+	MinScore   float64
+	ValidUntil time.Time
+	Snapshot   UserProfileSnapshot
 }
 
 type profileCandidate struct {
@@ -75,6 +77,7 @@ func (s *CuratedStore) CompileUserProfile(
 	if opts.MinConfidence > 1 {
 		opts.MinConfidence = 1
 	}
+	useCache := opts.Now.IsZero()
 	if opts.Now.IsZero() {
 		opts.Now = s.now()
 	}
@@ -92,12 +95,26 @@ func (s *CuratedStore) CompileUserProfile(
 		return UserProfileSnapshot{}, readErr
 	}
 	profileRevision := userProfileRevision(doc.Entries)
+	var validUntil time.Time
+	for _, raw := range doc.Entries {
+		entry := normalizedCuratedEntry(raw)
+		if entry.EffectiveStatus() != CuratedStatusActive || profileCategory(entry) == "" || entry.ExpiresAt == nil {
+			continue
+		}
+		expires := entry.ExpiresAt.UTC()
+		if expires.After(now) && (validUntil.IsZero() || expires.Before(validUntil)) {
+			validUntil = expires
+		}
+	}
 
-	if cached, ok := s.profileCache.Load(path); ok {
-		item, valid := cached.(cachedUserProfile)
-		if valid && item.Revision == profileRevision && item.MaxChars == opts.MaxChars &&
-			item.MinScore == opts.MinConfidence {
-			return cloneUserProfileSnapshot(item.Snapshot), nil
+	if useCache {
+		if cached, ok := s.profileCache.Load(path); ok {
+			item, valid := cached.(cachedUserProfile)
+			cacheTimeValid := item.ValidUntil.IsZero() || now.Before(item.ValidUntil)
+			if valid && cacheTimeValid && item.Revision == profileRevision && item.MaxChars == opts.MaxChars &&
+				item.MinScore == opts.MinConfidence {
+				return cloneUserProfileSnapshot(item.Snapshot), nil
+			}
 		}
 	}
 
@@ -148,29 +165,28 @@ func (s *CuratedStore) CompileUserProfile(
 		if field.Value == "" || key == "" {
 			field.Content = strings.TrimSpace(entry.Content)
 		}
-		cost := profileFieldCharacters(field)
-		remaining := opts.MaxChars - snapshot.Characters
-		if cost > remaining && field.Content != "" && remaining > 32 {
-			field.Content = truncateCuratedRunes(field.Content, remaining-24)
-			cost = profileFieldCharacters(field)
+		candidateSnapshot := cloneUserProfileSnapshot(snapshot)
+		appendUserProfileField(&candidateSnapshot, candidate.category, field)
+		candidateSnapshot.SourceIDs = append(candidateSnapshot.SourceIDs, entry.ID)
+		if candidateSnapshot.UpdatedAt.IsZero() || entry.UpdatedAt.After(candidateSnapshot.UpdatedAt) {
+			candidateSnapshot.UpdatedAt = entry.UpdatedAt
 		}
-		if cost <= 0 || cost > remaining {
+		finalizeUserProfileCharacters(&candidateSnapshot)
+		if candidateSnapshot.Characters <= 0 || candidateSnapshot.Characters > opts.MaxChars {
 			continue
 		}
-		appendUserProfileField(&snapshot, candidate.category, field)
-		snapshot.Characters += cost
-		snapshot.SourceIDs = append(snapshot.SourceIDs, entry.ID)
-		if snapshot.UpdatedAt.IsZero() || entry.UpdatedAt.After(snapshot.UpdatedAt) {
-			snapshot.UpdatedAt = entry.UpdatedAt
-		}
+		snapshot = candidateSnapshot
 	}
 
-	s.profileCache.Store(path, cachedUserProfile{
-		Revision: profileRevision,
-		MaxChars: opts.MaxChars,
-		MinScore: opts.MinConfidence,
-		Snapshot: cloneUserProfileSnapshot(snapshot),
-	})
+	if useCache {
+		s.profileCache.Store(path, cachedUserProfile{
+			Revision:   profileRevision,
+			MaxChars:   opts.MaxChars,
+			MinScore:   opts.MinConfidence,
+			ValidUntil: validUntil,
+			Snapshot:   cloneUserProfileSnapshot(snapshot),
+		})
+	}
 	return snapshot, nil
 }
 
@@ -230,9 +246,26 @@ func appendUserProfileField(snapshot *UserProfileSnapshot, category string, fiel
 	}
 }
 
-func profileFieldCharacters(field UserProfileField) int {
-	return utf8.RuneCountInString(field.Key) + utf8.RuneCountInString(field.Value) +
-		utf8.RuneCountInString(field.Content) + 16
+func userProfileJSONCharacters(snapshot UserProfileSnapshot) int {
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return 0
+	}
+	return utf8.RuneCount(data)
+}
+
+func finalizeUserProfileCharacters(snapshot *UserProfileSnapshot) {
+	if snapshot == nil {
+		return
+	}
+	for i := 0; i < 4; i++ {
+		next := userProfileJSONCharacters(*snapshot)
+		if next == snapshot.Characters {
+			return
+		}
+		snapshot.Characters = next
+	}
+	snapshot.Characters = userProfileJSONCharacters(*snapshot)
 }
 
 func userProfileRevision(entries []CuratedEntry) uint64 {
