@@ -16,6 +16,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/evolution"
 	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/routing"
+	"github.com/sipeed/picoclaw/pkg/session"
 )
 
 const managementBodyLimit = 256 << 10
@@ -23,12 +24,23 @@ const managementBodyLimit = 256 << 10
 var errManagementInvalidRequest = errors.New("invalid management request")
 
 type workspaceMemoryMutationRequest struct {
-	Action     string   `json:"action"`
-	ID         string   `json:"id,omitempty"`
-	Content    string   `json:"content,omitempty"`
-	Type       string   `json:"type,omitempty"`
-	Confidence *float64 `json:"confidence,omitempty"`
-	Supersedes string   `json:"supersedes,omitempty"`
+	Action          string   `json:"action"`
+	ID              string   `json:"id,omitempty"`
+	Content         string   `json:"content,omitempty"`
+	Type            string   `json:"type,omitempty"`
+	Confidence      *float64 `json:"confidence,omitempty"`
+	EvidenceKind    string   `json:"evidence_kind,omitempty"`
+	PreferenceKey   string   `json:"preference_key,omitempty"`
+	PreferenceValue string   `json:"preference_value,omitempty"`
+	Supersedes      string   `json:"supersedes,omitempty"`
+}
+
+type currentUserProfileResponse struct {
+	ScopeLabel       string                     `json:"scope_label"`
+	ScopeDescription string                     `json:"scope_description"`
+	Profile          memory.UserProfileSnapshot `json:"profile"`
+	Entries          []memory.CuratedEntry      `json:"entries"`
+	Stats            memory.CuratedStats        `json:"stats"`
 }
 
 type pendingMemoryDiff struct {
@@ -47,6 +59,8 @@ type pendingMemoryDiff struct {
 func (h *Handler) registerMemoryEvolutionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/memory/workspace", h.handleListWorkspaceMemory)
 	mux.HandleFunc("POST /api/memory/workspace", h.handleMutateWorkspaceMemory)
+	mux.HandleFunc("GET /api/memory/current-user", h.handleGetCurrentUserProfile)
+	mux.HandleFunc("POST /api/memory/current-user", h.handleMutateCurrentUserProfile)
 	mux.HandleFunc("GET /api/memory/status", h.handleMemoryManagementStatus)
 	mux.HandleFunc("GET /api/memory/pending", h.handleListWorkspacePendingMemory)
 	mux.HandleFunc("POST /api/memory/pending/{id}/{decision}", h.handleResolveWorkspacePendingMemory)
@@ -81,6 +95,31 @@ func (h *Handler) dashboardMemoryStore() (*memory.CuratedStore, *config.Config, 
 
 func dashboardWorkspaceCaller() memory.CallerScope {
 	return memory.CallerScope{AgentID: routing.DefaultAgentID}
+}
+
+// dashboardCurrentUserCaller is intentionally fixed to the authenticated Pico
+// dashboard identity. It mirrors the runtime Pico channel's trusted sender and
+// cannot be changed with request fields or query parameters. Telegram and all
+// other channel profiles remain manageable only from their own trusted direct
+// chats, preventing an authenticated workspace operator from selecting an
+// arbitrary canonical user key.
+func dashboardCurrentUserCaller(cfg *config.Config) memory.CallerScope {
+	identityLinks := map[string][]string(nil)
+	if cfg != nil {
+		identityLinks = cfg.Session.IdentityLinks
+	}
+	userKey := session.CanonicalUserScopeKey(
+		config.ChannelPico,
+		routing.DefaultAccountID,
+		"pico-user",
+		identityLinks,
+	)
+	return memory.CallerScope{
+		AgentID: routing.DefaultAgentID,
+		UserKey: userKey,
+		Channel: config.ChannelPico,
+		Account: routing.DefaultAccountID,
+	}
 }
 
 func (h *Handler) handleListWorkspaceMemory(w http.ResponseWriter, r *http.Request) {
@@ -132,12 +171,125 @@ func (h *Handler) handleMutateWorkspaceMemory(w http.ResponseWriter, r *http.Req
 	mutation := memory.CuratedMutation{
 		Action: strings.ToLower(strings.TrimSpace(req.Action)), ID: strings.TrimSpace(req.ID),
 		Content: strings.TrimSpace(req.Content), Type: strings.ToLower(strings.TrimSpace(req.Type)),
-		Confidence: req.Confidence, Supersedes: strings.TrimSpace(req.Supersedes),
+		Confidence: req.Confidence, EvidenceKind: strings.ToLower(strings.TrimSpace(req.EvidenceKind)),
+		PreferenceKey:   memory.NormalizePreferenceKey(req.PreferenceKey),
+		PreferenceValue: strings.TrimSpace(req.PreferenceValue), Supersedes: strings.TrimSpace(req.Supersedes),
 		Provenance: memory.Provenance{Source: "authenticated_dashboard"},
 	}
 	result, err := store.ApplyBatch(
 		memory.CuratedTargetWorkspace,
 		dashboardWorkspaceCaller(),
+		[]memory.CuratedMutation{mutation},
+		false,
+	)
+	if err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	writeManagementJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) handleGetCurrentUserProfile(w http.ResponseWriter, r *http.Request) {
+	if err := validateManagementQuery(r); err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	store, cfg, _, err := h.dashboardMemoryStore()
+	if err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	caller := dashboardCurrentUserCaller(cfg)
+	if strings.TrimSpace(caller.UserKey) == "" {
+		writeManagementError(w, memory.ErrUserScopeUnavailable)
+		return
+	}
+	profile, err := store.CompileUserProfile(caller, memory.UserProfileOptions{
+		MaxChars:      cfg.Memory.Profile.EffectiveMaxChars(),
+		MinConfidence: cfg.Memory.Profile.EffectiveMinConfidence(),
+	})
+	if err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	entries, err := store.List(memory.CuratedTargetCurrentUser, caller)
+	if err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	stats, err := store.Stats(memory.CuratedTargetCurrentUser, caller)
+	if err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	writeManagementJSON(w, http.StatusOK, currentUserProfileResponse{
+		ScopeLabel:       "Pico dashboard user",
+		ScopeDescription: "Only the fixed authenticated Pico channel identity is shown. Telegram and other channel profiles remain isolated and must be managed from their trusted direct chat.",
+		Profile:          profile,
+		Entries:          entries,
+		Stats:            stats,
+	})
+}
+
+func (h *Handler) handleMutateCurrentUserProfile(w http.ResponseWriter, r *http.Request) {
+	if err := validateManagementQuery(r); err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	var req workspaceMemoryMutationRequest
+	if err := decodeManagementJSON(w, r, &req); err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	if (req.ID != "" && !memory.ValidCuratedEntryID(req.ID)) ||
+		(req.Supersedes != "" && !memory.ValidCuratedEntryID(req.Supersedes)) {
+		writeManagementError(w, errManagementInvalidRequest)
+		return
+	}
+	store, cfg, _, err := h.dashboardMemoryStore()
+	if err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	caller := dashboardCurrentUserCaller(cfg)
+	if strings.TrimSpace(caller.UserKey) == "" {
+		writeManagementError(w, memory.ErrUserScopeUnavailable)
+		return
+	}
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	provenance := memory.Provenance{Source: "authenticated_dashboard_confirmation"}
+	if action == "confirm" {
+		entry, confirmErr := store.Confirm(caller, strings.TrimSpace(req.ID), provenance)
+		if confirmErr != nil {
+			writeManagementError(w, confirmErr)
+			return
+		}
+		writeManagementJSON(w, http.StatusOK, map[string]any{"entry": entry})
+		return
+	}
+	if action != memory.CuratedActionAdd && action != memory.CuratedActionReplace &&
+		action != memory.CuratedActionRemove && action != memory.CuratedActionArchive &&
+		action != memory.CuratedActionRestore {
+		writeManagementError(w, memory.ErrCuratedInvalidAction)
+		return
+	}
+	evidence := strings.ToLower(strings.TrimSpace(req.EvidenceKind))
+	if action == memory.CuratedActionAdd || action == memory.CuratedActionReplace {
+		// Dashboard edits are explicit operator corrections for this fixed user.
+		// A request cannot downgrade them to inference or forge another scope.
+		evidence = memory.CuratedEvidenceExplicit
+		provenance.Source = "authenticated_dashboard_correction"
+	}
+	mutation := memory.CuratedMutation{
+		Action: action, ID: strings.TrimSpace(req.ID), Content: strings.TrimSpace(req.Content),
+		Type: strings.ToLower(strings.TrimSpace(req.Type)), Confidence: req.Confidence,
+		EvidenceKind: evidence, PreferenceKey: memory.NormalizePreferenceKey(req.PreferenceKey),
+		PreferenceValue: strings.TrimSpace(req.PreferenceValue), Supersedes: strings.TrimSpace(req.Supersedes),
+		Provenance: provenance,
+	}
+	result, err := store.ApplyBatch(
+		memory.CuratedTargetCurrentUser,
+		caller,
 		[]memory.CuratedMutation{mutation},
 		false,
 	)
@@ -544,12 +696,22 @@ func writeManagementError(w http.ResponseWriter, err error) {
 		code = "duplicate"
 	case errors.Is(err, memory.ErrCuratedUnsafeContent):
 		code = "unsafe_content"
+	case errors.Is(err, memory.ErrUserScopeUnavailable):
+		code = "user_scope_unavailable"
+	case errors.Is(err, memory.ErrPrivateContextRequired):
+		code = "private_context_required"
+	case errors.Is(err, memory.ErrCuratedSensitiveInference):
+		code = "sensitive_inference"
 	case errors.Is(err, memory.ErrCuratedInvalidAction):
 		code = "invalid_action"
 	case errors.Is(err, memory.ErrCuratedInvalidType):
 		code = "invalid_type"
 	case errors.Is(err, memory.ErrCuratedInvalidTarget):
 		code = "invalid_target"
+	case errors.Is(err, memory.ErrCuratedInvalidEvidence):
+		code = "invalid_evidence"
+	case errors.Is(err, memory.ErrCuratedInvalidPreferenceKey):
+		code = "invalid_preference_key"
 	default:
 		var capacity *memory.CapacityError
 		if errors.As(err, &capacity) {

@@ -15,6 +15,17 @@ and correctness boundary, not only an implementation detail.
 | Task checkpoints | Where temporary work stopped | One session or topic; never a user profile |
 | Skills and evolution | How a repeatable procedure should be performed | Agent/workspace procedural knowledge; never personal semantic memory |
 
+The effective system-prompt order is deterministic: immutable kernel and
+hierarchy policy, `SOUL.md`, `AGENT.md`/workspace instructions, capabilities
+and applicable skills, compiled current-user profile, relevant curated and
+legacy workspace memory, output/runtime context, legacy `USER.md` defaults,
+and the current-session summary. Recent conversation remains ordinary message
+history after that system prompt. Explicit structured corrections/preferences
+carry their own evidence authority and therefore override stale `USER.md`
+defaults even though both are reference context. Personality and memory cannot
+weaken the immutable kernel's security, authorization, tool, workspace, or
+privacy rules.
+
 `USER.md` is now explicitly a legacy/operator seed or default, not the live authoritative profile. A newer explicit structured user preference always wins when the two conflict. The existing `workspace/memory/MEMORY.md` and recent daily notes continue to enter prompts as manual **non-private workspace** context. Structured memory lives separately
 under `workspace/memory/structured/` and does not rewrite or migrate those
 legacy files.
@@ -59,7 +70,14 @@ update timestamps, and these lifecycle fields:
 - `supersedes` for corrections/history;
 - confirmation, presentation, archive, and expiry timestamps.
 
-The store schema is versioned and old structured entries remain readable. Legacy non-reviewer records retain compatibility authority; old background-review records are conservatively treated as inferred rather than silently becoming user-confirmed facts. Reads normalize old fields in memory without requiring users to wipe their store.
+The store schema is versioned. A v1 structured document is normalized and
+rewritten once as v2 under the same process and cross-process write lock, using
+the store's bounded atomic/private-permission write path. A malformed or newer
+unsupported document fails closed instead of being partially migrated. Legacy
+non-reviewer records retain compatibility authority; old background-review
+records are conservatively treated as inferred rather than silently becoming
+user-confirmed facts. Manual `MEMORY.md` and daily notes are outside this
+migration and are never rewritten.
 
 Workspace memory is for non-personal facts shared by sessions in the same
 agent workspace, such as project conventions, environment details, build
@@ -83,7 +101,7 @@ workspace information and redacted status.
 
 For a trusted direct chat, PicoClaw compiles a bounded `UserProfileSnapshot` from active curated current-user memory. This profile is always available to prompt assembly, so stable interaction preferences do not depend on retrieval luck. It contains only profile-relevant identity/communication/workflow/interaction fields and source memory IDs; project and episodic details remain query-retrieved.
 
-The snapshot is a cache, **not another source of truth**. It is rebuilt automatically when the underlying structured memory revision changes and cache validity also stops at the earliest relevant memory expiry, so expired preferences cannot survive through a stale profile cache. Low-confidence inference is excluded by default, while explicit user preferences remain eligible. The default profile budget is 1,200 serialized characters. Private profiles are never loaded into shared/group prompts.
+The snapshot is a cache, **not another source of truth**. It is rebuilt automatically when the underlying structured memory revision changes and cache validity also stops at the earliest relevant memory expiry, so expired preferences cannot survive through a stale profile cache. The in-process cache is a fixed-size least-recently-used map, preventing unbounded growth as users are encountered. Low-confidence inference is excluded by default, while explicit user preferences remain eligible. The default profile budget is 1,200 serialized characters. Private profiles are never loaded into shared/group or unknown-identity prompts.
 
 Structured preference keys make corrections deterministic. For example, a newer explicit `communication.verbosity=detailed` supersedes an older active `communication.verbosity=concise`; a weak inferred value cannot displace an explicit preference.
 
@@ -122,7 +140,11 @@ Normal prompt assembly does not inject the whole structured store. For each turn
 Workspace and current-user result/character budgets remain separate and configurable. In direct personal chats the default retrieval budget favors current-user memory (70%) while retaining 30% for workspace facts; the compact profile has its own fixed budget. Archived,
 superseded, and expired entries are excluded. Scoring is deterministic for a fixed timestamp and combines normalized token overlap, BM25-like rarity, prefix/trigram similarity, structured preference terms, type/correction priority, evidence/confidence, type-aware recency, confirmation, a small presentation signal, and staleness. Stable identity/communication preferences decay much more slowly than episodic facts. It works locally without a vector
 database or embedding provider and supports ordinary Indonesian and English
-tokens.
+tokens. The default `hybrid_lexical` engine remains the smallest path. Optional
+`semantic_rerank` adds a deterministic, provider-neutral multilingual concept
+score for common durable interaction preferences, then falls back to the same
+lexical retrieval. It does not call an embedding API or load a model; the
+scorer interface leaves room for a richer optional implementation later.
 
 `last_presented_at` is staged during prompt assembly and written only after the authoritative final response is delivered. It receives only a small ranking bonus because “shown to the model” is not proof of usefulness. Legacy `last_used_at` remains readable for compatibility. Failed or partial delivery leaves presentation state unchanged. Setting `memory.retrieval.enabled` to `false` retains the older
 bounded active-entry behavior.
@@ -173,7 +195,7 @@ topic, resumes the most recent relevant one from `next_step`, and asks for
 clarification when several are equally plausible. Completed or archived work
 is not resumed accidentally.
 
-Before `/clear`, `/reset`, or `/new` discards session recall, PicoClaw performs a bounded synchronous flush of still-unreviewed delivered turns when background memory review is enabled. The operation is fail-closed: if that bounded flush fails or times out, history is left intact and the user can retry instead of silently losing unreviewed durable information. After a successful flush, all three reset commands clear the current session history/summary,
+Before `/clear`, `/reset`, or `/new` discards session recall, PicoClaw performs a bounded synchronous flush of still-unreviewed delivered turns whenever curated memory is enabled, even if scheduled background review is disabled. The operation is fail-closed: if that bounded flush fails or times out, history is left intact and the user can retry instead of silently losing unreviewed durable information. The same bounded best-effort path runs before context compression, provider/config-registry replacement, and shutdown; the persisted cursor makes repeated hooks idempotent. After a successful destructive-command flush, all three reset commands clear the current session history/summary,
 current-session recall records, and its reviewer cursor. They discard
 undelivered checkpoint mutations but preserve committed checkpoints, curated
 memory, `MEMORY.md`, daily notes, and every unrelated session/topic. Starting
@@ -226,11 +248,18 @@ Checkpoint commands are:
 
 The authenticated dashboard's **Memory & Recall** configuration section exposes
 review, approval, notification, capacity, retrieval, lifecycle, recall, and
-checkpoint controls. Its management card lists only non-personal workspace
-entries, including type/status/pin/provenance, search and lifecycle actions,
-character use, reviewer status, and bounded redacted pending diffs. It does not
-enumerate private user stores; manage those through trusted direct-chat
-commands.
+checkpoint controls. Its workspace management card includes
+type/status/pin/provenance, search and lifecycle actions, character use,
+reviewer status, and bounded redacted pending diffs.
+
+The adjacent current-user profile card calls `GET /api/memory/current-user`
+and `POST /api/memory/current-user`. It displays the compiled profile, source
+IDs/evidence, and offers confirm, correction, archive/restore, and delete
+actions. That API is deliberately fixed to the authenticated dashboard's
+canonical Pico-channel user identity; request fields and query parameters
+cannot select another user. It does **not** enumerate Telegram or arbitrary
+private stores. Telegram profiles remain manageable only from that trusted
+user's direct chat commands.
 
 ## Personal Telegram-bot preset
 
@@ -297,10 +326,18 @@ calls. Monitor provider usage before enabling them on high-volume agents.
 
 ## Limitations and troubleshooting
 
-Memory is selective. Default retrieval deliberately remains lightweight and local; compact profile fields and contextual query construction improve personalization, but deep semantic paraphrases can still be missed without an optional future semantic reranker. A curator can
+Memory is selective. Default retrieval deliberately remains lightweight and local; compact profile fields and contextual query construction improve personalization, and optional `semantic_rerank` recognizes only a bounded set of common preference concepts rather than providing general embedding-quality semantics. Deep or domain-specific paraphrases can therefore still be missed. A curator can
 correctly decide that nothing is durable enough to save. Capacity, retention,
 model judgment, failed reviews, and explicit deletion also affect recall;
 PicoClaw cannot guarantee perfect memory.
+
+For a deterministic implementation/resource smoke benchmark, run
+`go run ./cmd/membench personalization`. It writes a JSON report covering
+preference correction/adherence, inference and false-memory resistance,
+semantic recall, long-horizon stability, cross-user/group isolation, memory
+pollution, prompt character/token overhead, retrieval latency, and cold/cached
+profile compilation latency. Timings are environment-dependent and are
+diagnostic rather than a portable performance guarantee.
 
 Use `/memory status` and the dashboard reviewer cursor when reviews appear
 stalled. Check configured provider/model availability and logs for category-only

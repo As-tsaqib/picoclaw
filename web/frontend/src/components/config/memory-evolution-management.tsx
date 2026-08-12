@@ -1,6 +1,7 @@
 import {
   IconArchive,
   IconCheck,
+  IconEdit,
   IconHistory,
   IconPin,
   IconPlayerPlay,
@@ -51,10 +52,59 @@ interface MemoryEntry {
   status: "active" | "superseded" | "archived"
   pinned?: boolean
   confidence?: number
+  evidence_kind?: "explicit" | "observed" | "inferred" | "legacy"
+  evidence_count?: number
+  observation_count?: number
+  preference_key?: string
+  preference_value?: string
   supersedes?: string
-  provenance?: { source?: string; recorded_at?: string }
+  provenance?: {
+    source?: string
+    session_ref?: string
+    channel?: string
+    account?: string
+    topic_id?: string
+    topic_name?: string
+    message_ref?: string
+    recorded_at?: string
+  }
   created_at: string
   updated_at: string
+}
+
+interface UserProfileField {
+  key?: string
+  value?: string
+  content?: string
+  evidence_kind: string
+  confidence: number
+  source_id: string
+}
+
+interface UserProfileSnapshot {
+  version: number
+  identity?: UserProfileField[]
+  communication?: UserProfileField[]
+  workflow?: UserProfileField[]
+  interaction?: UserProfileField[]
+  boundaries?: UserProfileField[]
+  source_ids?: string[]
+  characters: number
+}
+
+interface CurrentUserProfileResponse {
+  scope_label: string
+  scope_description: string
+  profile: UserProfileSnapshot
+  entries: MemoryEntry[]
+  stats: {
+    entries: number
+    entry_capacity: number
+    characters: number
+    capacity: number
+    serialized_characters: number
+    serialized_capacity: number
+  }
 }
 
 interface PendingDiff {
@@ -205,14 +255,19 @@ export function MemoryManagementSection() {
     )
   }, [reload])
 
-  const mutate = async (body: Record<string, unknown>, message: string) => {
+  const mutate = async (
+    body: Record<string, unknown>,
+    message: string,
+  ): Promise<boolean> => {
     setBusy(true)
     try {
       await managementPOST("/api/memory/workspace", body)
       await reload(query)
       toast.success(message)
+      return true
     } catch (error) {
       toast.error(`Memory operation failed: ${(error as Error).message}`)
+      return false
     } finally {
       setBusy(false)
     }
@@ -224,7 +279,7 @@ export function MemoryManagementSection() {
       toast.error("Enter content and a confidence greater than 0 and at most 1")
       return
     }
-    await mutate(
+    const applied = await mutate(
       {
         action: "add",
         content: content.trim(),
@@ -233,7 +288,7 @@ export function MemoryManagementSection() {
       },
       "Workspace memory added",
     )
-    setContent("")
+    if (applied) setContent("")
   }
 
   const resolvePending = async (id: string, decision: "approve" | "reject") => {
@@ -398,16 +453,18 @@ export function MemoryManagementSection() {
                         size="sm"
                         disabled={busy}
                         onClick={() => {
-                          void mutate(
-                            {
-                              action: "replace",
-                              id: entry.id,
-                              content: editingContent.trim(),
-                              type: entry.type,
-                            },
-                            "Memory entry updated",
-                          )
-                          setEditingID("")
+                          void (async () => {
+                            const applied = await mutate(
+                              {
+                                action: "replace",
+                                id: entry.id,
+                                content: editingContent.trim(),
+                                type: entry.type,
+                              },
+                              "Memory entry updated",
+                            )
+                            if (applied) setEditingID("")
+                          })()
                         }}
                       >
                         <IconCheck className="size-4" />
@@ -550,6 +607,434 @@ export function MemoryManagementSection() {
             ))}
           </div>
         )}
+      </CardContent>
+    </Card>
+  )
+}
+
+const currentUserMemoryTypes: MemoryType[] = [
+  "identity",
+  "communication_preference",
+  "workflow_preference",
+  "correction",
+  "environment",
+  "project_fact",
+  "relationship",
+  "episodic_fact",
+  "other",
+]
+
+export function CurrentUserProfileManagementSection() {
+  const [data, setData] = useState<CurrentUserProfileResponse | null>(null)
+  const [statusFilter, setStatusFilter] = useState("all")
+  const [content, setContent] = useState("")
+  const [entryType, setEntryType] =
+    useState<MemoryType>("communication_preference")
+  const [preferenceKey, setPreferenceKey] = useState("")
+  const [preferenceValue, setPreferenceValue] = useState("")
+  const [editingID, setEditingID] = useState("")
+  const [editingContent, setEditingContent] = useState("")
+  const [editingPreferenceKey, setEditingPreferenceKey] = useState("")
+  const [editingPreferenceValue, setEditingPreferenceValue] = useState("")
+  const [busy, setBusy] = useState(false)
+
+  const reload = useCallback(async () => {
+    setData(
+      await managementJSON<CurrentUserProfileResponse>(
+        "/api/memory/current-user",
+      ),
+    )
+  }, [])
+
+  useEffect(() => {
+    void reload().catch(() =>
+      toast.error("Failed to load the current Pico dashboard user profile"),
+    )
+  }, [reload])
+
+  const mutate = async (body: Record<string, unknown>, message: string) => {
+    setBusy(true)
+    try {
+      await managementPOST("/api/memory/current-user", body)
+      await reload()
+      toast.success(message)
+      return true
+    } catch (error) {
+      toast.error(`Profile operation failed: ${(error as Error).message}`)
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addEntry = async () => {
+    if (!content.trim()) {
+      toast.error("Enter a compact current-user fact or preference")
+      return
+    }
+    if ((preferenceKey.trim() === "") !== (preferenceValue.trim() === "")) {
+      toast.error("Preference key and value must be supplied together")
+      return
+    }
+    const applied = await mutate(
+      {
+        action: "add",
+        content: content.trim(),
+        type: entryType,
+        preference_key: preferenceKey.trim(),
+        preference_value: preferenceValue.trim(),
+      },
+      "Current-user memory added",
+    )
+    if (applied) {
+      setContent("")
+      setPreferenceKey("")
+      setPreferenceValue("")
+    }
+  }
+
+  const profileGroups: Array<readonly [string, UserProfileField[]]> = data
+    ? [
+        ["Identity", data.profile.identity || []],
+        ["Communication", data.profile.communication || []],
+        ["Workflow", data.profile.workflow || []],
+        ["Interaction", data.profile.interaction || []],
+        ["Boundaries", data.profile.boundaries || []],
+      ]
+    : []
+  const entries = (data?.entries || []).filter(
+    (entry) => statusFilter === "all" || entry.status === statusFilter,
+  )
+
+  return (
+    <Card size="sm">
+      <CardHeader className="border-border border-b">
+        <CardTitle>Compiled current-user profile</CardTitle>
+        <CardDescription>
+          {data?.scope_description ||
+            "Loading the fixed authenticated Pico dashboard identity."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5 pt-5">
+        {data && (
+          <>
+            <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+              <StatusTile label="Scope" value={data.scope_label} />
+              <StatusTile
+                label="Profile budget"
+                value={`${data.profile.characters} chars`}
+              />
+              <StatusTile
+                label="Sources"
+                value={String(data.profile.source_ids?.length || 0)}
+              />
+              <StatusTile
+                label="Memory usage"
+                value={`${data.stats.characters}/${data.stats.capacity}`}
+              />
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              {profileGroups.map(([label, fields]) => {
+                if (fields.length === 0) return null
+                return (
+                  <div key={label} className="rounded-lg border p-3">
+                    <h3 className="mb-2 text-sm font-medium">{label}</h3>
+                    <div className="space-y-2">
+                      {fields.map((field) => (
+                        <div key={field.source_id} className="text-sm">
+                          <p className="break-words">
+                            {field.key
+                              ? `${field.key} = ${field.value}`
+                              : field.content}
+                          </p>
+                          <p className="text-muted-foreground text-xs">
+                            {field.evidence_kind} · confidence{" "}
+                            {field.confidence.toFixed(2)} · source{" "}
+                            <span className="font-mono">
+                              {field.source_id}
+                            </span>
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
+
+        <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_220px]">
+          <Textarea
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            placeholder="Explicit fact or corrected preference for this Pico dashboard user"
+            className="min-h-20 sm:col-span-2"
+            aria-label="Current-user memory content"
+          />
+          <Select
+            value={entryType}
+            onValueChange={(value) => setEntryType(value as MemoryType)}
+          >
+            <SelectTrigger aria-label="Current-user memory type">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {currentUserMemoryTypes.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {value}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Input
+              value={preferenceKey}
+              onChange={(event) => setPreferenceKey(event.target.value)}
+              placeholder="communication.verbosity"
+              aria-label="Preference key"
+            />
+            <Input
+              value={preferenceValue}
+              onChange={(event) => setPreferenceValue(event.target.value)}
+              placeholder="detailed"
+              aria-label="Preference value"
+            />
+          </div>
+          <Button disabled={busy} onClick={() => void addEntry()}>
+            Add explicit entry
+          </Button>
+          <p className="text-muted-foreground self-center text-xs">
+            Key/value are optional, but when used both are required. Same-key
+            explicit corrections deterministically supersede older values.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-sm font-medium">Auditable source memories</h3>
+            <p className="text-muted-foreground text-xs">
+              Inspect active, superseded, and archived evidence with provenance.
+            </p>
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger
+              className="w-full sm:w-44"
+              aria-label="Memory status filter"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">all statuses</SelectItem>
+              <SelectItem value="active">active</SelectItem>
+              <SelectItem value="superseded">superseded</SelectItem>
+              <SelectItem value="archived">archived</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-3">
+          {entries.length === 0 && (
+            <p className="text-muted-foreground text-sm">
+              No current-user entries match this status.
+            </p>
+          )}
+          {entries.map((entry) => (
+            <div key={entry.id} className="rounded-lg border p-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    <Badge variant="outline">{entry.type || "other"}</Badge>
+                    <Badge
+                      variant={
+                        entry.status === "active" ? "secondary" : "outline"
+                      }
+                    >
+                      {entry.status || "active"}
+                    </Badge>
+                    <Badge variant="outline">
+                      {entry.evidence_kind || "legacy"} ·{" "}
+                      {(entry.confidence || 0).toFixed(2)}
+                    </Badge>
+                    <span className="text-muted-foreground font-mono text-xs">
+                      {entry.id}
+                    </span>
+                  </div>
+                  {editingID === entry.id ? (
+                    <div className="grid gap-2">
+                      <Textarea
+                        value={editingContent}
+                        onChange={(event) =>
+                          setEditingContent(event.target.value)
+                        }
+                        aria-label={`Edit ${entry.id} content`}
+                      />
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <Input
+                          value={editingPreferenceKey}
+                          onChange={(event) =>
+                            setEditingPreferenceKey(event.target.value)
+                          }
+                          placeholder="Preference key"
+                          aria-label={`Edit ${entry.id} preference key`}
+                        />
+                        <Input
+                          value={editingPreferenceValue}
+                          onChange={(event) =>
+                            setEditingPreferenceValue(event.target.value)
+                          }
+                          placeholder="Preference value"
+                          aria-label={`Edit ${entry.id} preference value`}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-sm break-words whitespace-pre-wrap">
+                        {entry.content}
+                      </p>
+                      {entry.preference_key && (
+                        <p className="text-sm font-medium break-all">
+                          {entry.preference_key} = {entry.preference_value}
+                        </p>
+                      )}
+                    </>
+                  )}
+                  <p className="text-muted-foreground text-xs break-words">
+                    source {entry.provenance?.source || "legacy"} · channel{" "}
+                    {entry.provenance?.channel || "unknown"} · account{" "}
+                    {entry.provenance?.account || "unknown"} · session{" "}
+                    {entry.provenance?.session_ref || "none"} · topic{" "}
+                    {entry.provenance?.topic_name ||
+                      entry.provenance?.topic_id ||
+                      "none"}
+                    {entry.supersedes ? ` · supersedes ${entry.supersedes}` : ""}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-1.5">
+                  {editingID === entry.id ? (
+                    <>
+                      <Button
+                        size="sm"
+                        disabled={
+                          busy ||
+                          !editingContent.trim() ||
+                          (editingPreferenceKey.trim() === "") !==
+                            (editingPreferenceValue.trim() === "")
+                        }
+                        aria-label={`Save correction for ${entry.id}`}
+                        onClick={() => {
+                          void (async () => {
+                            const applied = await mutate(
+                              {
+                                action: "add",
+                                content: editingContent.trim(),
+                                type: entry.type,
+                                preference_key: editingPreferenceKey.trim(),
+                                preference_value:
+                                  editingPreferenceValue.trim(),
+                                supersedes: entry.id,
+                              },
+                              "Current-user memory corrected",
+                            )
+                            if (applied) setEditingID("")
+                          })()
+                        }}
+                      >
+                        <IconCheck className="size-4" />
+                        Save correction
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditingID("")}
+                      >
+                        <IconX className="size-4" />
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || entry.status !== "active"}
+                      aria-label={`Correct ${entry.id}`}
+                      onClick={() => {
+                        setEditingID(entry.id)
+                        setEditingContent(entry.content)
+                        setEditingPreferenceKey(entry.preference_key || "")
+                        setEditingPreferenceValue(entry.preference_value || "")
+                      }}
+                    >
+                      <IconEdit className="size-4" />
+                      Correct
+                    </Button>
+                  )}
+                  {entry.status === "active" &&
+                    entry.evidence_kind !== "explicit" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        aria-label={`Confirm ${entry.id}`}
+                        onClick={() =>
+                          void mutate(
+                            { action: "confirm", id: entry.id },
+                            "Memory confirmed as explicit",
+                          )
+                        }
+                      >
+                        <IconCheck className="size-4" />
+                        Confirm
+                      </Button>
+                    )}
+                  {entry.status !== "superseded" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      aria-label={`${entry.status === "archived" ? "Restore" : "Archive"} ${entry.id}`}
+                      onClick={() =>
+                        void mutate(
+                          {
+                            action:
+                              entry.status === "archived"
+                                ? "restore"
+                                : "archive",
+                            id: entry.id,
+                          },
+                          entry.status === "archived"
+                            ? "Memory restored"
+                            : "Memory archived",
+                        )
+                      }
+                    >
+                      {entry.status === "archived" ? (
+                        <IconRestore className="size-4" />
+                      ) : (
+                        <IconArchive className="size-4" />
+                      )}
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={busy}
+                    aria-label={`Delete ${entry.id}`}
+                    onClick={() =>
+                      void mutate(
+                        { action: "remove", id: entry.id },
+                        "Current-user memory deleted",
+                      )
+                    }
+                  >
+                    <IconTrash className="size-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       </CardContent>
     </Card>
   )

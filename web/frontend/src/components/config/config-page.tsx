@@ -44,6 +44,7 @@ import {
   parseMultilineList,
 } from "@/components/config/form-model"
 import {
+  CurrentUserProfileManagementSection,
   EvolutionManagementSection,
   MemoryManagementSection,
 } from "@/components/config/memory-evolution-management"
@@ -816,6 +817,8 @@ export function ConfigPage() {
               />
 
               <MemoryManagementSection />
+
+              <CurrentUserProfileManagementSection />
 
               <EvolutionSection form={form} onFieldChange={updateField} />
 

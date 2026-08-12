@@ -15,6 +15,7 @@ import {
   type MemoryApprovalMode,
   type MemoryNotificationMode,
   type MemoryRecallMode,
+  type MemoryRetrievalEngine,
   type MemoryReviewModelOption,
   type TurnProfileForm,
   type TurnProfileMode,
@@ -356,12 +357,21 @@ export function MemoryRecallSection({
         hint="Lightweight local lexical scoring; embeddings are not required."
         layout="setting-row"
       >
-        <Select value={form.memoryRetrievalEngine} disabled>
+        <Select
+          value={form.memoryRetrievalEngine}
+          onValueChange={(value) =>
+            onFieldChange(
+              "memoryRetrievalEngine",
+              value as MemoryRetrievalEngine,
+            )
+          }
+        >
           <SelectTrigger className="h-9 w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="hybrid_lexical">hybrid_lexical</SelectItem>
+            <SelectItem value="semantic_rerank">semantic_rerank</SelectItem>
           </SelectContent>
         </Select>
       </Field>

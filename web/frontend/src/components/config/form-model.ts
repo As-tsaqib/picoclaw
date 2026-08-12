@@ -89,7 +89,12 @@ export type MemoryNotificationMode = "off" | "on" | "verbose"
 
 export type MemoryRecallMode = "isolated" | "user_recall" | "group_recall"
 export type MemoryApprovalMode = "off" | "background_only" | "all_writes"
-export type MemoryRetrievalEngine = "hybrid_lexical"
+export type MemoryRetrievalEngine = "hybrid_lexical" | "semantic_rerank"
+
+export const MEMORY_RETRIEVAL_ENGINE_OPTIONS: readonly MemoryRetrievalEngine[] = [
+  "hybrid_lexical",
+  "semantic_rerank",
+]
 export type EvolutionMode = "observe" | "draft" | "apply"
 export type EvolutionColdPathTrigger = "after_turn" | "scheduled" | "manual"
 export type EvolutionApplyPolicy = "approval_required" | "automatic"
@@ -257,7 +262,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   memoryReviewProvider: "",
   memoryReviewModel: "",
   memoryReviewTimeoutSeconds: "30",
-  memoryReviewMaxIterations: "2",
+  memoryReviewMaxIterations: "3",
   memoryWriteApproval: false,
   memoryApprovalMode: "off",
   memoryNotifications: "off",
@@ -704,7 +709,11 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       memoryRetrieval.enabled === undefined
         ? EMPTY_FORM.memoryRetrievalEnabled
         : asBool(memoryRetrieval.enabled),
-    memoryRetrievalEngine: "hybrid_lexical",
+    memoryRetrievalEngine: MEMORY_RETRIEVAL_ENGINE_OPTIONS.includes(
+      asString(memoryRetrieval.engine) as MemoryRetrievalEngine,
+    )
+      ? (asString(memoryRetrieval.engine) as MemoryRetrievalEngine)
+      : "hybrid_lexical",
     memoryRetrievalMaxWorkspaceResults: asNumberString(
       memoryRetrieval.max_workspace_results,
       EMPTY_FORM.memoryRetrievalMaxWorkspaceResults,
@@ -807,6 +816,9 @@ export function buildMemoryConfigPatch(
   }
   if (!MEMORY_APPROVAL_OPTIONS.includes(form.memoryApprovalMode)) {
     throw new Error("Memory approval mode is invalid.")
+  }
+  if (!MEMORY_RETRIEVAL_ENGINE_OPTIONS.includes(form.memoryRetrievalEngine)) {
+    throw new Error("Memory retrieval engine is invalid.")
   }
 
   const provider = form.memoryReviewProvider.trim()

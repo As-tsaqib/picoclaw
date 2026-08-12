@@ -164,6 +164,141 @@ func TestMemoryManagementAPIWorkspaceLifecycleAndPendingDiff(t *testing.T) {
 	}
 }
 
+func TestCurrentUserProfileManagementAPIUsesFixedPicoIdentityAndSupportsLifecycle(t *testing.T) {
+	harness := newManagementTestHarness(t)
+
+	add := managementRequest(t, harness.mux, http.MethodPost, "/api/memory/current-user", `{
+		"action":"add",
+		"content":"Prefers concise answers in the Pico dashboard",
+		"type":"communication_preference",
+		"preference_key":"communication.verbosity",
+		"preference_value":"concise"
+	}`)
+	if add.Code != http.StatusOK {
+		t.Fatalf("add status=%d body=%s", add.Code, add.Body.String())
+	}
+	added := decodeManagementResponse[memory.CuratedBatchResult](t, add)
+	if len(added.Applied) != 1 || added.Applied[0].EvidenceKind != memory.CuratedEvidenceExplicit {
+		t.Fatalf("add result=%#v", added)
+	}
+	id := added.Applied[0].ID
+
+	profile := managementRequest(t, harness.mux, http.MethodGet, "/api/memory/current-user", "")
+	if profile.Code != http.StatusOK ||
+		!strings.Contains(profile.Body.String(), `"communication.verbosity"`) ||
+		!strings.Contains(profile.Body.String(), id) ||
+		!strings.Contains(profile.Body.String(), `"scope_label":"Pico dashboard user"`) {
+		t.Fatalf("profile status=%d body=%s", profile.Code, profile.Body.String())
+	}
+
+	correct := managementRequest(t, harness.mux, http.MethodPost, "/api/memory/current-user", `{
+		"action":"add",
+		"content":"Now prefers detailed answers in the Pico dashboard",
+		"type":"communication_preference",
+		"preference_key":"communication.verbosity",
+		"preference_value":"detailed",
+		"supersedes":"`+id+`"
+	}`)
+	if correct.Code != http.StatusOK {
+		t.Fatalf("correct status=%d body=%s", correct.Code, correct.Body.String())
+	}
+	profile = managementRequest(t, harness.mux, http.MethodGet, "/api/memory/current-user", "")
+	if !strings.Contains(profile.Body.String(), `"value":"detailed"`) ||
+		strings.Contains(profile.Body.String(), `"value":"concise"`) {
+		t.Fatalf("compiled corrected profile=%s", profile.Body.String())
+	}
+
+	archiveID := decodeManagementResponse[memory.CuratedBatchResult](t, correct).Applied[0].ID
+	for _, operation := range []string{
+		`{"action":"archive","id":"` + archiveID + `"}`,
+		`{"action":"restore","id":"` + archiveID + `"}`,
+		`{"action":"remove","id":"` + archiveID + `"}`,
+	} {
+		rec := managementRequest(t, harness.mux, http.MethodPost, "/api/memory/current-user", operation)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("operation %s status=%d body=%s", operation, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestCurrentUserProfileManagementAPIRejectsArbitraryIdentitySelectors(t *testing.T) {
+	harness := newManagementTestHarness(t)
+	for _, request := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/memory/current-user?user_id=telegram:42", ""},
+		{http.MethodGet, "/api/memory/current-user?channel=telegram", ""},
+		{http.MethodPost, "/api/memory/current-user", `{"action":"add","content":"x","user_id":"other"}`},
+		{http.MethodPost, "/api/memory/current-user", `{"action":"add","content":"x","session_key":"other"}`},
+		{http.MethodPost, "/api/memory/current-user", `{"action":"add","content":"x","channel":"telegram"}`},
+	} {
+		rec := managementRequest(t, harness.mux, request.method, request.path, request.body)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"invalid_request"`) {
+			t.Fatalf("%s %s status=%d body=%s", request.method, request.path, rec.Code, rec.Body.String())
+		}
+	}
+
+	cfg, err := config.LoadConfig(harness.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := memory.NewCuratedStore(
+		filepath.Join(agent.StructuredMemoryRoot(harness.workspace, routing.DefaultAgentID), "curated"),
+		memory.CuratedStoreOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	telegramCaller := memory.CallerScope{
+		AgentID: routing.DefaultAgentID, UserKey: "channel:telegram|account:default|user:42",
+	}
+	if _, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, telegramCaller, []memory.CuratedMutation{{
+		Action: memory.CuratedActionAdd, Content: "Private Telegram-only timezone",
+		Type: memory.CuratedTypeIdentity, EvidenceKind: memory.CuratedEvidenceExplicit,
+	}}, false); err != nil {
+		t.Fatal(err)
+	}
+	profile := managementRequest(t, harness.mux, http.MethodGet, "/api/memory/current-user", "")
+	if profile.Code != http.StatusOK || strings.Contains(profile.Body.String(), "Telegram-only") {
+		t.Fatalf("dashboard exposed Telegram profile: status=%d body=%s cfg=%#v", profile.Code, profile.Body.String(), cfg.Memory)
+	}
+}
+
+func TestCurrentUserProfileManagementAPIConfirmsInferredEntry(t *testing.T) {
+	harness := newManagementTestHarness(t)
+	store, cfg, _, err := NewHandler(harness.configPath).dashboardMemoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := dashboardCurrentUserCaller(cfg)
+	result, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, caller, []memory.CuratedMutation{{
+		Action: memory.CuratedActionAdd, Content: "May prefer examples before theory",
+		Type: memory.CuratedTypeCommunicationPreference, EvidenceKind: memory.CuratedEvidenceInferred,
+		Provenance: memory.Provenance{Source: "background_review"},
+	}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := result.Applied[0].ID
+	rec := managementRequest(
+		t,
+		harness.mux,
+		http.MethodPost,
+		"/api/memory/current-user",
+		`{"action":"confirm","id":"`+id+`"}`,
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	confirmed, err := store.Inspect(memory.CuratedTargetCurrentUser, caller, id)
+	if err != nil || confirmed.EffectiveEvidenceKind() != memory.CuratedEvidenceExplicit ||
+		confirmed.LastConfirmedAt == nil {
+		t.Fatalf("confirmed entry=%#v err=%v", confirmed, err)
+	}
+}
+
 func TestMemoryEvolutionManagementAPIRejectsArbitrarySelectorsAndMalformedInput(t *testing.T) {
 	harness := newManagementTestHarness(t)
 	tests := []struct {

@@ -10,6 +10,7 @@ import {
   MEMORY_APPROVAL_OPTIONS,
   MEMORY_NOTIFICATION_OPTIONS,
   MEMORY_RECALL_OPTIONS,
+  MEMORY_RETRIEVAL_ENGINE_OPTIONS,
   buildEvolutionConfigPatch,
   buildFormFromConfig,
   buildMemoryConfigPatch,
@@ -55,7 +56,7 @@ test("legacy dashboard config receives active memory defaults", () => {
   assert.equal(form.memoryBackgroundReviewEnabled, true)
   assert.equal(form.memoryReviewInterval, "10")
   assert.equal(form.memoryReviewTimeoutSeconds, "30")
-  assert.equal(form.memoryReviewMaxIterations, "2")
+  assert.equal(form.memoryReviewMaxIterations, "3")
 })
 
 test("memory dashboard values round trip through its merge patch", () => {
@@ -160,6 +161,19 @@ test("notification and cross-topic recall dropdown choices are preserved", () =>
       assert.equal(patch.notifications, notifications)
       assert.equal((patch.recall as JsonObject).mode, recallMode)
     }
+  }
+})
+
+test("memory retrieval engine dropdown choices are preserved", () => {
+  for (const engine of MEMORY_RETRIEVAL_ENGINE_OPTIONS) {
+    const form = { ...EMPTY_FORM, memoryRetrievalEngine: engine }
+    const patch = buildMemoryConfigPatch(form)
+    assert.equal((patch.retrieval as JsonObject).engine, engine)
+    assert.equal(
+      buildFormFromConfig({ memory: { retrieval: { engine } } })
+        .memoryRetrievalEngine,
+      engine,
+    )
   }
 })
 
