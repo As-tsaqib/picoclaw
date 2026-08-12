@@ -85,7 +85,8 @@ var semanticConceptPhrases = map[string][]string{
 	},
 	"command.copy_ready": {
 		"copy paste", "copy-paste", "ready to run", "directly run", "paste and run",
-		"tinggal jalankan", "langsung jalankan", "siap salin", "salin tempel", "copy dan paste",
+		"tinggal jalankan", "tinggal saya jalankan", "langsung jalankan", "siap salin", "salin tempel",
+		"copy dan paste",
 		"جاهز للتنفيذ", "انسخ والصق",
 	},
 	"examples": {

@@ -12,7 +12,9 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: toastErrorMock },
 }))
 
-import { CurrentUserProfileManagementSection } from "./memory-evolution-management"
+import {
+  CurrentUserProfileManagementSection,
+} from "./memory-evolution-management"
 
 const activeID = "mem_0000000000000001"
 const inferredID = "mem_0000000000000002"
@@ -22,7 +24,9 @@ const deleteID = "mem_0000000000000004"
 const profileResponse = {
   scope_label: "Pico dashboard user",
   scope_description:
-    "Only the fixed authenticated Pico channel identity is shown. Telegram and other channel profiles remain isolated and must be managed from their trusted direct chat.",
+    "Only the fixed authenticated Pico channel identity is shown. Telegram " +
+    "and other channel profiles remain isolated and must be managed from " +
+    "their trusted direct chat.",
   profile: {
     version: 1,
     communication: [
@@ -127,15 +131,19 @@ describe("CurrentUserProfileManagementSection", () => {
     )
   })
 
-  it("renders the bounded fixed-scope profile and filters audit history", async () => {
+  it("renders the fixed-scope profile and filters audit history", async () => {
     const user = userEvent.setup()
     render(<CurrentUserProfileManagementSection />)
 
     expect(
       (await screen.findAllByText("communication.verbosity = concise"))[0],
     ).toBeVisible()
-    expect(screen.getByText(/fixed authenticated Pico channel identity/)).toBeVisible()
-    expect(screen.getByText(/Telegram and other channel profiles remain isolated/)).toBeVisible()
+    expect(
+      screen.getByText(/fixed authenticated Pico channel identity/),
+    ).toBeVisible()
+    expect(
+      screen.getByText(/Telegram and other channel profiles remain isolated/),
+    ).toBeVisible()
     expect(screen.getByText("Prefers concise answers")).toBeVisible()
     expect(screen.getByText("Archived interaction preference")).toBeVisible()
 
@@ -145,20 +153,29 @@ describe("CurrentUserProfileManagementSection", () => {
     await user.click(await screen.findByRole("option", { name: "archived" }))
 
     expect(screen.getByText("Archived interaction preference")).toBeVisible()
-    expect(screen.queryByText("Prefers concise answers")).not.toBeInTheDocument()
+    expect(
+      screen.queryByText("Prefers concise answers"),
+    ).not.toBeInTheDocument()
   })
 
-  it("sends fixed-scope confirm, correction, archive, and delete mutations", async () => {
+  it("sends profile confirm, correction, archive, and delete mutations", async () => {
     const user = userEvent.setup()
     render(<CurrentUserProfileManagementSection />)
     await screen.findByText("Prefers concise answers")
 
-    await user.click(screen.getByRole("button", { name: `Confirm ${inferredID}` }))
+    await user.click(
+      screen.getByRole("button", { name: `Confirm ${inferredID}` }),
+    )
     await waitFor(() =>
-      expect(postedBodies()).toContainEqual({ action: "confirm", id: inferredID }),
+      expect(postedBodies()).toContainEqual({
+        action: "confirm",
+        id: inferredID,
+      }),
     )
 
-    await user.click(screen.getByRole("button", { name: `Correct ${activeID}` }))
+    await user.click(
+      screen.getByRole("button", { name: `Correct ${activeID}` }),
+    )
     const content = screen.getByRole("textbox", {
       name: `Edit ${activeID} content`,
     })
@@ -183,9 +200,14 @@ describe("CurrentUserProfileManagementSection", () => {
       }),
     )
 
-    await user.click(screen.getByRole("button", { name: `Restore ${archivedID}` }))
+    await user.click(
+      screen.getByRole("button", { name: `Restore ${archivedID}` }),
+    )
     await waitFor(() =>
-      expect(postedBodies()).toContainEqual({ action: "restore", id: archivedID }),
+      expect(postedBodies()).toContainEqual({
+        action: "restore",
+        id: archivedID,
+      }),
     )
     await user.click(screen.getByRole("button", { name: `Delete ${deleteID}` }))
     await waitFor(() =>

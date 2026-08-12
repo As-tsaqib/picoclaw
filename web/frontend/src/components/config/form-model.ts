@@ -91,10 +91,8 @@ export type MemoryRecallMode = "isolated" | "user_recall" | "group_recall"
 export type MemoryApprovalMode = "off" | "background_only" | "all_writes"
 export type MemoryRetrievalEngine = "hybrid_lexical" | "semantic_rerank"
 
-export const MEMORY_RETRIEVAL_ENGINE_OPTIONS: readonly MemoryRetrievalEngine[] = [
-  "hybrid_lexical",
-  "semantic_rerank",
-]
+export const MEMORY_RETRIEVAL_ENGINE_OPTIONS: readonly MemoryRetrievalEngine[] =
+  ["hybrid_lexical", "semantic_rerank"]
 export type EvolutionMode = "observe" | "draft" | "apply"
 export type EvolutionColdPathTrigger = "after_turn" | "scheduled" | "manual"
 export type EvolutionApplyPolicy = "approval_required" | "automatic"

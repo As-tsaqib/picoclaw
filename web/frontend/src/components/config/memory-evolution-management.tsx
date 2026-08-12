@@ -769,7 +769,7 @@ export function CurrentUserProfileManagementSection() {
           <Textarea
             value={content}
             onChange={(event) => setContent(event.target.value)}
-            placeholder="Explicit fact or corrected preference for this Pico dashboard user"
+            placeholder="Explicit fact or corrected preference for this user"
             className="min-h-20 sm:col-span-2"
             aria-label="Current-user memory content"
           />
@@ -909,7 +909,9 @@ export function CurrentUserProfileManagementSection() {
                     {entry.provenance?.topic_name ||
                       entry.provenance?.topic_id ||
                       "none"}
-                    {entry.supersedes ? ` · supersedes ${entry.supersedes}` : ""}
+                    {entry.supersedes
+                      ? ` · supersedes ${entry.supersedes}`
+                      : ""}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-1.5">
@@ -993,7 +995,9 @@ export function CurrentUserProfileManagementSection() {
                       size="sm"
                       variant="outline"
                       disabled={busy}
-                      aria-label={`${entry.status === "archived" ? "Restore" : "Archive"} ${entry.id}`}
+                      aria-label={`${
+                        entry.status === "archived" ? "Restore" : "Archive"
+                      } ${entry.id}`}
                       onClick={() =>
                         void mutate(
                           {
