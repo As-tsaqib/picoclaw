@@ -2,6 +2,8 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { CurrentUserProfileManagementSection } from "./memory-evolution-management"
+
 const { launcherFetchMock, toastErrorMock } = vi.hoisted(() => ({
   launcherFetchMock: vi.fn(),
   toastErrorMock: vi.fn(),
@@ -11,10 +13,6 @@ vi.mock("@/api/http", () => ({ launcherFetch: launcherFetchMock }))
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: toastErrorMock },
 }))
-
-import {
-  CurrentUserProfileManagementSection,
-} from "./memory-evolution-management"
 
 const activeID = "mem_0000000000000001"
 const inferredID = "mem_0000000000000002"
@@ -113,8 +111,12 @@ function jsonResponse(value: unknown): Response {
 function postedBodies(): Array<Record<string, unknown>> {
   return launcherFetchMock.mock.calls
     .filter(([, init]) => (init as RequestInit | undefined)?.method === "POST")
-    .map(([, init]) =>
-      JSON.parse(String((init as RequestInit).body)) as Record<string, unknown>,
+    .map(
+      ([, init]) =>
+        JSON.parse(String((init as RequestInit).body)) as Record<
+          string,
+          unknown
+        >,
     )
 }
 

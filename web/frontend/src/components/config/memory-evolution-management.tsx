@@ -628,8 +628,9 @@ export function CurrentUserProfileManagementSection() {
   const [data, setData] = useState<CurrentUserProfileResponse | null>(null)
   const [statusFilter, setStatusFilter] = useState("all")
   const [content, setContent] = useState("")
-  const [entryType, setEntryType] =
-    useState<MemoryType>("communication_preference")
+  const [entryType, setEntryType] = useState<MemoryType>(
+    "communication_preference",
+  )
   const [preferenceKey, setPreferenceKey] = useState("")
   const [preferenceValue, setPreferenceValue] = useState("")
   const [editingID, setEditingID] = useState("")
@@ -751,9 +752,7 @@ export function CurrentUserProfileManagementSection() {
                           <p className="text-muted-foreground text-xs">
                             {field.evidence_kind} · confidence{" "}
                             {field.confidence.toFixed(2)} · source{" "}
-                            <span className="font-mono">
-                              {field.source_id}
-                            </span>
+                            <span className="font-mono">{field.source_id}</span>
                           </p>
                         </div>
                       ))}
@@ -934,8 +933,7 @@ export function CurrentUserProfileManagementSection() {
                                 content: editingContent.trim(),
                                 type: entry.type,
                                 preference_key: editingPreferenceKey.trim(),
-                                preference_value:
-                                  editingPreferenceValue.trim(),
+                                preference_value: editingPreferenceValue.trim(),
                                 supersedes: entry.id,
                               },
                               "Current-user memory corrected",
