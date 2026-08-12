@@ -5,32 +5,41 @@ on:
     branches:
       - feat/curated-memory-recall
       - feat/contextual-memory-evolution
+      - feat/personalization-completion
   workflow_dispatch: {}
 
 permissions:
   contents: read
 
+concurrency:
+  group: curated-memory-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   go-validation:
-    name: Go tests and build
+    name: Go tests, API tests, build, and benchmark
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - name: Checkout without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
       - name: Check Go formatting
         shell: bash
         run: |
-          unformatted="$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+          set -Eeuo pipefail
+          mapfile -d '' -t go_files < <(find . -name '*.go' -not -path './vendor/*' -print0)
+          unformatted="$(gofmt -l "${go_files[@]}")"
           test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
 
       - name: Install Matrix crypto headers
-        # Matrix support links against libolm when the full package graph is tested or built.
         run: sudo apt-get update && sudo apt-get install --yes libolm-dev
 
       - name: Run all Go tests
@@ -39,20 +48,30 @@ jobs:
       - name: Build PicoClaw
         run: go build ./cmd/picoclaw
 
+      - name: Run deterministic personalization benchmark
+        run: >-
+          go run ./cmd/membench personalization
+          --out "${RUNNER_TEMP}/picoclaw-personalization-bench"
+
   memory-evolution-race:
     name: Memory and evolution race tests
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - name: Checkout without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
       - name: Run focused race tests
+        shell: bash
         run: |
+          set -Eeuo pipefail
           go test -race ./pkg/memory
           go test -race ./pkg/agent -run '^(Test.*(Memory|Checkpoint|Recall).*)$'
           go test -race ./pkg/tools -run '^(Test.*(Memory|Checkpoint|Recall).*)$'
@@ -63,39 +82,46 @@ jobs:
   static-analysis:
     name: Go static analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - name: Checkout without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
       - name: Golangci Lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
           version: v2.10.1
           args: --build-tags=goolm,stdjson
 
   frontend:
-    name: Dashboard checks
+    name: Dashboard tests, lint, formatting, and build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: web/frontend
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - name: Checkout without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 10.33.0
           run_install: false
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
           cache: pnpm
@@ -104,22 +130,41 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run dashboard config tests
+      - name: Run dashboard configuration tests
         run: pnpm test:config
+
+      - name: Run all frontend tests
+        run: pnpm test
 
       - name: Run frontend lint
         run: pnpm lint
 
-      - name: Check frontend formatting
-        run: >-
-          pnpm exec prettier --check
-          package.json
-          src/components/config/config-page.tsx
-          src/components/config/config-sections.tsx
-          src/components/config/form-model.ts
-          src/components/config/memory-evolution-management.tsx
-          src/i18n/locales/en.json
-          tests/form-model.test.ts
+      - name: Check changed frontend formatting
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -d '' -t changed_paths < <(
+            git -C ../.. diff \
+              --name-only \
+              --diff-filter=ACMR \
+              -z \
+              refs/remotes/origin/main...HEAD \
+              -- web/frontend
+          )
+          prettier_files=()
+          for changed_path in "${changed_paths[@]}"; do
+            relative_path="${changed_path#web/frontend/}"
+            case "$relative_path" in
+              *.cjs|*.css|*.html|*.js|*.json|*.jsx|*.md|*.mjs|*.ts|*.tsx|*.yaml|*.yml)
+                prettier_files+=("$relative_path")
+                ;;
+            esac
+          done
+          if (( ${#prettier_files[@]} == 0 )); then
+            echo "No changed frontend text files require Prettier validation."
+          else
+            pnpm exec prettier --check -- "${prettier_files[@]}"
+          fi
 
       - name: Build frontend
         run: pnpm build
