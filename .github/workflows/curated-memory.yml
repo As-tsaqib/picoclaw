@@ -133,8 +133,8 @@ jobs:
       - name: Run dashboard configuration tests
         run: pnpm test:config
 
-      - name: Run all frontend tests
-        run: pnpm test
+      - name: Run browser frontend tests
+        run: pnpm exec vitest run src
 
       - name: Run frontend lint
         run: pnpm lint
