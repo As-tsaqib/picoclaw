@@ -107,6 +107,7 @@ func (al *AgentLoop) commitMemoryDelivery(delivery deferredMemoryDelivery, deliv
 		}
 		return
 	}
+	al.rememberMemoryCallerScope(delivery.caller)
 	if agent.Checkpoints != nil {
 		if err := agent.Checkpoints.CommitDelivered(
 			delivery.turnID,
@@ -175,7 +176,7 @@ func (al *AgentLoop) acknowledgeEvolutionTurn(turnID string, delivered bool) {
 
 func memoryReviewEligible(ts *turnState, caller memory.CallerScope) bool {
 	if ts == nil || ts.opts.NoHistory || ts.opts.SuppressMemoryReview || ts.depth > 0 ||
-		caller.UserKey == "" || constants.IsInternalChannel(caller.Channel) {
+		!memory.AllowsPrivateUserMemory(caller) || constants.IsInternalChannel(caller.Channel) {
 		return false
 	}
 	sender := strings.ToLower(strings.TrimSpace(ts.opts.Dispatch.SenderID()))

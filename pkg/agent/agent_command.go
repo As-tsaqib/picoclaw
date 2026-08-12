@@ -406,7 +406,11 @@ func (al *AgentLoop) clearHistoryWithMemoryFlush(
 	if err := al.contextManager.Clear(ctx, opts.Dispatch.SessionKey); err != nil {
 		return err
 	}
-	return clearSessionMemoryState(agent, caller)
+	if err := clearSessionMemoryState(agent, caller); err != nil {
+		return err
+	}
+	al.forgetMemoryCallerScope(opts.Dispatch.SessionKey)
+	return nil
 }
 
 func summarizeMCPToolParameters(schema any) []commands.MCPToolParameterInfo {

@@ -45,14 +45,14 @@ func memoryPromptPartsForTurn(
 			Source:  PromptSource{ID: PromptSourceMemoryPolicy, Name: "memory:policy"},
 			Title:   "curated memory policy",
 			Content: memoryBehaviorPrompt,
-			Stable:  false,
-			Cache:   PromptCacheNone,
+			Stable:  true,
+			Cache:   PromptCacheEphemeral,
 		})
 		// A compact compiled profile is always available in trusted private chats.
 		// It is derived from current_user curated memory and is never an independent
 		// source of truth. Profile source IDs are intentionally not marked as
 		// presented, otherwise always-on fields would create a retrieval feedback loop.
-		if cfg.Memory.Profile.Enabled && caller.UserKey != "" && strings.TrimSpace(caller.GroupID) == "" {
+		if cfg.Memory.Profile.Enabled && memory.AllowsPrivateUserMemory(caller) {
 			profile, profileErr := ts.agent.CuratedMemory.CompileUserProfile(caller, memory.UserProfileOptions{
 				MaxChars:      cfg.Memory.Profile.EffectiveMaxChars(),
 				MinConfidence: cfg.Memory.Profile.EffectiveMinConfidence(),
@@ -89,7 +89,7 @@ func memoryPromptPartsForTurn(
 		// Responses in shared chats are visible to other participants, so even
 		// correctly scoped current-user memory must not enter the model prompt.
 		// Direct chats retain canonical-user recall across their topic sessions.
-		if caller.UserKey != "" && strings.TrimSpace(caller.GroupID) == "" {
+		if memory.AllowsPrivateUserMemory(caller) {
 			userEntries, userErr := retrieveCuratedPromptEntries(
 				ts,
 				cfg,
@@ -118,8 +118,8 @@ func memoryPromptPartsForTurn(
 			Source:  PromptSource{ID: PromptSourceMemoryPolicy, Name: "memory:policy"},
 			Title:   "memory policy",
 			Content: memoryBehaviorPrompt,
-			Stable:  false,
-			Cache:   PromptCacheNone,
+			Stable:  true,
+			Cache:   PromptCacheEphemeral,
 		})
 	}
 	if ts.agent.Checkpoints != nil && caller.SessionKey != "" {

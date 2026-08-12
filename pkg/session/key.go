@@ -135,6 +135,23 @@ func CanonicalSessionIdentityID(channel, rawID string, identityLinks map[string]
 	return strings.ToLower(normalizedID)
 }
 
+// CanonicalUserScopeKey returns the stable channel/account/canonical-user key
+// used by private per-user stores. Callers must supply a raw identity obtained
+// from trusted runtime authentication metadata; this helper deliberately does
+// not accept request- or model-selected scope information.
+func CanonicalUserScopeKey(channel, account, rawID string, identityLinks map[string][]string) string {
+	canonical := CanonicalSessionIdentityID(channel, rawID, identityLinks)
+	if canonical == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"channel:%s|account:%s|user:%s",
+		strings.ToLower(strings.TrimSpace(channel)),
+		routing.NormalizeAccountID(account),
+		canonical,
+	)
+}
+
 func normalizeLegacyChannel(channel string) string {
 	channel = strings.ToLower(strings.TrimSpace(channel))
 	if channel == "" {

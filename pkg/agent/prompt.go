@@ -489,6 +489,13 @@ func (s *PromptStack) Parts() []PromptPart {
 	return append([]PromptPart(nil), s.parts...)
 }
 
+func clonePromptParts(parts []PromptPart) []PromptPart {
+	if len(parts) == 0 {
+		return nil
+	}
+	return append([]PromptPart(nil), parts...)
+}
+
 func renderPromptPartsLegacy(parts []PromptPart) string {
 	textParts := make([]string, 0, len(parts))
 	for _, part := range sortPromptParts(parts) {

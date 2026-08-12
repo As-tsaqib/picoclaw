@@ -48,7 +48,7 @@ func configureMemoryCommandRuntime(
 			if workspaceErr == nil {
 				lines = append(lines, formatMemoryStats(workspace))
 			}
-			if caller.GroupID != "" {
+			if !memory.AllowsPrivateUserMemory(caller) {
 				lines = append(lines, "Current-user memory details are hidden in shared chats.")
 			} else {
 				user, userErr := agent.CuratedMemory.Stats(memory.CuratedTargetCurrentUser, caller)
@@ -61,7 +61,7 @@ func configureMemoryCommandRuntime(
 			return strings.Join(lines, "\n")
 		}
 		rt.MemoryProfile = func() (string, error) {
-			if caller.GroupID != "" {
+			if !memory.AllowsPrivateUserMemory(caller) {
 				return "", memory.ErrPrivateContextRequired
 			}
 			if !rt.Config.Memory.Profile.Enabled {
@@ -81,7 +81,7 @@ func configureMemoryCommandRuntime(
 			if err != nil {
 				return "", err
 			}
-			if caller.GroupID != "" {
+			if !memory.AllowsPrivateUserMemory(caller) {
 				return formatMemoryEntries(workspace, nil) +
 					"\nCurrent-user memory is hidden in shared chats; use a direct chat to list it.", nil
 			}
@@ -96,7 +96,7 @@ func configureMemoryCommandRuntime(
 			if err != nil {
 				return "", err
 			}
-			if caller.GroupID != "" {
+			if !memory.AllowsPrivateUserMemory(caller) {
 				return formatMemoryEntries(workspace, nil) +
 					"\nCurrent-user memory search is available only in a direct chat.", nil
 			}
@@ -107,7 +107,7 @@ func configureMemoryCommandRuntime(
 			return formatMemoryEntries(workspace, user), nil
 		}
 		rt.MemoryEdit = func(id, content string) (string, error) {
-			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, caller.GroupID == "")
+			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, memory.AllowsPrivateUserMemory(caller))
 			if err != nil {
 				return "", err
 			}
@@ -122,7 +122,7 @@ func configureMemoryCommandRuntime(
 			return "Updated memory entry " + id + ".", nil
 		}
 		rt.MemoryEntryAction = func(action, id string) (string, error) {
-			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, caller.GroupID == "")
+			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, memory.AllowsPrivateUserMemory(caller))
 			if err != nil {
 				return "", err
 			}
@@ -149,7 +149,7 @@ func configureMemoryCommandRuntime(
 			return fmt.Sprintf("Memory entry %s: %s.", id, action), nil
 		}
 		rt.MemoryForget = func(id string) (string, error) {
-			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, caller.GroupID == "")
+			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, memory.AllowsPrivateUserMemory(caller))
 			if err != nil {
 				return "", err
 			}
@@ -167,7 +167,7 @@ func configureMemoryCommandRuntime(
 			if err != nil {
 				return "", err
 			}
-			if caller.GroupID != "" {
+			if !memory.AllowsPrivateUserMemory(caller) {
 				return formatPendingMemory(workspace, nil) +
 					"\nCurrent-user pending changes are hidden in shared chats; use a direct chat to manage them.", nil
 			}
@@ -183,7 +183,7 @@ func configureMemoryCommandRuntime(
 				caller,
 				id,
 				true,
-				caller.GroupID == "",
+				memory.AllowsPrivateUserMemory(caller),
 			)
 			if err != nil {
 				return "", err
@@ -196,7 +196,7 @@ func configureMemoryCommandRuntime(
 				caller,
 				id,
 				false,
-				caller.GroupID == "",
+				memory.AllowsPrivateUserMemory(caller),
 			)
 			if err != nil {
 				return "", err

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -72,6 +73,28 @@ type memoryReviewController struct {
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	done   chan struct{}
+	gate   chan struct{}
+}
+
+func (c *memoryReviewController) acquire(ctx context.Context) (func(), error) {
+	if c == nil {
+		return nil, fmt.Errorf("memory reviewer controller is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.mu.Lock()
+	if c.gate == nil {
+		c.gate = make(chan struct{}, 1)
+	}
+	gate := c.gate
+	c.mu.Unlock()
+	select {
+	case gate <- struct{}{}:
+		return func() { <-gate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // NewAgentInstance creates an agent instance from config.

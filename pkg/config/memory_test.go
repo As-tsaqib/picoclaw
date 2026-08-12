@@ -92,6 +92,22 @@ func TestMemoryConfigValidateEnumsAndBounds(t *testing.T) {
 	}
 }
 
+func TestMemoryRetrievalEngineModes(t *testing.T) {
+	for _, engine := range []string{MemoryRetrievalHybridLexical, MemoryRetrievalSemanticRerank} {
+		cfg := DefaultConfig().Memory
+		cfg.Retrieval.Engine = engine
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate(%q) error = %v", engine, err)
+		}
+		if got := cfg.Retrieval.EffectiveEngine(); got != engine {
+			t.Fatalf("EffectiveEngine(%q) = %q", engine, got)
+		}
+	}
+	if got := (MemoryRetrievalConfig{Engine: "unknown"}).EffectiveEngine(); got != MemoryRetrievalHybridLexical {
+		t.Fatalf("unknown engine fallback = %q", got)
+	}
+}
+
 func TestMemoryApprovalModeLegacyMappingAndExplicitPrecedence(t *testing.T) {
 	tests := []struct {
 		name string

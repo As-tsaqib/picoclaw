@@ -49,6 +49,7 @@ type cachedUserProfile struct {
 	MaxChars   int
 	MinScore   float64
 	ValidUntil time.Time
+	LastAccess uint64
 	Snapshot   UserProfileSnapshot
 }
 
@@ -88,9 +89,11 @@ func (s *CuratedStore) CompileUserProfile(
 		return UserProfileSnapshot{}, lockErr
 	}
 	defer unlockDocument()
-	s.mu.RLock()
-	doc, readErr := s.readDocument(path, digest)
-	s.mu.RUnlock()
+	// Profile compilation may be the first v1 reader after upgrade. Own the
+	// write lock for the bounded one-time atomic schema rewrite.
+	s.mu.Lock()
+	doc, readErr := s.readDocument(path, digest, true)
+	s.mu.Unlock()
 	if readErr != nil {
 		return UserProfileSnapshot{}, readErr
 	}
@@ -108,10 +111,9 @@ func (s *CuratedStore) CompileUserProfile(
 	}
 
 	if useCache {
-		if cached, ok := s.profileCache.Load(path); ok {
-			item, valid := cached.(cachedUserProfile)
+		if item, valid := s.loadCachedUserProfile(path); valid {
 			cacheTimeValid := item.ValidUntil.IsZero() || now.Before(item.ValidUntil)
-			if valid && cacheTimeValid && item.Revision == profileRevision && item.MaxChars == opts.MaxChars &&
+			if cacheTimeValid && item.Revision == profileRevision && item.MaxChars == opts.MaxChars &&
 				item.MinScore == opts.MinConfidence {
 				return cloneUserProfileSnapshot(item.Snapshot), nil
 			}
@@ -179,7 +181,7 @@ func (s *CuratedStore) CompileUserProfile(
 	}
 
 	if useCache {
-		s.profileCache.Store(path, cachedUserProfile{
+		s.storeCachedUserProfile(path, cachedUserProfile{
 			Revision:   profileRevision,
 			MaxChars:   opts.MaxChars,
 			MinScore:   opts.MinConfidence,
@@ -188,6 +190,46 @@ func (s *CuratedStore) CompileUserProfile(
 		})
 	}
 	return snapshot, nil
+}
+
+func (s *CuratedStore) loadCachedUserProfile(path string) (cachedUserProfile, bool) {
+	if s == nil {
+		return cachedUserProfile{}, false
+	}
+	s.profileCacheMu.Lock()
+	defer s.profileCacheMu.Unlock()
+	item, ok := s.profileCache[path]
+	if !ok {
+		return cachedUserProfile{}, false
+	}
+	s.profileCacheClock++
+	item.LastAccess = s.profileCacheClock
+	s.profileCache[path] = item
+	return item, true
+}
+
+func (s *CuratedStore) storeCachedUserProfile(path string, item cachedUserProfile) {
+	if s == nil || s.profileCacheLimit <= 0 {
+		return
+	}
+	s.profileCacheMu.Lock()
+	defer s.profileCacheMu.Unlock()
+	s.profileCacheClock++
+	item.LastAccess = s.profileCacheClock
+	if _, exists := s.profileCache[path]; !exists && len(s.profileCache) >= s.profileCacheLimit {
+		oldestPath := ""
+		oldestAccess := ^uint64(0)
+		for candidatePath, candidate := range s.profileCache {
+			if candidate.LastAccess < oldestAccess {
+				oldestPath = candidatePath
+				oldestAccess = candidate.LastAccess
+			}
+		}
+		if oldestPath != "" {
+			delete(s.profileCache, oldestPath)
+		}
+	}
+	s.profileCache[path] = item
 }
 
 func profileEligibleEntry(entry CuratedEntry, minConfidence float64) bool {

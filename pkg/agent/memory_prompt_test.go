@@ -354,6 +354,73 @@ func TestMemoryPromptIncludesCompiledProfileWithoutRetrievalMatch(t *testing.T) 
 	}
 }
 
+func TestBuildMessagesStructuredProfilePrecedesConflictingLegacyUserSeed(t *testing.T) {
+	workspace := setupWorkspace(t, map[string]string{
+		"SOUL.md":  "# Soul\nBe steady and practical.",
+		"AGENT.md": "# Agent\nHelp the current user.",
+		"USER.md":  "# Legacy preference\nAlways give very detailed answers.",
+	})
+	defer cleanupWorkspace(t, workspace)
+	t.Setenv("PICOCLAW_BUILTIN_SKILLS", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.Memory.Profile.Enabled = true
+	store, err := memory.NewCuratedStore(
+		filepath.Join(t.TempDir(), "curated"),
+		memory.CuratedStoreOptions{WorkspaceCharLimit: 5_000, PerUserCharLimit: 5_000},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := memory.CallerScope{
+		AgentID: "main", UserKey: "telegram:user-profile", Channel: "telegram",
+		Account: "personal", SessionKey: "topic-a", SessionRef: "session-a",
+	}
+	if _, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, caller, []memory.CuratedMutation{{
+		Action: memory.CuratedActionAdd, Content: "User now explicitly prefers concise answers",
+		Type: memory.CuratedTypeCommunicationPreference, EvidenceKind: memory.CuratedEvidenceExplicit,
+		PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
+	}}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	cb := NewContextBuilder(workspace)
+	ts := &turnState{
+		agent:       &AgentInstance{ID: "main", ContextBuilder: cb, CuratedMemory: store},
+		userMessage: "Explain OAuth.",
+	}
+	memoryParts, private := memoryPromptPartsForTurn(ts, cfg, caller)
+	messages := cb.BuildMessagesFromPrompt(PromptBuildRequest{
+		CurrentMessage: "Explain OAuth.", MemoryScope: caller,
+		Overlays: memoryParts, PrivateContext: private,
+	})
+	if len(messages) < 2 || messages[0].Role != "system" {
+		t.Fatalf("messages = %#v, want system plus user message", messages)
+	}
+	system := messages[0].Content
+	profileAt := strings.Index(system, `"key":"communication.verbosity","value":"concise"`)
+	legacyAt := strings.Index(system, "Always give very detailed answers")
+	if profileAt < 0 || legacyAt < 0 || profileAt >= legacyAt {
+		t.Fatalf("assembled prompt precedence invalid: profile_at=%d legacy_at=%d\n%s", profileAt, legacyAt, system)
+	}
+	if !strings.Contains(system, "newer explicit structured preference overrides") {
+		t.Fatalf("assembled prompt omits deterministic conflict policy: %s", system)
+	}
+	var profilePartAt, legacyPartAt = -1, -1
+	for i, part := range messages[0].SystemParts {
+		switch part.PromptSource {
+		case string(PromptSourceUserProfile):
+			profilePartAt = i
+		case string(PromptSourceLegacyUser):
+			legacyPartAt = i
+		}
+	}
+	if profilePartAt < 0 || legacyPartAt < 0 || profilePartAt >= legacyPartAt {
+		t.Fatalf("typed prompt parts precedence invalid: profile_at=%d legacy_at=%d parts=%#v",
+			profilePartAt, legacyPartAt, messages[0].SystemParts)
+	}
+}
+
 func TestCuratedRetrievalQueryUsesSummaryAndRecentUserTurns(t *testing.T) {
 	ts := &turnState{
 		userMessage:         "lanjut yang tadi",

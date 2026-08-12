@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -327,6 +329,140 @@ func TestCacheStability(t *testing.T) {
 	// Static prompt must NOT contain per-request data
 	if strings.Contains(results[0], "Current Time") {
 		t.Error("static cached prompt should not contain time (added dynamically)")
+	}
+}
+
+func TestTypedPromptCacheReusesStaticPartsWithoutTrackedSourceMtimes(t *testing.T) {
+	workspace := t.TempDir()
+	builtinSkills := filepath.Join(t.TempDir(), "missing-builtin-skills")
+	globalConfig := t.TempDir()
+	t.Setenv(config.EnvBuiltinSkills, builtinSkills)
+	t.Setenv(config.EnvHome, globalConfig)
+
+	cb := NewContextBuilder(workspace)
+	firstPrompt, firstParts := cb.buildSystemPromptCache()
+	if firstPrompt == "" || len(firstParts) == 0 {
+		t.Fatalf("initial typed prompt cache = %q, %#v", firstPrompt, firstParts)
+	}
+
+	cb.systemPromptMutex.Lock()
+	cb.cachedPromptParts[0].Content = "cached sentinel"
+	cb.cachedSystemPrompt = "cached sentinel"
+	cb.systemPromptMutex.Unlock()
+
+	secondPrompt, secondParts := cb.buildSystemPromptCache()
+	if secondPrompt != "cached sentinel" || len(secondParts) == 0 ||
+		secondParts[0].Content != "cached sentinel" {
+		t.Fatalf("typed prompt cache rebuilt without source changes: prompt=%q parts=%#v", secondPrompt, secondParts)
+	}
+
+	secondParts[0].Content = "caller mutation"
+	_, thirdParts := cb.buildSystemPromptCache()
+	if len(thirdParts) == 0 || thirdParts[0].Content != "cached sentinel" {
+		t.Fatalf("cached prompt parts were not cloned defensively: %#v", thirdParts)
+	}
+}
+
+func TestPromptCacheBreakpointsAreBoundedToStablePrefix(t *testing.T) {
+	parts := make([]PromptPart, 0, 8)
+	for index := range 6 {
+		parts = append(parts, PromptPart{
+			ID:      fmt.Sprintf("stable-%d", index),
+			Stable:  true,
+			Cache:   PromptCacheEphemeral,
+			Content: "stable",
+		})
+	}
+	parts = append(parts,
+		PromptPart{ID: "private-profile", Stable: false, Cache: PromptCacheNone, Content: "private"},
+		PromptPart{ID: "later-stable", Stable: true, Cache: PromptCacheEphemeral, Content: "later"},
+	)
+
+	got := promptCacheBreakpoints(parts, 4)
+	if len(got) != 4 {
+		t.Fatalf("cache breakpoints = %v, want four", got)
+	}
+	for _, index := range []int{0, 1, 6, 7} {
+		if _, ok := got[index]; ok {
+			t.Fatalf("cache breakpoint unexpectedly selected index %d: %v", index, got)
+		}
+	}
+	for _, index := range []int{2, 3, 4, 5} {
+		if _, ok := got[index]; !ok {
+			t.Fatalf("cache breakpoint omitted stable-prefix index %d: %v", index, got)
+		}
+	}
+}
+
+func TestBuildMessagesBoundsCacheBreakpointsAcrossStableContributors(t *testing.T) {
+	t.Setenv(config.EnvBuiltinSkills, t.TempDir())
+	cb := NewContextBuilder(t.TempDir()).WithToolDiscovery(true, true)
+	for index := range 6 {
+		if err := cb.RegisterPromptContributor(mcpServerPromptContributor{
+			serverName: fmt.Sprintf("server-%d", index), toolCount: 1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	messages := cb.BuildMessagesFromPrompt(PromptBuildRequest{CurrentMessage: "hello"})
+	if len(messages) == 0 {
+		t.Fatal("system message is missing")
+	}
+	breakpoints := 0
+	for _, part := range messages[0].SystemParts {
+		if part.CacheControl != nil {
+			breakpoints++
+		}
+	}
+	if breakpoints == 0 || breakpoints > 4 {
+		t.Fatalf("cache breakpoints = %d, want 1..4", breakpoints)
+	}
+}
+
+func TestBuildMessagesDoesNotCachePrivateDynamicPromptSuffix(t *testing.T) {
+	workspace := setupWorkspace(t, map[string]string{
+		"USER.md": "# Legacy defaults\nUse English unless the user asks otherwise.",
+	})
+	defer cleanupWorkspace(t, workspace)
+	t.Setenv(config.EnvBuiltinSkills, t.TempDir())
+
+	cb := NewContextBuilder(workspace)
+	messages := cb.BuildMessagesFromPrompt(PromptBuildRequest{
+		CurrentMessage: "hello",
+		PrivateContext: true,
+		Overlays: []PromptPart{{
+			ID:      "context.user.profile",
+			Layer:   PromptLayerContext,
+			Slot:    PromptSlotUserProfile,
+			Source:  PromptSource{ID: PromptSourceUserProfile, Name: "memory:user_profile"},
+			Content: "<current_user_profile>{\"private\":true}</current_user_profile>",
+			Stable:  false,
+			Cache:   PromptCacheNone,
+		}},
+	})
+	if len(messages) == 0 || len(messages[0].SystemParts) == 0 {
+		t.Fatalf("system prompt parts = %#v", messages)
+	}
+
+	seenPrivate := false
+	breakpoints := 0
+	for _, part := range messages[0].SystemParts {
+		if part.PromptSource == string(PromptSourceUserProfile) {
+			seenPrivate = true
+		}
+		if part.CacheControl != nil {
+			breakpoints++
+		}
+		if seenPrivate && part.CacheControl != nil {
+			t.Fatalf("cache breakpoint appears at or after private prompt suffix: %#v", part)
+		}
+	}
+	if !seenPrivate {
+		t.Fatalf("private profile part missing: %#v", messages[0].SystemParts)
+	}
+	if breakpoints == 0 || breakpoints > 4 {
+		t.Fatalf("cache breakpoints = %d, want 1..4", breakpoints)
 	}
 }
 

@@ -69,6 +69,17 @@ func TestBuildLegacyPeerAlias(t *testing.T) {
 	}
 }
 
+func TestCanonicalUserScopeKeyUsesAccountAndIdentityLinks(t *testing.T) {
+	links := map[string][]string{"Alice": {"telegram:42", "slack:U42"}}
+	if got := CanonicalUserScopeKey(" Telegram ", " Personal ", "42", links); got !=
+		"channel:telegram|account:personal|user:alice" {
+		t.Fatalf("CanonicalUserScopeKey() = %q", got)
+	}
+	if got := CanonicalUserScopeKey("telegram", "default", "", links); got != "" {
+		t.Fatalf("CanonicalUserScopeKey(empty) = %q, want empty", got)
+	}
+}
+
 func TestBuildMainSessionKey(t *testing.T) {
 	got := BuildMainSessionKey("Main")
 	if !IsOpaqueSessionKey(got) {

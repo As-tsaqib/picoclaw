@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,23 +14,32 @@ import (
 )
 
 type personalizationBenchReport struct {
-	PreferenceCorrectionPass bool    `json:"preference_correction_pass"`
-	InferenceResistancePass  bool    `json:"inference_resistance_pass"`
-	PrivacyIsolationPass     bool    `json:"privacy_isolation_pass"`
-	LongHorizonPass          bool    `json:"long_horizon_pass"`
-	CrossTopicProfilePass    bool    `json:"cross_topic_profile_pass"`
-	ProfileCharacters        int     `json:"profile_characters"`
-	ProfileSources           int     `json:"profile_sources"`
-	ProfileBuildMicros       int64   `json:"profile_build_micros"`
-	ProfileCachedMicros      int64   `json:"profile_cached_micros"`
-	RetrievalMicros          int64   `json:"retrieval_micros"`
-	CorrectionMutations      int     `json:"correction_mutations"`
-	LongHorizonTurns         int     `json:"long_horizon_turns"`
-	MemoryEntriesBefore      int     `json:"memory_entries_before"`
-	MemoryEntriesAfter       int     `json:"memory_entries_after"`
-	PrivacyLeakageRate       float64 `json:"privacy_leakage_rate"`
-	MemoryPollutionRate      float64 `json:"memory_pollution_rate"`
-	StalePreferenceRate      float64 `json:"stale_preference_violation_rate"`
+	PreferenceCorrectionPass  bool    `json:"preference_correction_pass"`
+	InferenceResistancePass   bool    `json:"inference_resistance_pass"`
+	PrivacyIsolationPass      bool    `json:"privacy_isolation_pass"`
+	GroupIsolationPass        bool    `json:"group_isolation_pass"`
+	SemanticParaphrasePass    bool    `json:"semantic_paraphrase_pass"`
+	LongHorizonPass           bool    `json:"long_horizon_pass"`
+	CrossTopicProfilePass     bool    `json:"cross_topic_profile_pass"`
+	FalseMemoryResistancePass bool    `json:"false_memory_resistance_pass"`
+	PreferenceAdherence       float64 `json:"preference_adherence_accuracy"`
+	SemanticRecallAtK         float64 `json:"semantic_recall_at_k"`
+	FalseMemoryWriteRate      float64 `json:"false_memory_write_rate"`
+	ProfileCharacters         int     `json:"profile_characters"`
+	RetrievedCharacters       int     `json:"retrieved_characters"`
+	PromptCharacterOverhead   int     `json:"prompt_character_overhead"`
+	PromptTokenEstimate       int     `json:"prompt_token_estimate"`
+	ProfileSources            int     `json:"profile_sources"`
+	ProfileBuildMicros        int64   `json:"profile_build_micros"`
+	ProfileCachedMicros       int64   `json:"profile_cached_micros"`
+	RetrievalMicros           int64   `json:"retrieval_micros"`
+	CorrectionMutations       int     `json:"correction_mutations"`
+	LongHorizonTurns          int     `json:"long_horizon_turns"`
+	MemoryEntriesBefore       int     `json:"memory_entries_before"`
+	MemoryEntriesAfter        int     `json:"memory_entries_after"`
+	PrivacyLeakageRate        float64 `json:"privacy_leakage_rate"`
+	MemoryPollutionRate       float64 `json:"memory_pollution_rate"`
+	StalePreferenceRate       float64 `json:"stale_preference_violation_rate"`
 }
 
 func personalizationCommand() *cobra.Command {
@@ -69,6 +79,11 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 		SessionKey: "bench-b",
 		SessionRef: "bench-b",
 	}
+	sharedGroup := userA
+	sharedGroup.ChatID = "bench-group"
+	sharedGroup.GroupID = "bench-group"
+	sharedGroup.SessionKey = "bench-group-topic"
+	sharedGroup.SessionRef = "bench-group-topic"
 	first, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, userA, []memory.CuratedMutation{
 		{
 			Action:          memory.CuratedActionAdd,
@@ -152,6 +167,27 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	requestedInferenceConfidence := 1.0
+	weakInference, err := store.ApplyBatch(
+		memory.CuratedTargetCurrentUser,
+		userA,
+		[]memory.CuratedMutation{{
+			Action:          memory.CuratedActionAdd,
+			Content:         "Recent discussion may suggest interest in Rust",
+			Type:            memory.CuratedTypeWorkflowPreference,
+			Confidence:      &requestedInferenceConfidence,
+			EvidenceKind:    memory.CuratedEvidenceInferred,
+			PreferenceKey:   "workflow.programming_language",
+			PreferenceValue: "rust",
+		}},
+		false,
+	)
+	if err != nil {
+		return err
+	}
+	if len(weakInference.Applied) != 1 {
+		return fmt.Errorf("benchmark setup missing weak inference")
+	}
 	profile3, err := store.CompileUserProfile(userA, memory.UserProfileOptions{MaxChars: 1_200, MinConfidence: 0.65})
 	if err != nil {
 		return err
@@ -169,7 +205,7 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 			MinimumScore: 0.35, RecencyWeight: 0.25, RecencyHalfLifeDays: 90,
 			StaleAfterDays: 180, FuzzyWeight: 0.75, RecentFallbackCount: 0,
 		}); retrieveErr != nil {
-			return err
+			return retrieveErr
 		}
 	}
 	profileAfterLongHorizon, err := store.CompileUserProfile(
@@ -201,7 +237,7 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 	}
 	privacyPass := len(other.SourceIDs) == 0
 	start = time.Now()
-	_, err = store.Retrieve(memory.CuratedTargetCurrentUser, userA, memory.CuratedRetrievalOptions{
+	retrieved, err := store.Retrieve(memory.CuratedTargetCurrentUser, userA, memory.CuratedRetrievalOptions{
 		Query: "detailed explanation preference", MaxResults: 6, MaxChars: 2_800, PinnedChars: 800,
 		MinimumScore: 0.1, RecencyWeight: 0.25, RecencyHalfLifeDays: 90, StaleAfterDays: 180, FuzzyWeight: 0.75,
 		RecentFallbackCount: 2,
@@ -210,23 +246,73 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	semantic, err := memory.NewRetrievalEngine(memory.RetrievalEngineSemanticRerank).Retrieve(
+		store,
+		memory.CuratedTargetCurrentUser,
+		userA,
+		memory.CuratedRetrievalOptions{
+			Query:      "Jangan jelaskan kepanjangan; kasih perintah yang tinggal saya jalankan",
+			MaxResults: 6, MaxChars: 2_800, PinnedChars: 800,
+			MinimumScore: 0.35, RecencyWeight: 0.25, RecencyHalfLifeDays: 90,
+			StaleAfterDays: 180, FuzzyWeight: 0.75, RecentFallbackCount: 0,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	semanticPass := entriesContainPreference(
+		semantic.Entries,
+		"workflow.command_style",
+		"copy_paste_ready",
+	)
+	groupPass := !memory.AllowsPrivateUserMemory(sharedGroup)
+	inferredRust := weakInference.Applied[0]
+	falseMemoryWrites := 0
+	if inferredRust.EffectiveEvidenceKind() != memory.CuratedEvidenceInferred ||
+		inferredRust.EffectiveConfidence() > 0.60 ||
+		profileHasValue(profileAfterLongHorizon, "workflow.programming_language", "rust") {
+		falseMemoryWrites++
+	}
+	falseMemoryWriteRate := float64(falseMemoryWrites)
+	falseMemoryPass := falseMemoryWriteRate == 0 &&
+		!entriesContainContent(semantic.Entries, "permanently prefers Rust")
+	promptOverhead := profileAfterLongHorizon.Characters + retrieved.Characters
+	preferenceChecks := []bool{
+		profileHasValue(profileAfterLongHorizon, "communication.language", "id"),
+		profileHasValue(profileAfterLongHorizon, "communication.verbosity", "detailed"),
+		profileHasValue(profileAfterLongHorizon, "workflow.command_style", "copy_paste_ready"),
+	}
+	adherence := passedFraction(preferenceChecks)
+	semanticRecall := 0.0
+	if semanticPass {
+		semanticRecall = 1
+	}
 	report := personalizationBenchReport{
-		PreferenceCorrectionPass: correctionPass,
-		InferenceResistancePass:  inferencePass,
-		PrivacyIsolationPass:     privacyPass,
-		LongHorizonPass:          longHorizonPass,
-		CrossTopicProfilePass:    crossTopicPass,
-		ProfileCharacters:        profile1.Characters,
-		ProfileSources:           len(profile1.SourceIDs),
-		ProfileBuildMicros:       profileBuild.Microseconds(),
-		ProfileCachedMicros:      profileCached.Microseconds(),
-		RetrievalMicros:          retrievalDuration.Microseconds(),
-		CorrectionMutations:      len(correction.Applied),
-		LongHorizonTurns:         longHorizonTurns,
-		MemoryEntriesBefore:      statsBefore.Entries,
-		MemoryEntriesAfter:       statsAfter.Entries,
-		MemoryPollutionRate:      pollutionRate,
-		StalePreferenceRate:      stalePreferenceRate,
+		PreferenceCorrectionPass:  correctionPass,
+		InferenceResistancePass:   inferencePass,
+		PrivacyIsolationPass:      privacyPass,
+		GroupIsolationPass:        groupPass,
+		SemanticParaphrasePass:    semanticPass,
+		LongHorizonPass:           longHorizonPass,
+		CrossTopicProfilePass:     crossTopicPass,
+		FalseMemoryResistancePass: falseMemoryPass,
+		PreferenceAdherence:       adherence,
+		SemanticRecallAtK:         semanticRecall,
+		ProfileCharacters:         profile1.Characters,
+		RetrievedCharacters:       retrieved.Characters,
+		PromptCharacterOverhead:   promptOverhead,
+		PromptTokenEstimate:       (promptOverhead + 3) / 4,
+		ProfileSources:            len(profile1.SourceIDs),
+		ProfileBuildMicros:        profileBuild.Microseconds(),
+		ProfileCachedMicros:       profileCached.Microseconds(),
+		RetrievalMicros:           retrievalDuration.Microseconds(),
+		CorrectionMutations:       len(correction.Applied),
+		LongHorizonTurns:          longHorizonTurns,
+		MemoryEntriesBefore:       statsBefore.Entries,
+		MemoryEntriesAfter:        statsAfter.Entries,
+		MemoryPollutionRate:       pollutionRate,
+		FalseMemoryWriteRate:      falseMemoryWriteRate,
+		StalePreferenceRate:       stalePreferenceRate,
 	}
 	if !privacyPass {
 		report.PrivacyLeakageRate = 1
@@ -243,11 +329,44 @@ func runPersonalization(_ *cobra.Command, _ []string) error {
 		return writeErr
 	}
 	fmt.Printf("%s\n", data)
-	if !correctionPass || !inferencePass || !privacyPass || !longHorizonPass || !crossTopicPass ||
-		pollutionRate != 0 || stalePreferenceRate != 0 {
+	if !correctionPass || !inferencePass || !privacyPass || !groupPass || !semanticPass ||
+		!falseMemoryPass || !longHorizonPass || !crossTopicPass || adherence != 1 ||
+		semanticRecall != 1 || falseMemoryWriteRate != 0 || pollutionRate != 0 || stalePreferenceRate != 0 ||
+		promptOverhead > 4_000 {
 		return fmt.Errorf("personalization benchmark failed; see %s", path)
 	}
 	return nil
+}
+
+func entriesContainPreference(entries []memory.CuratedEntry, key, value string) bool {
+	for _, entry := range entries {
+		if entry.PreferenceKey == key && entry.PreferenceValue == value {
+			return true
+		}
+	}
+	return false
+}
+
+func entriesContainContent(entries []memory.CuratedEntry, value string) bool {
+	for _, entry := range entries {
+		if strings.Contains(strings.ToLower(entry.Content), strings.ToLower(value)) {
+			return true
+		}
+	}
+	return false
+}
+
+func passedFraction(values []bool) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	passed := 0
+	for _, value := range values {
+		if value {
+			passed++
+		}
+	}
+	return float64(passed) / float64(len(values))
 }
 
 func profileHasValue(profile memory.UserProfileSnapshot, key, value string) bool {

@@ -77,6 +77,31 @@ var curatedPrivateFactPatterns = []*regexp.Regexp{
 	),
 }
 
+var unsupportedSensitiveInferencePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(?:user|pengguna|dia|he|she|they)\s+(?:is|seems?|appears?|terlihat|tampak|adalah)?\s*(?:impatient|stubborn|introverted|extroverted|emotional|unstable|aggressive|lazy|manipulative|neurotic|narcissistic|tidak sabar|keras kepala|introvert|ekstrovert|emosional|labil|agresif|malas)\b`),
+	regexp.MustCompile(`(?i)\b(?:political|religious|religion|faith|ethnicity|race|sexual orientation|gender identity|medical|diagnosis|diagnosed|mental health|psychological|personality disorder|politik|agama|kepercayaan|etnis|ras|orientasi seksual|identitas gender|medis|diagnosis|kesehatan mental|psikologis|gangguan kepribadian)\b`),
+}
+
+var unsupportedSensitivePreferenceNamespaces = []string{
+	"psychology.", "personality.", "political.", "religion.", "medical.",
+	"health.", "mental_health.", "sensitive.",
+}
+
+func unsupportedSensitiveInference(content, preferenceKey string) bool {
+	key := NormalizePreferenceKey(preferenceKey)
+	for _, prefix := range unsupportedSensitivePreferenceNamespaces {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	for _, pattern := range unsupportedSensitiveInferencePatterns {
+		if pattern.MatchString(content) {
+			return true
+		}
+	}
+	return false
+}
+
 // ValidateCuratedContent rejects secrets, prompt-injection-shaped control
 // text, invalid UTF-8, and hidden/control characters before anything reaches
 // durable storage. It intentionally returns category-only errors so rejected

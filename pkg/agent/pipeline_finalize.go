@@ -66,6 +66,7 @@ func (p *Pipeline) Finalize(
 	}
 
 	if !ts.opts.NoHistory && ts.opts.EnableSummary {
+		al.flushTurnMemoryBeforeContextLoss(turnCtx, ts, "post_turn_summarization")
 		al.contextManager.Compact(
 			turnCtx,
 			&CompactRequest{

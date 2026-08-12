@@ -21,13 +21,28 @@ import (
 
 const curatedDocumentVersion = 2
 
+const (
+	DefaultCuratedWorkspaceEntries = 512
+	DefaultCuratedPerUserEntries   = 256
+	DefaultCuratedPendingChanges   = 64
+	DefaultCuratedDocumentChars    = 1_000_000
+	DefaultUserProfileCacheEntries = 128
+	MaxCuratedBatchMutations       = 20
+	MaxCuratedEntryChars           = 4_000
+)
+
 var curatedDocumentLocks sync.Map
 
 type CuratedStoreOptions struct {
-	WorkspaceCharLimit int
-	PerUserCharLimit   int
-	Now                func() time.Time
-	Random             io.Reader
+	WorkspaceCharLimit     int
+	PerUserCharLimit       int
+	WorkspaceEntryLimit    int
+	PerUserEntryLimit      int
+	PendingChangeLimit     int
+	MaxDocumentChars       int
+	ProfileCacheEntryLimit int
+	Now                    func() time.Time
+	Random                 io.Reader
 }
 
 type curatedDocument struct {
@@ -42,14 +57,21 @@ type curatedDocument struct {
 // workspace. All read/modify/write operations are serialized and mutations are
 // written atomically with owner-only permissions.
 type CuratedStore struct {
-	root               string
-	usersDir           string
-	workspaceCharLimit int
-	perUserCharLimit   int
-	now                func() time.Time
-	random             io.Reader
-	mu                 sync.RWMutex
-	profileCache       sync.Map
+	root                string
+	usersDir            string
+	workspaceCharLimit  int
+	perUserCharLimit    int
+	workspaceEntryLimit int
+	perUserEntryLimit   int
+	pendingChangeLimit  int
+	maxDocumentChars    int
+	profileCacheLimit   int
+	now                 func() time.Time
+	random              io.Reader
+	mu                  sync.RWMutex
+	profileCacheMu      sync.Mutex
+	profileCacheClock   uint64
+	profileCache        map[string]cachedUserProfile
 }
 
 func NewCuratedStore(root string, opts CuratedStoreOptions) (*CuratedStore, error) {
@@ -76,6 +98,21 @@ func NewCuratedStore(root string, opts CuratedStoreOptions) (*CuratedStore, erro
 	if opts.PerUserCharLimit <= 0 {
 		opts.PerUserCharLimit = 8_000
 	}
+	if opts.WorkspaceEntryLimit <= 0 {
+		opts.WorkspaceEntryLimit = DefaultCuratedWorkspaceEntries
+	}
+	if opts.PerUserEntryLimit <= 0 {
+		opts.PerUserEntryLimit = DefaultCuratedPerUserEntries
+	}
+	if opts.PendingChangeLimit <= 0 {
+		opts.PendingChangeLimit = DefaultCuratedPendingChanges
+	}
+	if opts.MaxDocumentChars <= 0 {
+		opts.MaxDocumentChars = DefaultCuratedDocumentChars
+	}
+	if opts.ProfileCacheEntryLimit <= 0 {
+		opts.ProfileCacheEntryLimit = DefaultUserProfileCacheEntries
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -83,12 +120,18 @@ func NewCuratedStore(root string, opts CuratedStoreOptions) (*CuratedStore, erro
 		opts.Random = rand.Reader
 	}
 	return &CuratedStore{
-		root:               root,
-		usersDir:           usersDir,
-		workspaceCharLimit: opts.WorkspaceCharLimit,
-		perUserCharLimit:   opts.PerUserCharLimit,
-		now:                opts.Now,
-		random:             opts.Random,
+		root:                root,
+		usersDir:            usersDir,
+		workspaceCharLimit:  opts.WorkspaceCharLimit,
+		perUserCharLimit:    opts.PerUserCharLimit,
+		workspaceEntryLimit: opts.WorkspaceEntryLimit,
+		perUserEntryLimit:   opts.PerUserEntryLimit,
+		pendingChangeLimit:  opts.PendingChangeLimit,
+		maxDocumentChars:    opts.MaxDocumentChars,
+		profileCacheLimit:   opts.ProfileCacheEntryLimit,
+		now:                 opts.Now,
+		random:              opts.Random,
+		profileCache:        make(map[string]cachedUserProfile),
 	}, nil
 }
 
@@ -98,7 +141,7 @@ func (s *CuratedStore) scopePath(target string, caller CallerScope) (string, str
 		return filepath.Join(s.root, "workspace.json"), "workspace", s.workspaceCharLimit, nil
 	case CuratedTargetCurrentUser:
 		userKey := strings.TrimSpace(caller.UserKey)
-		if userKey == "" {
+		if userKey == "" || strings.TrimSpace(caller.GroupID) != "" {
 			return "", "", 0, ErrUserScopeUnavailable
 		}
 		if len(userKey) > 1_024 || strings.ContainsRune(userKey, '\x00') {
@@ -116,24 +159,50 @@ func (s *CuratedStore) scopePath(target string, caller CallerScope) (string, str
 	}
 }
 
-func (s *CuratedStore) readDocument(path, digest string) (curatedDocument, error) {
-	doc := curatedDocument{
-		Version:     curatedDocumentVersion,
-		ScopeDigest: digest,
-		Entries:     []CuratedEntry{},
+func (s *CuratedStore) scopeEntryLimit(target string) int {
+	if strings.EqualFold(strings.TrimSpace(target), CuratedTargetCurrentUser) {
+		return s.perUserEntryLimit
 	}
+	return s.workspaceEntryLimit
+}
+
+func (s *CuratedStore) readDocument(path, digest string, migrate bool) (curatedDocument, error) {
+	empty := curatedDocument{Version: curatedDocumentVersion, ScopeDigest: digest, Entries: []CuratedEntry{}}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return doc, nil
+		return empty, nil
 	}
 	if err != nil {
 		return curatedDocument{}, fmt.Errorf("read curated memory: %w", err)
 	}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return curatedDocument{}, fmt.Errorf("decode curated memory: %w", err)
+	if len(data) > s.maxDocumentChars*4 || utf8.RuneCount(data) > s.maxDocumentChars {
+		return curatedDocument{}, &CapacityError{
+			Target: digest, Resource: "serialized_document", Limit: s.maxDocumentChars,
+			Current: utf8.RuneCount(data), Requested: 0,
+		}
 	}
-	if doc.Version == 0 {
-		doc.Version = curatedDocumentVersion
+	var header struct {
+		Version *int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return curatedDocument{}, fmt.Errorf("%w: decode curated memory", ErrCuratedMalformedDocument)
+	}
+	version := 1
+	if header.Version != nil {
+		version = *header.Version
+	}
+	if header.Version != nil && version <= 0 {
+		return curatedDocument{}, fmt.Errorf("%w: invalid version %d", ErrCuratedMalformedDocument, version)
+	}
+	if version > curatedDocumentVersion {
+		return curatedDocument{}, fmt.Errorf("%w: %d", ErrCuratedUnsupportedVersion, version)
+	}
+	if version < 1 {
+		return curatedDocument{}, ErrCuratedMalformedDocument
+	}
+	var doc curatedDocument
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return curatedDocument{}, fmt.Errorf("%w: decode curated memory", ErrCuratedMalformedDocument)
 	}
 	if doc.ScopeDigest != "" && doc.ScopeDigest != digest {
 		return curatedDocument{}, fmt.Errorf("curated memory scope mismatch")
@@ -145,15 +214,32 @@ func (s *CuratedStore) readDocument(path, digest string) (curatedDocument, error
 	for i := range doc.Entries {
 		doc.Entries[i] = normalizedCuratedEntry(doc.Entries[i])
 	}
+	if version < curatedDocumentVersion && migrate {
+		doc.Version = curatedDocumentVersion
+		doc.Revision++
+		if err := s.writeDocumentSnapshot(path, doc); err != nil {
+			return curatedDocument{}, fmt.Errorf("migrate curated memory schema: %w", err)
+		}
+	}
 	return doc, nil
 }
 
 func (s *CuratedStore) writeDocument(path string, doc curatedDocument) error {
 	doc.Version = curatedDocumentVersion
 	doc.Revision++
+	return s.writeDocumentSnapshot(path, doc)
+}
+
+func (s *CuratedStore) writeDocumentSnapshot(path string, doc curatedDocument) error {
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode curated memory: %w", err)
+	}
+	if chars := utf8.RuneCount(data); chars > s.maxDocumentChars {
+		return &CapacityError{
+			Target: doc.ScopeDigest, Resource: "serialized_document",
+			Limit: s.maxDocumentChars, Current: chars, Requested: 0,
+		}
 	}
 	if err := fileutil.WriteFileAtomic(path, data, 0o600); err != nil {
 		return fmt.Errorf("write curated memory: %w", err)
@@ -167,7 +253,7 @@ func (s *CuratedStore) ApplyBatch(
 	mutations []CuratedMutation,
 	stage bool,
 ) (CuratedBatchResult, error) {
-	if len(mutations) == 0 {
+	if len(mutations) == 0 || len(mutations) > MaxCuratedBatchMutations {
 		return CuratedBatchResult{}, ErrCuratedInvalidAction
 	}
 	path, digest, limit, scopeErr := s.scopePath(target, caller)
@@ -182,7 +268,7 @@ func (s *CuratedStore) ApplyBatch(
 	defer unlockDocument()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	doc, readErr := s.readDocument(path, digest)
+	doc, readErr := s.readDocument(path, digest, true)
 	if readErr != nil {
 		return CuratedBatchResult{}, readErr
 	}
@@ -213,14 +299,28 @@ func (s *CuratedStore) ApplyBatch(
 	); capacityErr != nil {
 		return CuratedBatchResult{}, capacityErr
 	}
+	if capacityErr := enforceCuratedEntryCapacity(
+		target, len(doc.Entries), len(projected), s.scopeEntryLimit(target),
+	); capacityErr != nil {
+		return CuratedBatchResult{}, capacityErr
+	}
 
 	if stage {
+		if len(doc.Pending) >= s.pendingChangeLimit {
+			return CuratedBatchResult{}, &CapacityError{
+				Target: target, Resource: "pending_changes", Limit: s.pendingChangeLimit,
+				Current: len(doc.Pending), Requested: 1,
+			}
+		}
 		pendingID, idErr := s.newStableID("pm", pendingIDs(doc.Pending))
 		if idErr != nil {
 			return CuratedBatchResult{}, idErr
 		}
 		pending := PendingCuratedChange{ID: pendingID, Mutations: prepared, CreatedAt: now}
 		doc.Pending = append(doc.Pending, pending)
+		if capacityErr := s.enforceDocumentCapacity(target, doc); capacityErr != nil {
+			return CuratedBatchResult{}, capacityErr
+		}
 		if writeErr := s.writeDocument(path, doc); writeErr != nil {
 			return CuratedBatchResult{}, writeErr
 		}
@@ -240,6 +340,14 @@ func (s *CuratedStore) ApplyBatch(
 		doc.Entries,
 		limit,
 	); capacityErr != nil {
+		return CuratedBatchResult{}, capacityErr
+	}
+	if capacityErr := enforceCuratedEntryCapacity(
+		target, 0, len(doc.Entries), s.scopeEntryLimit(target),
+	); capacityErr != nil {
+		return CuratedBatchResult{}, capacityErr
+	}
+	if capacityErr := s.enforceDocumentCapacity(target, doc); capacityErr != nil {
 		return CuratedBatchResult{}, capacityErr
 	}
 	if writeErr := s.writeDocument(path, doc); writeErr != nil {
@@ -272,6 +380,10 @@ func (s *CuratedStore) prepareMutations(
 		mutation.PreferenceKey = NormalizePreferenceKey(mutation.PreferenceKey)
 		mutation.PreferenceValue = strings.TrimSpace(mutation.PreferenceValue)
 		mutation.Supersedes = strings.TrimSpace(mutation.Supersedes)
+		if utf8.RuneCountInString(mutation.Content) > MaxCuratedEntryChars ||
+			!validCuratedProvenanceBounds(mutation.Provenance) {
+			return nil, ErrCuratedInvalidAction
+		}
 		if mutation.Action == CuratedActionAdd && mutation.EvidenceKind == "" {
 			// Missing evidence is deliberately conservative. Old callers and the
 			// background curator must not silently create fully verified facts.
@@ -279,6 +391,12 @@ func (s *CuratedStore) prepareMutations(
 		}
 		if mutation.EvidenceKind != "" && !ValidEvidenceKind(mutation.EvidenceKind) {
 			return nil, ErrCuratedInvalidEvidence
+		}
+		if target == CuratedTargetCurrentUser &&
+			(mutation.Action == CuratedActionAdd || mutation.Action == CuratedActionReplace) &&
+			mutation.EvidenceKind != CuratedEvidenceExplicit &&
+			unsupportedSensitiveInference(mutation.Content, mutation.PreferenceKey) {
+			return nil, ErrCuratedSensitiveInference
 		}
 		if mutation.PreferenceKey != "" {
 			if !ValidPreferenceKey(mutation.PreferenceKey) ||
@@ -452,6 +570,12 @@ func (s *CuratedStore) prepareMutations(
 		}
 		if mutation.Provenance.MessageRef == "" {
 			mutation.Provenance.MessageRef = caller.MessageRef
+		}
+		// CallerScope is trusted but still originates in bounded runtime metadata.
+		// Validate again after applying those fallbacks so an oversized topic or
+		// message label cannot bypass the mutation-level checks above.
+		if !validCuratedProvenanceBounds(mutation.Provenance) {
+			return nil, ErrCuratedInvalidAction
 		}
 		mutation.Provenance.RecordedAt = now
 		prepared = append(prepared, mutation)
@@ -670,6 +794,32 @@ func enforceCuratedCapacity(target string, current, projected []CuratedEntry, li
 	}
 }
 
+func enforceCuratedEntryCapacity(target string, current, projected, limit int) error {
+	if projected <= limit {
+		return nil
+	}
+	return &CapacityError{
+		Target: target, Resource: "entries", Limit: limit,
+		Current: current, Requested: projected - current,
+	}
+}
+
+func (s *CuratedStore) enforceDocumentCapacity(target string, doc curatedDocument) error {
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode curated memory capacity projection: %w", err)
+	}
+	chars := utf8.RuneCount(data)
+	limit := s.maxDocumentChars
+	if chars <= limit {
+		return nil
+	}
+	return &CapacityError{
+		Target: target, Resource: "serialized_document", Limit: limit,
+		Current: chars, Requested: 0,
+	}
+}
+
 func (s *CuratedStore) List(target string, caller CallerScope) ([]CuratedEntry, error) {
 	path, digest, _, err := s.scopePath(target, caller)
 	if err != nil {
@@ -680,9 +830,11 @@ func (s *CuratedStore) List(target string, caller CallerScope) ([]CuratedEntry, 
 		return nil, lockErr
 	}
 	defer unlockDocument()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	doc, err := s.readDocument(path, digest)
+	// A read may perform the one-time schema rewrite, so it deliberately owns
+	// the store write lock while the cross-instance document lock is held.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc, err := s.readDocument(path, digest, true)
 	if err != nil {
 		return nil, err
 	}
@@ -713,6 +865,90 @@ func (s *CuratedStore) Inspect(target string, caller CallerScope, id string) (Cu
 		}
 	}
 	return CuratedEntry{}, ErrCuratedEntryNotFound
+}
+
+// Confirm promotes one existing current-user memory to direct-user evidence.
+// The caller identity remains backend-owned; the request supplies only the
+// stable entry ID and cannot select a different user store.
+func (s *CuratedStore) Confirm(caller CallerScope, id string, provenance Provenance) (CuratedEntry, error) {
+	id = strings.TrimSpace(id)
+	if !validStableEntryID(id) {
+		return CuratedEntry{}, ErrCuratedInvalidAction
+	}
+	path, digest, limit, err := s.scopePath(CuratedTargetCurrentUser, caller)
+	if err != nil {
+		return CuratedEntry{}, err
+	}
+	unlockDocument, lockErr := lockCuratedDocument(path)
+	if lockErr != nil {
+		return CuratedEntry{}, lockErr
+	}
+	defer unlockDocument()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc, err := s.readDocument(path, digest, true)
+	if err != nil {
+		return CuratedEntry{}, err
+	}
+	var entry CuratedEntry
+	found := false
+	for _, candidate := range doc.Entries {
+		if candidate.ID == id {
+			entry = normalizedCuratedEntry(candidate)
+			found = true
+			break
+		}
+	}
+	if !found {
+		return CuratedEntry{}, ErrCuratedEntryNotFound
+	}
+	if entry.EffectiveStatus() != CuratedStatusActive {
+		return CuratedEntry{}, ErrCuratedInvalidAction
+	}
+	evidenceCount := entry.EvidenceCount
+	if evidenceCount < 1 {
+		evidenceCount = 1
+	}
+	confidence := 1.0
+	now := s.now().UTC()
+	prepared, err := s.prepareMutations(CuratedTargetCurrentUser, doc, []CuratedMutation{{
+		Action:          CuratedActionReplace,
+		ID:              entry.ID,
+		Content:         entry.Content,
+		Type:            entry.EffectiveType(),
+		Confidence:      &confidence,
+		EvidenceKind:    CuratedEvidenceExplicit,
+		EvidenceCount:   evidenceCount,
+		PreferenceKey:   entry.PreferenceKey,
+		PreferenceValue: entry.PreferenceValue,
+		Provenance:      provenance,
+	}}, caller, now)
+	if err != nil {
+		return CuratedEntry{}, err
+	}
+	entries, applied, err := applyCuratedMutations(cloneCuratedEntries(doc.Entries), prepared, now)
+	if err != nil {
+		return CuratedEntry{}, err
+	}
+	if len(applied) != 1 {
+		return CuratedEntry{}, ErrCuratedEntryNotFound
+	}
+	if err := enforceCuratedCapacity(CuratedTargetCurrentUser, doc.Entries, entries, limit); err != nil {
+		return CuratedEntry{}, err
+	}
+	if err := enforceCuratedEntryCapacity(
+		CuratedTargetCurrentUser, len(doc.Entries), len(entries), s.scopeEntryLimit(CuratedTargetCurrentUser),
+	); err != nil {
+		return CuratedEntry{}, err
+	}
+	doc.Entries = entries
+	if err := s.enforceDocumentCapacity(CuratedTargetCurrentUser, doc); err != nil {
+		return CuratedEntry{}, err
+	}
+	if err := s.writeDocument(path, doc); err != nil {
+		return CuratedEntry{}, err
+	}
+	return applied[0], nil
 }
 
 func (s *CuratedStore) Search(target string, caller CallerScope, query string, limit int) ([]CuratedEntry, error) {
@@ -768,9 +1004,9 @@ func (s *CuratedStore) Pending(target string, caller CallerScope) ([]PendingCura
 		return nil, lockErr
 	}
 	defer unlockDocument()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	doc, err := s.readDocument(path, digest)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc, err := s.readDocument(path, digest, true)
 	if err != nil {
 		return nil, err
 	}
@@ -806,7 +1042,7 @@ func (s *CuratedStore) resolvePending(
 	defer unlockDocument()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	doc, err := s.readDocument(path, digest)
+	doc, err := s.readDocument(path, digest, true)
 	if err != nil {
 		return nil, err
 	}
@@ -836,9 +1072,17 @@ func (s *CuratedStore) resolvePending(
 		if err := enforceCuratedCapacity(target, doc.Entries, projected, limit); err != nil {
 			return nil, err
 		}
+		if err := enforceCuratedEntryCapacity(
+			target, len(doc.Entries), len(projected), s.scopeEntryLimit(target),
+		); err != nil {
+			return nil, err
+		}
 		doc.Entries = projected
 	}
 	doc.Pending = remaining
+	if err := s.enforceDocumentCapacity(target, doc); err != nil {
+		return nil, err
+	}
 	if err := s.writeDocument(path, doc); err != nil {
 		return nil, err
 	}
@@ -855,18 +1099,17 @@ func (s *CuratedStore) Stats(target string, caller CallerScope) (CuratedStats, e
 		return CuratedStats{}, lockErr
 	}
 	defer unlockDocument()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	doc, err := s.readDocument(path, digest)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc, err := s.readDocument(path, digest, true)
 	if err != nil {
 		return CuratedStats{}, err
 	}
 	return CuratedStats{
-		Target:       target,
-		Entries:      len(doc.Entries),
-		Characters:   curatedCharacters(doc.Entries),
-		Capacity:     limit,
-		PendingCount: len(doc.Pending),
+		Target: target, Entries: len(doc.Entries), EntryCapacity: s.scopeEntryLimit(target),
+		Characters: curatedCharacters(doc.Entries), Capacity: limit,
+		SerializedCharacters: curatedDocumentCharacters(doc), SerializedCapacity: s.maxDocumentChars,
+		PendingCount: len(doc.Pending), PendingCapacity: s.pendingChangeLimit,
 	}, nil
 }
 
@@ -906,7 +1149,7 @@ func (s *CuratedStore) MarkPresented(
 	defer unlockDocument()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	doc, err := s.readDocument(path, digest)
+	doc, err := s.readDocument(path, digest, true)
 	if err != nil {
 		return err
 	}
@@ -952,7 +1195,7 @@ func (s *CuratedStore) Maintain(
 	defer unlockDocument()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	doc, err := s.readDocument(path, digest)
+	doc, err := s.readDocument(path, digest, true)
 	if err != nil {
 		return err
 	}
@@ -960,8 +1203,9 @@ func (s *CuratedStore) Maintain(
 	out := make([]CuratedEntry, 0, len(doc.Entries))
 	for _, entry := range doc.Entries {
 		status := entry.EffectiveStatus()
-		if autoArchiveExpired && status == CuratedStatusActive &&
-			entry.ExpiresAt != nil && !now.Before(entry.ExpiresAt.UTC()) {
+		shouldArchive := status == CuratedStatusActive && entry.ExpiresAt != nil &&
+			!now.Before(entry.ExpiresAt.UTC())
+		if autoArchiveExpired && shouldArchive {
 			entry.Status = CuratedStatusArchived
 			entry.Pinned = false
 			archived := now
@@ -1209,6 +1453,24 @@ func curatedCharacters(entries []CuratedEntry) int {
 		total += utf8.RuneCountInString(entry.Content)
 	}
 	return total
+}
+
+func curatedDocumentCharacters(doc curatedDocument) int {
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return 0
+	}
+	return utf8.RuneCount(data)
+}
+
+func validCuratedProvenanceBounds(provenance Provenance) bool {
+	return utf8.RuneCountInString(provenance.Source) <= 64 &&
+		utf8.RuneCountInString(provenance.SessionRef) <= 160 &&
+		utf8.RuneCountInString(provenance.Channel) <= 64 &&
+		utf8.RuneCountInString(provenance.Account) <= 96 &&
+		utf8.RuneCountInString(provenance.TopicID) <= 160 &&
+		utf8.RuneCountInString(provenance.TopicName) <= 240 &&
+		utf8.RuneCountInString(provenance.MessageRef) <= 160
 }
 
 func cloneCuratedEntries(entries []CuratedEntry) []CuratedEntry {

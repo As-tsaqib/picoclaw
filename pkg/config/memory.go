@@ -19,7 +19,8 @@ const (
 	MemoryApprovalBackgroundOnly = "background_only"
 	MemoryApprovalAllWrites      = "all_writes"
 
-	MemoryRetrievalHybridLexical = "hybrid_lexical"
+	MemoryRetrievalHybridLexical  = "hybrid_lexical"
+	MemoryRetrievalSemanticRerank = "semantic_rerank"
 
 	DefaultWorkspaceMemoryCharLimit = 12_000
 	DefaultPerUserMemoryCharLimit   = 8_000
@@ -203,10 +204,14 @@ func (c MemoryProfileConfig) EffectiveMinConfidence() float64 {
 }
 
 func (c MemoryRetrievalConfig) EffectiveEngine() string {
-	if strings.EqualFold(strings.TrimSpace(c.Engine), MemoryRetrievalHybridLexical) {
+	switch strings.ToLower(strings.TrimSpace(c.Engine)) {
+	case MemoryRetrievalSemanticRerank:
+		return MemoryRetrievalSemanticRerank
+	case MemoryRetrievalHybridLexical:
+		return MemoryRetrievalHybridLexical
+	default:
 		return MemoryRetrievalHybridLexical
 	}
-	return MemoryRetrievalHybridLexical
 }
 
 func (c MemoryRetrievalConfig) EffectiveMaxWorkspaceResults() int {
@@ -466,8 +471,13 @@ func (c MemoryConfig) Validate() error {
 	if c.Retrieval.UserShare != 0 && (c.Retrieval.UserShare < 0.5 || c.Retrieval.UserShare > 0.9) {
 		validationErrors = append(validationErrors, "memory.retrieval.user_share must be between 0.5 and 0.9")
 	}
-	if !strings.EqualFold(strings.TrimSpace(c.Retrieval.Engine), MemoryRetrievalHybridLexical) {
-		validationErrors = append(validationErrors, "memory.retrieval.engine must be hybrid_lexical")
+	switch strings.ToLower(strings.TrimSpace(c.Retrieval.Engine)) {
+	case MemoryRetrievalHybridLexical, MemoryRetrievalSemanticRerank:
+	default:
+		validationErrors = append(
+			validationErrors,
+			"memory.retrieval.engine must be hybrid_lexical or semantic_rerank",
+		)
 	}
 	bounded("memory.retrieval.max_workspace_results", c.Retrieval.MaxWorkspaceResults, MaxMemoryRetrievalResults)
 	bounded("memory.retrieval.max_user_results", c.Retrieval.MaxUserResults, MaxMemoryRetrievalResults)

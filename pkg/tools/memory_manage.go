@@ -157,8 +157,11 @@ func (t *MemoryManageTool) Execute(ctx context.Context, args map[string]any) *To
 	}
 	action := lowerStringArg(args, "action")
 	target := lowerStringArg(args, "target")
-	if target == memory.CuratedTargetCurrentUser && strings.TrimSpace(caller.GroupID) != "" {
-		return memoryToolError(memory.ErrPrivateContextRequired)
+	if target == memory.CuratedTargetCurrentUser && !memory.AllowsPrivateUserMemory(caller) {
+		if strings.TrimSpace(caller.GroupID) != "" {
+			return memoryToolError(memory.ErrPrivateContextRequired)
+		}
+		return memoryToolError(memory.ErrUserScopeUnavailable)
 	}
 
 	switch action {
@@ -326,7 +329,7 @@ func memoryToolError(err error) *ToolResult {
 	case errors.As(err, &capacity):
 		code = "memory_full"
 		details = map[string]any{
-			"target": capacity.Target, "limit": capacity.Limit,
+			"target": capacity.Target, "resource": capacity.Resource, "limit": capacity.Limit,
 			"current": capacity.Current, "requested": capacity.Requested,
 		}
 	case errors.Is(err, memory.ErrCuratedDuplicate):
@@ -335,6 +338,8 @@ func memoryToolError(err error) *ToolResult {
 		code = "not_found"
 	case errors.Is(err, memory.ErrCuratedUnsafeContent):
 		code = "unsafe_content"
+	case errors.Is(err, memory.ErrCuratedSensitiveInference):
+		code = "sensitive_inference"
 	case errors.Is(err, memory.ErrUserScopeUnavailable):
 		code = "user_scope_unavailable"
 	case errors.Is(err, memory.ErrPrivateContextRequired):

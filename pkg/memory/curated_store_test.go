@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func newTestCuratedStore(t *testing.T, root string, workspaceLimit, userLimit int) *CuratedStore {
@@ -25,7 +26,7 @@ func newTestCuratedStore(t *testing.T, root string, workspaceLimit, userLimit in
 func testCaller(user string) CallerScope {
 	return CallerScope{
 		AgentID: "main", UserKey: user, Channel: "telegram", Account: "personal",
-		ChatID: "group-1/11", GroupID: "group-1", TopicID: "11", TopicName: "OAuth",
+		ChatID: "user-1", TopicID: "11", TopicName: "OAuth",
 		SessionKey: "agent:main:telegram:group-1:topic:11", SessionRef: "session_oauth",
 		MessageRef: "message-1",
 	}
@@ -119,6 +120,33 @@ func TestCuratedStoreScopePrivacyAndWorkspaceSharing(t *testing.T) {
 	}
 }
 
+func TestAllowsPrivateUserMemoryFailsClosed(t *testing.T) {
+	if !AllowsPrivateUserMemory(CallerScope{UserKey: "trusted-user"}) {
+		t.Fatal("trusted direct user scope was rejected")
+	}
+	if AllowsPrivateUserMemory(CallerScope{}) {
+		t.Fatal("unknown user identity was allowed")
+	}
+	if AllowsPrivateUserMemory(CallerScope{UserKey: "trusted-user", GroupID: "group-1"}) {
+		t.Fatal("shared group scope was allowed to load private memory")
+	}
+}
+
+func TestCuratedStoreRejectsPrivateScopeFromSharedGroupAtStorageBoundary(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 1_000, 1_000)
+	caller := testCaller("telegram:user-a")
+	caller.ChatID = "group-1/11"
+	caller.GroupID = "group-1"
+	if _, err := store.List(CuratedTargetCurrentUser, caller); !errors.Is(err, ErrUserScopeUnavailable) {
+		t.Fatalf("shared group private list error = %v, want ErrUserScopeUnavailable", err)
+	}
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Private group-scoped preference",
+	}}, false); !errors.Is(err, ErrUserScopeUnavailable) {
+		t.Fatalf("shared group private write error = %v, want ErrUserScopeUnavailable", err)
+	}
+}
+
 func TestCuratedStoreCapacityConsolidationAndAtomicBatch(t *testing.T) {
 	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 20, 20)
 	caller := testCaller("telegram:user-1")
@@ -181,6 +209,101 @@ func TestCuratedStorePendingApprovalIsPersistent(t *testing.T) {
 	applied, err := restarted.Approve(CuratedTargetCurrentUser, caller, result.Pending.ID)
 	if err != nil || len(applied) != 1 {
 		t.Fatalf("Approve() = %#v, %v", applied, err)
+	}
+}
+
+func TestCuratedStoreConfirmRecordsExplicitDashboardEvidence(t *testing.T) {
+	now := time.Date(2026, 8, 12, 6, 0, 0, 0, time.UTC)
+	store, err := NewCuratedStore(filepath.Join(t.TempDir(), "curated"), CuratedStoreOptions{
+		WorkspaceCharLimit: 10_000,
+		PerUserCharLimit:   10_000,
+		Now:                func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := testCaller("pico:dashboard-user")
+	entry := addCurated(t, store, CuratedTargetCurrentUser, caller, "May prefer examples before theory")
+	provenance := Provenance{
+		Source: "authenticated_dashboard_confirmation", Channel: "pico", Account: "default",
+		MessageRef: "dashboard-confirmation",
+	}
+
+	confirmed, err := store.Confirm(caller, entry.ID, provenance)
+	if err != nil {
+		t.Fatalf("Confirm() error = %v", err)
+	}
+	if confirmed.EffectiveEvidenceKind() != CuratedEvidenceExplicit ||
+		confirmed.EffectiveConfidence() != 1 || confirmed.LastConfirmedAt == nil ||
+		!confirmed.LastConfirmedAt.Equal(now) || confirmed.Provenance.Source != provenance.Source ||
+		confirmed.Provenance.Channel != provenance.Channel ||
+		confirmed.Provenance.MessageRef != provenance.MessageRef ||
+		!confirmed.Provenance.RecordedAt.Equal(now) {
+		t.Fatalf("confirmed entry = %#v", confirmed)
+	}
+}
+
+func TestCuratedStoreConfirmRejectsInactiveEntries(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
+	caller := testCaller("pico:dashboard-user")
+	provenance := Provenance{Source: "authenticated_dashboard_confirmation"}
+
+	archived := addCurated(t, store, CuratedTargetCurrentUser, caller, "Archived interaction preference")
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionArchive, ID: archived.ID,
+	}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Confirm(caller, archived.ID, provenance); !errors.Is(err, ErrCuratedInvalidAction) {
+		t.Fatalf("archived Confirm() error = %v, want ErrCuratedInvalidAction", err)
+	}
+
+	old := addCurated(t, store, CuratedTargetCurrentUser, caller, "Prefers concise answers")
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Prefers detailed answers", Supersedes: old.ID,
+	}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Confirm(caller, old.ID, provenance); !errors.Is(err, ErrCuratedInvalidAction) {
+		t.Fatalf("superseded Confirm() error = %v, want ErrCuratedInvalidAction", err)
+	}
+}
+
+func TestCuratedStoreConfirmPreservesConcurrentCrossInstanceMutation(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "curated")
+	first := newTestCuratedStore(t, root, 100_000, 100_000)
+	second := newTestCuratedStore(t, root, 100_000, 100_000)
+	caller := testCaller("pico:dashboard-user")
+	entry := addCurated(t, first, CuratedTargetCurrentUser, caller, "May prefer compact examples")
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	go func() {
+		<-start
+		_, err := first.Confirm(caller, entry.ID, Provenance{Source: "authenticated_dashboard_confirmation"})
+		errs <- err
+	}()
+	go func() {
+		<-start
+		_, err := second.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+			Action: CuratedActionAdd, Content: "Also prefers copy-paste-ready commands",
+		}}, false)
+		errs <- err
+	}()
+	close(start)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent mutation error = %v", err)
+		}
+	}
+
+	entries, err := first.List(CuratedTargetCurrentUser, caller)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("entries after concurrent confirm = %#v, err=%v", entries, err)
+	}
+	confirmed, err := first.Inspect(CuratedTargetCurrentUser, caller, entry.ID)
+	if err != nil || confirmed.EffectiveEvidenceKind() != CuratedEvidenceExplicit {
+		t.Fatalf("confirmed entry after concurrent mutation = %#v, err=%v", confirmed, err)
 	}
 }
 
@@ -317,5 +440,123 @@ func TestCuratedStoreConcurrentInstancesPreserveEveryWrite(t *testing.T) {
 	entries, err := first.List(CuratedTargetCurrentUser, caller)
 	if err != nil || len(entries) != workers {
 		t.Fatalf("cross-instance entry count = %d, %v, want %d", len(entries), err, workers)
+	}
+}
+
+func TestCuratedStoreBoundsEntriesPendingMetadataAndSerializedDocument(t *testing.T) {
+	store, err := NewCuratedStore(filepath.Join(t.TempDir(), "curated"), CuratedStoreOptions{
+		WorkspaceCharLimit: 10_000, PerUserCharLimit: 10_000,
+		WorkspaceEntryLimit: 2, PerUserEntryLimit: 2, PendingChangeLimit: 1,
+		MaxDocumentChars: 2_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := testCaller("telegram:bounded")
+	addCurated(t, store, CuratedTargetCurrentUser, caller, "bounded fact one")
+	addCurated(t, store, CuratedTargetCurrentUser, caller, "bounded fact two")
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "bounded fact three",
+	}}, false); err == nil {
+		t.Fatal("entry-count bound accepted third entry")
+	} else {
+		var capacity *CapacityError
+		if !errors.As(err, &capacity) || capacity.Resource != "entries" {
+			t.Fatalf("entry bound error = %#v", err)
+		}
+	}
+	if _, err := store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "pending one",
+	}}, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "pending two",
+	}}, true); err == nil {
+		t.Fatal("pending bound accepted second batch")
+	}
+	longTopic := strings.Repeat("t", 241)
+	badCaller := caller
+	badCaller.TopicName = longTopic
+	if _, err := store.ApplyBatch(CuratedTargetWorkspace, badCaller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "metadata is bounded",
+	}}, false); !errors.Is(err, ErrCuratedInvalidAction) {
+		t.Fatalf("oversized metadata error = %v", err)
+	}
+}
+
+func TestCuratedStoreSerializedDocumentLimitRejectsAtomicWrite(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "curated")
+	store, err := NewCuratedStore(root, CuratedStoreOptions{
+		WorkspaceCharLimit: 10_000,
+		PerUserCharLimit:   10_000,
+		MaxDocumentChars:   1_200,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := testCaller("telegram:serialized-bound")
+	if _, err := store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: strings.Repeat("a", 120), Type: CuratedTypeProjectFact,
+	}}, false); err != nil {
+		t.Fatalf("initial bounded write: %v", err)
+	}
+	path := filepath.Join(root, "workspace.json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: strings.Repeat("b", 900), Type: CuratedTypeProjectFact,
+	}}, false)
+	var capacity *CapacityError
+	if !errors.As(err, &capacity) || capacity.Resource != "serialized_document" || capacity.Limit != 1_200 {
+		t.Fatalf("serialized capacity error = %#v", err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil || string(after) != string(before) {
+		t.Fatalf("failed document-bound write was not atomic: read=%v", readErr)
+	}
+}
+
+func TestCuratedStoreRejectsOversizedEntryAndBatch(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 100_000, 100_000)
+	caller := testCaller("telegram:batch-bound")
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: strings.Repeat("x", MaxCuratedEntryChars+1),
+	}}, false); !errors.Is(err, ErrCuratedInvalidAction) {
+		t.Fatalf("oversized entry error = %v", err)
+	}
+	mutations := make([]CuratedMutation, MaxCuratedBatchMutations+1)
+	for i := range mutations {
+		mutations[i] = CuratedMutation{Action: CuratedActionAdd, Content: fmt.Sprintf("bounded batch %d", i)}
+	}
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, mutations, false); !errors.Is(err, ErrCuratedInvalidAction) {
+		t.Fatalf("oversized batch error = %v", err)
+	}
+	entries, err := store.List(CuratedTargetCurrentUser, caller)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("rejected bounds persisted data: %#v err=%v", entries, err)
+	}
+}
+
+func TestCuratedStoreRejectsUnsupportedSensitiveInference(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
+	caller := testCaller("telegram:sensitive")
+	for _, content := range []string{
+		"The user seems impatient", "User has a psychological disorder", "Pengguna terlihat keras kepala",
+	} {
+		if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+			Action: CuratedActionAdd, Content: content, Type: CuratedTypeIdentity,
+			EvidenceKind: CuratedEvidenceInferred,
+		}}, false); !errors.Is(err, ErrCuratedSensitiveInference) {
+			t.Fatalf("sensitive inference %q error = %v", content, err)
+		}
+	}
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "I explicitly identify my religion for this request",
+		Type: CuratedTypeIdentity, EvidenceKind: CuratedEvidenceExplicit,
+	}}, false); err != nil {
+		t.Fatalf("explicit user statement should remain representable: %v", err)
 	}
 }

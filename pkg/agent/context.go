@@ -34,6 +34,7 @@ type ContextBuilder struct {
 	// The cache auto-invalidates when workspace source files change (mtime check).
 	systemPromptMutex  sync.RWMutex
 	cachedSystemPrompt string
+	cachedPromptParts  []PromptPart
 	cachedAt           time.Time // max observed mtime across tracked paths at cache build time
 
 	// existedAtCache tracks which source file paths existed the last time the
@@ -414,12 +415,23 @@ Each part separated by the marker will be sent as an independent message.`,
 // and source files haven't changed, otherwise builds and caches it.
 // Source file changes are detected via mtime checks (cheap stat calls).
 func (cb *ContextBuilder) BuildSystemPromptWithCache() string {
+	prompt, _ := cb.buildSystemPromptCache()
+	return prompt
+}
+
+// buildSystemPromptCache returns both the legacy rendered prompt and the
+// individual typed parts that produced it. Keeping the typed representation in
+// the cache lets request-scoped profile, memory, runtime, and summary parts join
+// the same globally ordered PromptStack instead of being appended after an
+// already-flattened static prompt.
+func (cb *ContextBuilder) buildSystemPromptCache() (string, []PromptPart) {
 	// Try read lock first — fast path when cache is valid
 	cb.systemPromptMutex.RLock()
 	if cb.cachedSystemPrompt != "" && !cb.sourceFilesChangedLocked() {
 		result := cb.cachedSystemPrompt
+		parts := clonePromptParts(cb.cachedPromptParts)
 		cb.systemPromptMutex.RUnlock()
-		return result
+		return result, parts
 	}
 	cb.systemPromptMutex.RUnlock()
 
@@ -429,7 +441,7 @@ func (cb *ContextBuilder) BuildSystemPromptWithCache() string {
 
 	// Double-check: another goroutine may have rebuilt while we waited
 	if cb.cachedSystemPrompt != "" && !cb.sourceFilesChangedLocked() {
-		return cb.cachedSystemPrompt
+		return cb.cachedSystemPrompt, clonePromptParts(cb.cachedPromptParts)
 	}
 
 	// Snapshot the baseline (existence + max mtime) BEFORE building the prompt.
@@ -439,8 +451,10 @@ func (cb *ContextBuilder) BuildSystemPromptWithCache() string {
 	// rebuild. The alternative (baseline after build) risks caching stale
 	// content with a too-new baseline, making the staleness invisible.
 	baseline := cb.buildCacheBaseline()
-	prompt := cb.BuildSystemPrompt()
+	parts := cb.BuildSystemPromptParts()
+	prompt := renderPromptPartsLegacy(parts)
 	cb.cachedSystemPrompt = prompt
+	cb.cachedPromptParts = clonePromptParts(parts)
 	cb.cachedAt = baseline.maxMtime
 	cb.existedAtCache = baseline.existed
 	cb.skillFilesAtCache = baseline.skillFiles
@@ -450,14 +464,14 @@ func (cb *ContextBuilder) BuildSystemPromptWithCache() string {
 			"length": len(prompt),
 		})
 
-	return prompt
+	return prompt, clonePromptParts(parts)
 }
 
-func (cb *ContextBuilder) buildSystemPromptForRequest(
+func (cb *ContextBuilder) buildSystemPromptPartsForRequest(
 	req PromptBuildRequest,
-) (string, []providers.ContentBlock) {
+) []PromptPart {
 	if req.SuppressDefaultSystemPrompt {
-		return "", nil
+		return nil
 	}
 
 	useDefaultCache := !req.SuppressSkillContext &&
@@ -465,33 +479,16 @@ func (cb *ContextBuilder) buildSystemPromptForRequest(
 		len(req.AllowedSkills) == 0 &&
 		len(req.AllowedTools) == 0
 	if useDefaultCache {
-		staticPrompt := cb.BuildSystemPromptWithCache()
-		return staticPrompt, []providers.ContentBlock{
-			promptContentBlock(PromptPart{
-				ID:      "kernel.static",
-				Layer:   PromptLayerKernel,
-				Slot:    PromptSlotHierarchy,
-				Source:  PromptSource{ID: PromptSourceKernel, Name: "static"},
-				Content: staticPrompt,
-			}, &providers.CacheControl{Type: "ephemeral"}),
-		}
+		_, parts := cb.buildSystemPromptCache()
+		return parts
 	}
 
-	parts := cb.buildSystemPromptParts(systemPromptBuildOptions{
+	return cb.buildSystemPromptParts(systemPromptBuildOptions{
 		IncludeSkillCatalog: !req.SuppressSkillContext,
 		IncludeToolUseRule:  !req.SuppressToolUseRule,
 		AllowedSkills:       req.AllowedSkills,
 		AllowedTools:        req.AllowedTools,
 	})
-	staticPrompt := renderPromptPartsLegacy(parts)
-	blocks := make([]providers.ContentBlock, 0, len(parts))
-	for _, part := range parts {
-		if strings.TrimSpace(part.Content) == "" {
-			continue
-		}
-		blocks = append(blocks, promptContentBlock(part, cacheControlForPromptPart(part)))
-	}
-	return staticPrompt, blocks
 }
 
 func (cb *ContextBuilder) buildSkillsSummary(allowed []string) string {
@@ -594,6 +591,7 @@ func (cb *ContextBuilder) InvalidateCache() {
 	defer cb.systemPromptMutex.Unlock()
 
 	cb.cachedSystemPrompt = ""
+	cb.cachedPromptParts = nil
 	cb.cachedAt = time.Time{}
 	cb.existedAtCache = nil
 	cb.skillFilesAtCache = nil
@@ -911,34 +909,26 @@ func (cb *ContextBuilder) BuildMessages(
 func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []providers.Message {
 	messages := []providers.Message{}
 
-	// The default static part (identity, bootstrap, skills, memory) is cached
-	// locally to avoid repeated file I/O and string building on every call
-	// (fixes issue #607). Profile-customized static prompts are built on demand.
-	// Dynamic parts (time, session, summary) are appended per request unless the
-	// profile suppresses PicoClaw system context.
+	// Static typed parts (identity, bootstrap, skills, legacy memory) are cached
+	// locally to avoid repeated file I/O. They remain typed until request-scoped
+	// profile, curated memory, runtime, and summary parts have joined the same
+	// PromptStack, so precedence is enforced once across the complete prompt.
 	// Everything is sent as a single system message for provider compatibility:
 	// - Anthropic adapter extracts messages[0] (Role=="system") and maps its content
 	//   to the top-level "system" parameter in the Messages API request. A single
 	//   contiguous system block makes this extraction straightforward.
 	// - Codex maps only the first system message to its instructions field.
 	// - OpenAI-compat passes messages through as-is.
-	staticPrompt, contentBlocks := cb.buildSystemPromptForRequest(req)
+	staticParts := cb.buildSystemPromptPartsForRequest(req)
+	staticChars := utf8.RuneCountInString(renderPromptPartsLegacy(staticParts))
 
-	// Compose a single system message: static (cached) + dynamic + optional summary.
+	// Compose a single system message from one globally ordered typed stack.
 	// Keeping all system content in one message ensures every provider adapter can
 	// extract it correctly (Anthropic adapter -> top-level system param,
 	// Codex -> instructions field).
 	//
-	// SystemParts carries the same content as structured blocks so that
-	// cache-aware adapters (Anthropic) can set per-block cache_control.
-	// The static block is marked "ephemeral" — its prefix hash is stable
-	// across requests, enabling LLM-side KV cache reuse.
-	var stringParts []string
-	if strings.TrimSpace(staticPrompt) != "" {
-		stringParts = append(stringParts, staticPrompt)
-	}
-
-	promptParts := append([]PromptPart(nil), req.Overlays...)
+	promptParts := append([]PromptPart(nil), staticParts...)
+	promptParts = append(promptParts, req.Overlays...)
 	if !req.SuppressDefaultSystemPrompt && !req.SuppressSkillContext {
 		activeSkills := append([]string(nil), req.ActiveSkills...)
 		if len(req.AllowedSkills) > 0 {
@@ -953,26 +943,6 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 			})
 		} else {
 			promptParts = append(promptParts, contributedParts...)
-		}
-	}
-
-	if len(promptParts) > 0 {
-		for _, overlay := range sortPromptParts(promptParts) {
-			if strings.TrimSpace(overlay.Content) == "" {
-				continue
-			}
-			if err := cb.promptRegistryOrDefault().ValidatePart(overlay); err != nil {
-				logger.WarnCF("agent", "Skipping invalid prompt overlay", map[string]any{
-					"id":     overlay.ID,
-					"layer":  overlay.Layer,
-					"slot":   overlay.Slot,
-					"source": overlay.Source.ID,
-					"error":  err.Error(),
-				})
-				continue
-			}
-			stringParts = append(stringParts, overlay.Content)
-			contentBlocks = append(contentBlocks, promptContentBlock(overlay, nil))
 		}
 	}
 
@@ -996,8 +966,7 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 			Stable:  false,
 			Cache:   PromptCacheNone,
 		}
-		stringParts = append(stringParts, dynamicCtx)
-		contentBlocks = append(contentBlocks, promptContentBlock(runtimePart, nil))
+		promptParts = append(promptParts, runtimePart)
 
 		if req.Summary != "" {
 			summaryPart := PromptPart{
@@ -1014,12 +983,11 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 				Stable: false,
 				Cache:  PromptCacheNone,
 			}
-			stringParts = append(stringParts, summaryPart.Content)
-			contentBlocks = append(contentBlocks, promptContentBlock(summaryPart, nil))
+			promptParts = append(promptParts, summaryPart)
 		}
 	}
 
-	if len(stringParts) == 0 && req.ToolUseFallback {
+	if len(promptParts) == 0 && req.ToolUseFallback {
 		fallbackPart := PromptPart{
 			ID:      "kernel.tool_use_fallback",
 			Layer:   PromptLayerKernel,
@@ -1030,10 +998,36 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 			Stable:  true,
 			Cache:   PromptCacheEphemeral,
 		}
-		stringParts = append(stringParts, fallbackPart.Content)
-		contentBlocks = append(contentBlocks, promptContentBlock(fallbackPart, nil))
+		promptParts = append(promptParts, fallbackPart)
 	}
 
+	stack := NewPromptStack(cb.promptRegistryOrDefault())
+	for _, part := range promptParts {
+		if err := stack.Add(part); err != nil {
+			logger.WarnCF("agent", "Skipping invalid prompt part", map[string]any{
+				"id": part.ID, "layer": part.Layer, "slot": part.Slot,
+				"source": part.Source.ID, "error": err.Error(),
+			})
+		}
+	}
+	stack.Seal()
+	orderedParts := sortPromptParts(stack.Parts())
+	stringParts := make([]string, 0, len(orderedParts))
+	contentBlocks := make([]providers.ContentBlock, 0, len(orderedParts))
+	cacheBreakpoints := promptCacheBreakpoints(orderedParts, 4)
+	for index, part := range orderedParts {
+		stringParts = append(stringParts, part.Content)
+		// Anthropic-compatible providers allow only a small number of cache
+		// breakpoints. Restrict them to the stable prefix so request-scoped
+		// profile/memory content can never enter a later cache prefix.
+		uncachedPart := part
+		uncachedPart.Cache = PromptCacheNone
+		var cacheControl *providers.CacheControl
+		if _, ok := cacheBreakpoints[index]; ok {
+			cacheControl = &providers.CacheControl{Type: "ephemeral"}
+		}
+		contentBlocks = append(contentBlocks, promptContentBlock(uncachedPart, cacheControl))
+	}
 	fullSystemPrompt := strings.Join(stringParts, "\n\n---\n\n")
 
 	// Log system prompt summary for debugging (debug mode only).
@@ -1045,7 +1039,7 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 
 	logger.DebugCF("agent", "System prompt built",
 		map[string]any{
-			"static_chars":  len(staticPrompt),
+			"static_chars":  staticChars,
 			"dynamic_chars": dynamicChars,
 			"total_chars":   len(fullSystemPrompt),
 			"has_summary":   req.Summary != "",
@@ -1091,6 +1085,29 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 	}
 
 	return messages
+}
+
+func promptCacheBreakpoints(parts []PromptPart, maximum int) map[int]struct{} {
+	if maximum <= 0 {
+		return nil
+	}
+	eligible := make([]int, 0, maximum)
+	for index, part := range parts {
+		if !part.Stable {
+			break
+		}
+		if part.Cache == PromptCacheEphemeral {
+			eligible = append(eligible, index)
+		}
+	}
+	if len(eligible) > maximum {
+		eligible = eligible[len(eligible)-maximum:]
+	}
+	selected := make(map[int]struct{}, len(eligible))
+	for _, index := range eligible {
+		selected[index] = struct{}{}
+	}
+	return selected
 }
 
 func sanitizeHistoryForProvider(history []providers.Message) []providers.Message {

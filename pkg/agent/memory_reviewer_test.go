@@ -119,7 +119,7 @@ func newMemoryReviewerHarness(
 	al := &AgentLoop{cfg: cfg, bus: bus.NewMessageBus()}
 	caller := memory.CallerScope{
 		AgentID: "main", UserKey: "telegram:user-a", Channel: "telegram", Account: "personal",
-		ChatID: "group-1/10", GroupID: "group-1", TopicID: "10", TopicName: "OAuth",
+		ChatID: "user-a", TopicName: "OAuth",
 		SessionKey: "session-key-10", SessionRef: "session-ref-10", MessageRef: "message-10",
 	}
 	return al, agent, caller
@@ -195,7 +195,6 @@ func TestMemoryReviewerStagesBackgroundWritesWhenApprovalEnabled(t *testing.T) {
 		"content": "Prefers concise progress updates",
 	}}
 	al, agent, caller := newMemoryReviewerHarness(t, provider)
-	caller.GroupID, caller.ChatID, caller.TopicID, caller.TopicName = "", "user-a", "", ""
 	al.cfg.Memory.WriteApproval = true
 	appendReviewerTurn(t, agent, caller, "turn-1")
 	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
@@ -211,6 +210,71 @@ func TestMemoryReviewerStagesBackgroundWritesWhenApprovalEnabled(t *testing.T) {
 	pending, err := agent.CuratedMemory.Pending(memory.CuratedTargetCurrentUser, caller)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending changes = %#v, %v", pending, err)
+	}
+}
+
+func TestMemoryReviewerRejectsSharedGroupScope(t *testing.T) {
+	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+		"action": "add", "target": "workspace", "content": "should not be reviewed",
+	}}
+	al, agent, caller := newMemoryReviewerHarness(t, provider)
+	caller.ChatID, caller.GroupID, caller.TopicID = "group-1/10", "group-1", "10"
+	appendReviewerTurn(t, agent, caller, "group-turn")
+	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
+		t.Fatal(err)
+	}
+	if err := al.flushMemoryReview(context.Background(), agent, caller); err != nil {
+		t.Fatalf("group flush should safely skip: %v", err)
+	}
+	if started, err := al.startMemoryReview(agent, caller, true); err == nil || started {
+		t.Fatalf("group reviewer = (%v, %v), want rejected", started, err)
+	}
+	if calls, _, _ := provider.snapshot(); calls != 0 {
+		t.Fatalf("group reviewer made %d provider calls", calls)
+	}
+}
+
+func TestRunMemoryReviewerRejectsDeepScopeBypass(t *testing.T) {
+	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+		"action": "add", "target": "workspace", "content": "must not be reviewed",
+	}}
+	al, agent, caller := newMemoryReviewerHarness(t, provider)
+	appendReviewerTurn(t, agent, caller, "private-turn")
+	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
+		t.Fatal(err)
+	}
+
+	groupCaller := caller
+	groupCaller.GroupID = "group-1"
+	if err := al.runMemoryReview(context.Background(), agent, groupCaller); err == nil {
+		t.Fatal("deep reviewer accepted a shared group scope")
+	}
+	otherAgentCaller := caller
+	otherAgentCaller.AgentID = "other-agent"
+	if err := al.runMemoryReview(context.Background(), agent, otherAgentCaller); err == nil {
+		t.Fatal("deep reviewer accepted a mismatched agent scope")
+	}
+	if calls, _, _ := provider.snapshot(); calls != 0 {
+		t.Fatalf("deep scope bypass made %d provider calls", calls)
+	}
+}
+
+func TestFlushMemoryReviewerRejectsMismatchedAgentScope(t *testing.T) {
+	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+		"action": "add", "target": "workspace", "content": "must not be reviewed",
+	}}
+	al, agent, caller := newMemoryReviewerHarness(t, provider)
+	appendReviewerTurn(t, agent, caller, "private-turn")
+	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
+		t.Fatal(err)
+	}
+
+	caller.AgentID = "other-agent"
+	if err := al.flushMemoryReview(context.Background(), agent, caller); err == nil {
+		t.Fatal("flush reviewer accepted a mismatched agent scope")
+	}
+	if calls, _, _ := provider.snapshot(); calls != 0 {
+		t.Fatalf("mismatched flush made %d provider calls", calls)
 	}
 }
 
@@ -517,5 +581,227 @@ func TestRepeatedReviewWithoutNewRecallDoesNotDuplicateMemory(t *testing.T) {
 	entries, err := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("repeat review duplicated memory: %#v err=%v", entries, err)
+	}
+}
+
+func TestLifecycleFlushRunsWhenScheduledReviewerIsDisabled(t *testing.T) {
+	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+		"action": "add", "target": "current_user",
+		"content":          "Prefers detailed setup explanations",
+		"type":             memory.CuratedTypeCommunicationPreference,
+		"evidence_kind":    memory.CuratedEvidenceExplicit,
+		"preference_key":   "communication.verbosity",
+		"preference_value": "detailed",
+	}}
+	al, agent, caller := newMemoryReviewerHarness(t, provider)
+	al.cfg.Memory.BackgroundReview.Enabled = false
+	appendReviewerTurn(t, agent, caller, "turn-before-compression")
+	al.recordAndMaybeReviewMemory(agent, caller, 1, "I prefer detailed setup explanations")
+	if calls, _, _ := provider.snapshot(); calls != 0 {
+		t.Fatalf("disabled scheduled reviewer made %d calls before lifecycle flush", calls)
+	}
+	if err := al.flushMemoryReview(context.Background(), agent, caller); err != nil {
+		t.Fatalf("lifecycle flush with scheduled reviewer disabled: %v", err)
+	}
+	entries, err := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
+	if err != nil || len(entries) != 1 || entries[0].PreferenceValue != "detailed" {
+		t.Fatalf("lifecycle flush result=%#v err=%v", entries, err)
+	}
+}
+
+func TestRememberedMemoryCallerScopesAreBoundedAndRefreshRecentSessions(t *testing.T) {
+	al := &AgentLoop{}
+	for index := 0; index < maxRememberedMemoryCallerScopes; index++ {
+		key := fmt.Sprintf("session-%03d", index)
+		al.rememberMemoryCallerScope(memory.CallerScope{
+			UserKey: "user-a", SessionKey: key, SessionRef: key,
+		})
+	}
+	al.rememberMemoryCallerScope(memory.CallerScope{
+		UserKey: "user-a", SessionKey: "session-000", SessionRef: "session-000",
+	})
+	al.rememberMemoryCallerScope(memory.CallerScope{
+		UserKey: "user-a", SessionKey: "session-new", SessionRef: "session-new",
+	})
+
+	count := 0
+	al.memoryCallerScopes.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	if count != maxRememberedMemoryCallerScopes {
+		t.Fatalf("remembered caller scopes = %d, want %d", count, maxRememberedMemoryCallerScopes)
+	}
+	if _, ok := al.memoryCallerScopes.Load("session-000"); !ok {
+		t.Fatal("refreshed caller scope was evicted")
+	}
+	if _, ok := al.memoryCallerScopes.Load("session-001"); ok {
+		t.Fatal("least-recently remembered caller scope was retained")
+	}
+	if _, ok := al.memoryCallerScopes.Load("session-new"); !ok {
+		t.Fatal("new caller scope was not retained")
+	}
+}
+
+func TestRememberedMemoryCallerScopesStayBoundedConcurrently(t *testing.T) {
+	al := &AgentLoop{}
+	var writers sync.WaitGroup
+	for index := 0; index < maxRememberedMemoryCallerScopes*4; index++ {
+		writers.Add(1)
+		go func(index int) {
+			defer writers.Done()
+			key := fmt.Sprintf("concurrent-session-%03d", index)
+			al.rememberMemoryCallerScope(memory.CallerScope{
+				UserKey: "user-a", SessionKey: key, SessionRef: key,
+			})
+		}(index)
+	}
+	writers.Wait()
+
+	count := 0
+	al.memoryCallerScopes.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	if count != maxRememberedMemoryCallerScopes {
+		t.Fatalf("remembered caller scopes = %d, want %d", count, maxRememberedMemoryCallerScopes)
+	}
+}
+
+func TestCompressionLifecycleFlushesBeforeCompaction(t *testing.T) {
+	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+		"action": "add", "target": "current_user",
+		"content":          "Prefers concise progress updates",
+		"type":             memory.CuratedTypeCommunicationPreference,
+		"evidence_kind":    memory.CuratedEvidenceExplicit,
+		"preference_key":   "communication.verbosity",
+		"preference_value": "concise",
+	}}
+	al, agent, _ := newMemoryReviewerHarness(t, provider)
+	al.cfg.Memory.BackgroundReview.Enabled = false
+	tracker := &trackingContextManager{}
+	al.contextManager = tracker
+	opts := processOptions{
+		EnableSummary: true,
+		Dispatch: DispatchRequest{
+			SessionKey: "compression-session",
+			InboundContext: &bus.InboundContext{
+				Channel: "telegram", Account: "personal", ChatID: "user-a",
+				ChatType: "direct", SenderID: "user-a",
+			},
+		},
+	}
+	ts := newTurnState(agent, opts, turnEventScope{
+		turnID: "turn-before-compression", context: newTurnContext(nil, nil, nil),
+	})
+	caller := callerScopeForTurn(agent.ID, al.cfg, opts)
+	appendReviewerTurn(t, agent, caller, ts.turnID)
+	al.recordAndMaybeReviewMemory(agent, caller, 1, "I prefer concise progress updates")
+	if calls, _, _ := provider.snapshot(); calls != 0 {
+		t.Fatalf("disabled scheduled reviewer made %d calls before compaction", calls)
+	}
+
+	pipeline := NewPipeline(al)
+	exec := newTurnExecution(agent, opts, nil, "", nil)
+	if _, err := pipeline.Finalize(
+		context.Background(), context.Background(), ts, exec, TurnEndStatusCompleted, "Delivered response",
+	); err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+	if tracker.compactCalls.Load() != 1 {
+		t.Fatalf("context compact calls = %d, want 1", tracker.compactCalls.Load())
+	}
+	entries, err := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
+	if err != nil || len(entries) != 1 || entries[0].PreferenceValue != "concise" {
+		t.Fatalf("pre-compaction lifecycle memory = %#v, %v", entries, err)
+	}
+}
+
+func TestShutdownRegistryFlushesRememberedScopeOnce(t *testing.T) {
+	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+		"action": "add", "target": "workspace",
+		"content": "The project validates releases in remote CI",
+		"type":    memory.CuratedTypeProjectFact,
+	}}
+	al, agent, caller := newMemoryReviewerHarness(t, provider)
+	al.registry = &AgentRegistry{
+		cfg: al.cfg,
+		agents: map[string]*AgentInstance{
+			"main": agent,
+		},
+	}
+	appendReviewerTurn(t, agent, caller, "turn-before-shutdown")
+	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
+		t.Fatal(err)
+	}
+	al.rememberMemoryCallerScope(caller)
+	al.flushMemoryReviewsForRegistry(context.Background(), al.registry, "shutdown_test")
+	al.flushMemoryReviewsForRegistry(context.Background(), al.registry, "shutdown_test_repeat")
+
+	entries, err := agent.CuratedMemory.List(memory.CuratedTargetWorkspace, caller)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("shutdown flush entries=%#v err=%v", entries, err)
+	}
+	if calls, _, _ := provider.snapshot(); calls != 2 {
+		t.Fatalf("shutdown and repeat provider calls=%d, want one two-call review", calls)
+	}
+}
+
+func TestRegistryReloadFlushesRememberedScopeOnce(t *testing.T) {
+	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+		"action": "add", "target": "workspace",
+		"content": "The project validates releases in remote CI",
+		"type":    memory.CuratedTypeProjectFact,
+	}}
+	al, agent, caller := newMemoryReviewerHarness(t, provider)
+	al.registry = &AgentRegistry{
+		cfg: al.cfg,
+		agents: map[string]*AgentInstance{
+			"main": agent,
+		},
+	}
+	appendReviewerTurn(t, agent, caller, "turn-before-reload")
+	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
+		t.Fatal(err)
+	}
+	al.rememberMemoryCallerScope(caller)
+	al.flushMemoryReviewsForRegistry(context.Background(), al.registry, "registry_reload_test")
+	al.flushMemoryReviewsForRegistry(context.Background(), al.registry, "registry_reload_test_repeat")
+
+	entries, err := agent.CuratedMemory.List(memory.CuratedTargetWorkspace, caller)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("reload flush entries=%#v err=%v", entries, err)
+	}
+	if calls, _, _ := provider.snapshot(); calls != 2 {
+		t.Fatalf("reload and repeat provider calls=%d, want one two-call review", calls)
+	}
+}
+
+func TestRegistryFlushNeverFallsBackAcrossAgentRoots(t *testing.T) {
+	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+		"action": "add", "target": "workspace",
+		"content": "must not cross an agent boundary",
+	}}
+	al, agent, caller := newMemoryReviewerHarness(t, provider)
+	caller.AgentID = "removed-agent"
+	al.registry = &AgentRegistry{
+		cfg: al.cfg,
+		agents: map[string]*AgentInstance{
+			"main": agent,
+		},
+	}
+	appendReviewerTurn(t, agent, caller, "turn-for-removed-agent")
+	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
+		t.Fatal(err)
+	}
+	al.rememberMemoryCallerScope(caller)
+	al.flushMemoryReviewsForRegistry(context.Background(), al.registry, "removed_agent_test")
+
+	entries, err := agent.CuratedMemory.List(memory.CuratedTargetWorkspace, caller)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("removed-agent scope reached default store: entries=%#v err=%v", entries, err)
+	}
+	if calls, _, _ := provider.snapshot(); calls != 0 {
+		t.Fatalf("removed-agent scope made %d provider calls", calls)
 	}
 }

@@ -3,6 +3,7 @@ package memory
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -52,6 +53,9 @@ var (
 	ErrCuratedInvalidEvidence      = errors.New("invalid curated memory evidence kind")
 	ErrCuratedInvalidPreferenceKey = errors.New("invalid curated memory preference key")
 	ErrCuratedInvalidPending       = errors.New("pending memory change not found")
+	ErrCuratedSensitiveInference   = errors.New("unsupported sensitive or psychological inference")
+	ErrCuratedUnsupportedVersion   = errors.New("unsupported curated memory schema version")
+	ErrCuratedMalformedDocument    = errors.New("malformed curated memory document")
 )
 
 // CapacityError is returned when an atomic mutation would exceed a configured
@@ -59,6 +63,7 @@ var (
 // and ask the model to consolidate or remove stale entries.
 type CapacityError struct {
 	Target    string `json:"target"`
+	Resource  string `json:"resource,omitempty"`
 	Limit     int    `json:"limit"`
 	Current   int    `json:"current"`
 	Requested int    `json:"requested"`
@@ -92,6 +97,14 @@ type CallerScope struct {
 	SessionKey string `json:"-"`
 	SessionRef string `json:"session_ref,omitempty"`
 	MessageRef string `json:"message_ref,omitempty"`
+}
+
+// AllowsPrivateUserMemory reports whether trusted runtime scope is sufficient
+// to load or mutate current-user data without exposing it to other chat
+// participants. It is shared by prompt assembly, tools, and benchmarks so the
+// fail-closed group boundary cannot drift between those paths.
+func AllowsPrivateUserMemory(caller CallerScope) bool {
+	return strings.TrimSpace(caller.UserKey) != "" && strings.TrimSpace(caller.GroupID) == ""
 }
 
 // Provenance records where a curated fact came from without retaining a full
@@ -184,6 +197,11 @@ type CuratedRetrievalOptions struct {
 	FuzzyWeight         float64
 	RecentFallbackCount int
 	Now                 time.Time
+	// SemanticScore is an optional bounded local reranker. It returns 0..1 and
+	// is deliberately not serialized or persisted. Lexical retrieval remains
+	// the dependency-free default when it is nil.
+	SemanticScore  func(query, candidate string) float64
+	SemanticWeight float64
 }
 
 type CuratedRetrievalResult struct {
@@ -197,9 +215,13 @@ type CuratedUsage struct {
 }
 
 type CuratedStats struct {
-	Target       string `json:"target"`
-	Entries      int    `json:"entries"`
-	Characters   int    `json:"characters"`
-	Capacity     int    `json:"capacity"`
-	PendingCount int    `json:"pending_count"`
+	Target               string `json:"target"`
+	Entries              int    `json:"entries"`
+	EntryCapacity        int    `json:"entry_capacity"`
+	Characters           int    `json:"characters"`
+	Capacity             int    `json:"capacity"`
+	SerializedCharacters int    `json:"serialized_characters"`
+	SerializedCapacity   int    `json:"serialized_capacity"`
+	PendingCount         int    `json:"pending_count"`
+	PendingCapacity      int    `json:"pending_capacity"`
 }

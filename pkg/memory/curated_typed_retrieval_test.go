@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestCuratedStoreLegacyEntriesLoadWithTypedDefaultsWithoutRewrite(t *testing.T) {
+func TestCuratedStoreLegacyEntriesMigrateAtomicallyWithTypedDefaults(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "curated")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -48,8 +48,46 @@ func TestCuratedStoreLegacyEntriesLoadWithTypedDefaultsWithoutRewrite(t *testing
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	if !reflect.DeepEqual(after, data) {
-		t.Fatal("read-only legacy schema load rewrote the structured document")
+	if reflect.DeepEqual(after, data) {
+		t.Fatal("legacy schema was not migrated")
+	}
+	var migrated curatedDocument
+	if err := json.Unmarshal(after, &migrated); err != nil {
+		t.Fatalf("decode migrated document: %v", err)
+	}
+	if migrated.Version != curatedDocumentVersion || migrated.Revision == 0 {
+		t.Fatalf("migrated header = version %d revision %d", migrated.Version, migrated.Revision)
+	}
+	// A restart must accept the migrated representation without changing it.
+	restarted := newTestCuratedStore(t, root, 1_000, 1_000)
+	if _, err := restarted.List(CuratedTargetWorkspace, testCaller("telegram:user-a")); err != nil {
+		t.Fatalf("List after migration restart: %v", err)
+	}
+	afterRestart, err := os.ReadFile(path)
+	if err != nil || !reflect.DeepEqual(afterRestart, after) {
+		t.Fatalf("migration was not idempotent: err=%v", err)
+	}
+}
+
+func TestCuratedStoreRejectsFutureAndMalformedSchema(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "curated")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "workspace.json")
+	store := newTestCuratedStore(t, root, 1_000, 1_000)
+	caller := testCaller("telegram:user-a")
+	if err := os.WriteFile(path, []byte(`{"version":999,"scope_digest":"workspace","entries":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.List(CuratedTargetWorkspace, caller); !errors.Is(err, ErrCuratedUnsupportedVersion) {
+		t.Fatalf("future version error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"version":"bad"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.List(CuratedTargetWorkspace, caller); !errors.Is(err, ErrCuratedMalformedDocument) {
+		t.Fatalf("malformed version error = %v", err)
 	}
 }
 

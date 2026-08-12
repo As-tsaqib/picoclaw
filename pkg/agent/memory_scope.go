@@ -3,7 +3,6 @@ package agent
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"strings"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
@@ -63,7 +62,7 @@ func callerScopeFromInbound(
 		if cfg != nil {
 			identityLinks = cfg.Session.IdentityLinks
 		}
-		caller.UserKey = canonicalMemoryUserKey(
+		caller.UserKey = session.CanonicalUserScopeKey(
 			caller.Channel,
 			caller.Account,
 			inbound.SenderID,
@@ -71,28 +70,6 @@ func callerScopeFromInbound(
 		)
 	}
 	return caller
-}
-
-func canonicalMemoryUserKey(
-	channel string,
-	account string,
-	rawID string,
-	identityLinks map[string][]string,
-) string {
-	rawID = strings.TrimSpace(rawID)
-	if rawID == "" {
-		return ""
-	}
-	canonical := session.CanonicalSessionIdentityID(channel, rawID, identityLinks)
-	if canonical == "" {
-		return ""
-	}
-	return fmt.Sprintf(
-		"channel:%s|account:%s|user:%s",
-		strings.ToLower(strings.TrimSpace(channel)),
-		routing.NormalizeAccountID(account),
-		strings.ToLower(strings.TrimSpace(canonical)),
-	)
 }
 
 func memorySessionRef(sessionKey string) string {

@@ -568,10 +568,6 @@ func shutdownGateway(
 ) {
 	publishGatewayEvent(agentLoop, runtimeevents.KindGatewayShutdown, time.Time{}, nil)
 
-	if cp, ok := provider.(providers.StatefulProvider); ok && fullShutdown {
-		cp.Close()
-	}
-
 	stopAndCleanupServices(runningServices, gracefulShutdownTimeout, false)
 
 	if fullShutdown && msgBus != nil {
@@ -580,6 +576,13 @@ func shutdownGateway(
 
 	agentLoop.Stop()
 	agentLoop.Close()
+
+	// AgentLoop.Close performs the bounded final memory review while the main
+	// provider is still usable. Closing a stateful provider first would make the
+	// advertised graceful-shutdown flush ineffective.
+	if cp, ok := provider.(providers.StatefulProvider); ok && fullShutdown {
+		cp.Close()
+	}
 
 	logger.Info("✓ Gateway stopped")
 }

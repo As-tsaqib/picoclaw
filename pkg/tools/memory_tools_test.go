@@ -78,6 +78,55 @@ func TestMemoryManageToolCRUDScopeAndApproval(t *testing.T) {
 	}
 }
 
+func TestMemoryManageToolExplicitCorrectionAndForgetRebuildProfile(t *testing.T) {
+	store, err := memory.NewCuratedStore(filepath.Join(t.TempDir(), "curated"), memory.CuratedStoreOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := toolMemoryCaller("session-a", "user-a", "", "")
+	caller.ChatID = "user-a"
+	tool := NewMemoryManageToolWithApprovalMode(store, config.MemoryApprovalOff, nil)
+	first := decodeToolResult(t, tool.Execute(toolContext(caller, "turn-a"), map[string]any{
+		"action": "add", "target": "current_user",
+		"content":          "From now on, answer concisely",
+		"type":             memory.CuratedTypeCommunicationPreference,
+		"evidence_kind":    memory.CuratedEvidenceExplicit,
+		"preference_key":   "communication.verbosity",
+		"preference_value": "concise",
+	}))
+	firstResult := first["result"].(map[string]any)
+	firstApplied := firstResult["applied"].([]any)
+	firstID := firstApplied[0].(map[string]any)["id"].(string)
+
+	corrected := tool.Execute(toolContext(caller, "turn-b"), map[string]any{
+		"action": "add", "target": "current_user",
+		"content":          "Actually, I now prefer detailed answers",
+		"type":             memory.CuratedTypeCommunicationPreference,
+		"evidence_kind":    memory.CuratedEvidenceExplicit,
+		"preference_key":   "communication.verbosity",
+		"preference_value": "detailed",
+		"supersedes":       firstID,
+	})
+	if corrected.IsError {
+		t.Fatalf("explicit correction failed: %s", corrected.ContentForLLM())
+	}
+	profile, err := store.CompileUserProfile(caller, memory.UserProfileOptions{MaxChars: 800})
+	if err != nil || len(profile.Communication) != 1 || profile.Communication[0].Value != "detailed" {
+		t.Fatalf("corrected profile=%#v err=%v", profile, err)
+	}
+	currentID := profile.Communication[0].SourceID
+	forgotten := tool.Execute(toolContext(caller, "turn-c"), map[string]any{
+		"action": "remove", "target": "current_user", "id": currentID,
+	})
+	if forgotten.IsError {
+		t.Fatalf("explicit forget failed: %s", forgotten.ContentForLLM())
+	}
+	profile, err = store.CompileUserProfile(caller, memory.UserProfileOptions{MaxChars: 800})
+	if err != nil || len(profile.SourceIDs) != 0 {
+		t.Fatalf("forgotten preference remained in profile=%#v err=%v", profile, err)
+	}
+}
+
 func TestMemoryManageToolApprovalModesDistinguishInteractiveAndCuratorWrites(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -162,6 +211,29 @@ func TestMemoryManageToolRejectsCurrentUserAccessFromSharedGroup(t *testing.T) {
 	errorPayload, _ := payload["error"].(map[string]any)
 	if errorPayload["code"] != "private_context_required" {
 		t.Fatalf("shared-group error payload = %#v", payload)
+	}
+}
+
+func TestMemoryManageToolRejectsCurrentUserAccessWithoutTrustedIdentity(t *testing.T) {
+	store, err := memory.NewCuratedStore(filepath.Join(t.TempDir(), "curated"), memory.CuratedStoreOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := toolMemoryCaller("session-a", "", "", "")
+	caller.ChatID = "unknown"
+	result := NewMemoryManageTool(store, false, nil).Execute(
+		toolContext(caller, "turn-a"),
+		map[string]any{
+			"action": "list", "target": "current_user",
+		},
+	)
+	if !result.IsError {
+		t.Fatalf("unknown identity listed current-user memory: %s", result.ContentForLLM())
+	}
+	payload := decodeToolResult(t, result)
+	errorPayload, _ := payload["error"].(map[string]any)
+	if errorPayload["code"] != "user_scope_unavailable" {
+		t.Fatalf("unknown identity error payload = %#v", payload)
 	}
 }
 

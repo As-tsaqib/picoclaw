@@ -61,6 +61,9 @@ type AgentLoop struct {
 	pendingSkills           sync.Map
 	pendingStops            sync.Map
 	pendingMemoryDeliveries sync.Map
+	memoryCallerScopes      sync.Map // session key -> memoryCallerScopeRecord for lifecycle flushes
+	memoryCallerScopeClock  atomic.Uint64
+	memoryCallerScopesMu    sync.Mutex
 	mu                      sync.RWMutex
 
 	// workerSem limits concurrent turn processing workers.
@@ -354,6 +357,10 @@ func (al *AgentLoop) Stop() {
 
 // Close releases resources held by agent session stores. Call after Stop.
 func (al *AgentLoop) Close() {
+	// Curate still-unreviewed delivered turns while providers and stores are
+	// alive. This is globally bounded and best-effort so shutdown cannot hang.
+	al.flushMemoryReviewsOnShutdown()
+
 	mcpManager := al.mcp.takeManager()
 
 	if mcpManager != nil {
@@ -455,6 +462,12 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 				map[string]any{"error": err.Error()})
 		}
 	}
+
+	// A config/provider reload replaces the live registry and its providers.
+	// Flush pending delivered content against the old stores before that
+	// lifecycle boundary; a failed flush remains durable in recall state and is
+	// retried after a later turn.
+	al.flushMemoryReviewsForRegistry(ctx, al.GetRegistry(), "registry_reload")
 
 	// Atomically swap the config and registry under write lock
 	// This ensures readers see a consistent pair

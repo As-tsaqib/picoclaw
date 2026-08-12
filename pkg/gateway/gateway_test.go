@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,7 +17,63 @@ import (
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
+	"github.com/sipeed/picoclaw/pkg/providers"
 )
+
+type shutdownOrderProvider struct {
+	mu              sync.Mutex
+	closed          bool
+	reviewerCalled  bool
+	reviewerAtClose bool
+	mainCalls       int
+}
+
+func (p *shutdownOrderProvider) Chat(
+	_ context.Context,
+	messages []providers.Message,
+	_ []providers.ToolDefinition,
+	_ string,
+	_ map[string]any,
+) (*providers.LLMResponse, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(messages) > 0 && strings.Contains(messages[0].Content, "bounded memory curator") {
+		p.reviewerCalled = true
+		p.reviewerAtClose = p.closed
+	} else {
+		p.mainCalls++
+	}
+	return &providers.LLMResponse{Content: "review complete"}, nil
+}
+
+func (p *shutdownOrderProvider) GetDefaultModel() string { return "shutdown-order" }
+
+func (p *shutdownOrderProvider) Close() {
+	p.mu.Lock()
+	p.closed = true
+	p.mu.Unlock()
+}
+
+func (p *shutdownOrderProvider) snapshot() (reviewerCalled, reviewerAtClose, closed bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.reviewerCalled, p.reviewerAtClose, p.closed
+}
+
+func (p *shutdownOrderProvider) waitForMainCall(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		p.mu.Lock()
+		calls := p.mainCalls
+		p.mu.Unlock()
+		if calls > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for main provider call")
+}
 
 func TestRun_StartupFailuresReturnErrorAndEmitStructuredLog(t *testing.T) {
 	t.Parallel()
@@ -283,6 +340,65 @@ func TestShutdownGatewayClosesMessageBus(t *testing.T) {
 	}
 	if err := msgBus.PublishVoiceControl(context.Background(), bus.VoiceControl{}); !errors.Is(err, bus.ErrBusClosed) {
 		t.Fatalf("PublishVoiceControl after shutdown error = %v, want %v", err, bus.ErrBusClosed)
+	}
+}
+
+func TestShutdownGatewayFlushesMemoryBeforeClosingStatefulProvider(t *testing.T) {
+	t.Setenv("PICOCLAW_HOME", t.TempDir())
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Workspace = filepath.Join(t.TempDir(), "workspace")
+	cfg.Memory.Enabled = true
+	cfg.Memory.BackgroundReview.Enabled = false
+	cfg.Memory.BackgroundReview.TimeoutSeconds = 2
+	provider := &shutdownOrderProvider{}
+	msgBus := bus.NewMessageBus()
+	al := agent.NewAgentLoop(cfg, msgBus, provider)
+	runDone := make(chan error, 1)
+	go func() { runDone <- al.Run(context.Background()) }()
+	if err := msgBus.PublishInbound(context.Background(), bus.InboundMessage{
+		Context: bus.InboundContext{
+			Channel: "pico", Account: "default", ChatID: "shutdown-user",
+			ChatType: "direct", SenderID: "shutdown-user",
+		},
+		Content: "Remember remote CI policy", SessionKey: "shutdown-session",
+	}); err != nil {
+		t.Fatalf("PublishInbound() error = %v", err)
+	}
+	provider.waitForMainCall(t)
+	deadline := time.Now().Add(3 * time.Second)
+	defaultAgent := al.GetRegistry().GetDefaultAgent()
+	if defaultAgent == nil || defaultAgent.MemoryReviewState == nil {
+		t.Fatal("memory review state is unavailable")
+	}
+	for {
+		summary, err := defaultAgent.MemoryReviewState.Summary()
+		if err != nil {
+			t.Fatalf("memory review state summary: %v", err)
+		}
+		if summary.SuccessfulTurnsPending == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for delivered turn commit: %#v", summary)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	shutdownGateway(&services{}, al, provider, msgBus, true)
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Fatalf("AgentLoop.Run() error = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("agent loop did not stop after shutdown")
+	}
+	reviewerCalled, reviewerAtClose, closed := provider.snapshot()
+	if !reviewerCalled || reviewerAtClose || !closed {
+		t.Fatalf(
+			"shutdown provider state: reviewer_called=%t reviewer_at_close=%t closed=%t",
+			reviewerCalled, reviewerAtClose, closed,
+		)
 	}
 }
 

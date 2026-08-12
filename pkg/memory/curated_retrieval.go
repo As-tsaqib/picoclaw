@@ -63,6 +63,12 @@ func (s *CuratedStore) Retrieve(
 	if opts.RecentFallbackCount < 0 {
 		opts.RecentFallbackCount = 0
 	}
+	if opts.SemanticWeight < 0 {
+		opts.SemanticWeight = 0
+	}
+	if opts.SemanticWeight > 5 {
+		opts.SemanticWeight = 5
+	}
 
 	queryCounts := lexicalTokenCounts(opts.Query)
 	documentFrequency := make(map[string]int)
@@ -178,7 +184,11 @@ func curatedRelevanceScore(
 	if len(query) > 0 && opts.FuzzyWeight > 0 {
 		fuzzy = trigramSimilarity(strings.Join(sortedTokenKeys(query), " "), strings.ToLower(curatedSearchText(entry)))
 	}
-	if len(query) > 0 && matched == 0 && fuzzy < 0.08 {
+	semantic := 0.0
+	if opts.SemanticScore != nil && opts.SemanticWeight > 0 {
+		semantic = math.Max(0, math.Min(1, opts.SemanticScore(opts.Query, curatedSearchText(entry))))
+	}
+	if len(query) > 0 && matched == 0 && fuzzy < 0.08 && semantic < 0.15 {
 		return -1
 	}
 
@@ -220,7 +230,9 @@ func curatedRelevanceScore(
 	if entry.Pinned {
 		pinnedBonus = 2
 	}
-	return bm25 + (overlap * 2) + (fuzzy * opts.FuzzyWeight) + recency + presentation + confirmation + typeBonus + confidence + evidence + pinnedBonus - stalePenalty
+	return bm25 + (overlap * 2) + (fuzzy * opts.FuzzyWeight) +
+		(semantic * opts.SemanticWeight) + recency + presentation + confirmation +
+		typeBonus + confidence + evidence + pinnedBonus - stalePenalty
 }
 
 func curatedSearchText(entry CuratedEntry) string {

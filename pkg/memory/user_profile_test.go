@@ -284,6 +284,56 @@ func TestCompileUserProfileCacheExpiresWithMemory(t *testing.T) {
 	}
 }
 
+func TestExplicitStablePreferenceHonorsConfiguredExpiryAndArchives(t *testing.T) {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	store, err := NewCuratedStore(
+		filepath.Join(t.TempDir(), "curated"),
+		CuratedStoreOptions{Now: func() time.Time { return now }},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := testCaller("telegram:explicit-expiry")
+	expires := now.Add(time.Hour)
+	result, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Temporarily prefers detailed answers",
+		Type: CuratedTypeCommunicationPreference, EvidenceKind: CuratedEvidenceExplicit,
+		PreferenceKey: "communication.verbosity", PreferenceValue: "detailed", ExpiresAt: &expires,
+	}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Hour)
+	profile, err := store.CompileUserProfile(caller, UserProfileOptions{MaxChars: 800, Now: now})
+	if err != nil || len(profile.SourceIDs) != 0 {
+		t.Fatalf("expired explicit profile=%#v err=%v", profile, err)
+	}
+	if err := store.Maintain(CuratedTargetCurrentUser, caller, true, 0, now); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := store.Inspect(CuratedTargetCurrentUser, caller, result.Applied[0].ID)
+	if err != nil || entry.EffectiveStatus() != CuratedStatusArchived {
+		t.Fatalf("maintained explicit expiry=%#v err=%v", entry, err)
+	}
+}
+
+func TestCuratedTypeAwareLifecycleKeepsStableFactsRelevantLonger(t *testing.T) {
+	fallbackHalfLife := 90.0
+	fallbackStale := 180.0
+	if identity := curatedTypeRecencyHalfLife(CuratedTypeIdentity, fallbackHalfLife); identity <= fallbackHalfLife {
+		t.Fatalf("identity half-life=%v, want longer than %v", identity, fallbackHalfLife)
+	}
+	if preference := curatedTypeStaleThreshold(CuratedTypeCommunicationPreference, fallbackStale); preference != 0 {
+		t.Fatalf("communication stale threshold=%v, want no automatic staleness", preference)
+	}
+	if episodic := curatedTypeRecencyHalfLife(CuratedTypeEpisodicFact, fallbackHalfLife); episodic >= fallbackHalfLife {
+		t.Fatalf("episodic half-life=%v, want shorter than %v", episodic, fallbackHalfLife)
+	}
+	if episodic := curatedTypeStaleThreshold(CuratedTypeEpisodicFact, fallbackStale); episodic >= fallbackStale {
+		t.Fatalf("episodic stale threshold=%v, want shorter than %v", episodic, fallbackStale)
+	}
+}
+
 func TestCompileUserProfileSerializedBudgetIsHardBound(t *testing.T) {
 	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 20_000, 20_000)
 	caller := testCaller("telegram:user-budget")
@@ -359,6 +409,27 @@ func TestCompileUserProfileCustomNowBypassesRealtimeCache(t *testing.T) {
 	}
 	if len(historical.Communication) != 1 || historical.Communication[0].Value != "concise" {
 		t.Fatalf("historical profile reused real-time cache: %#v", historical)
+	}
+}
+
+func TestCompileUserProfileCacheEvictsLeastRecentlyUsedScope(t *testing.T) {
+	store, err := NewCuratedStore(
+		filepath.Join(t.TempDir(), "curated"),
+		CuratedStoreOptions{ProfileCacheEntryLimit: 2},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range []string{"cache-a", "cache-b", "cache-c"} {
+		caller := testCaller(user)
+		if _, err := store.CompileUserProfile(caller, UserProfileOptions{MaxChars: 500}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store.profileCacheMu.Lock()
+	defer store.profileCacheMu.Unlock()
+	if len(store.profileCache) != 2 {
+		t.Fatalf("profile cache entries = %d, want 2", len(store.profileCache))
 	}
 }
 

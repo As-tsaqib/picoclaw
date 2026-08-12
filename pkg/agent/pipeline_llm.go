@@ -364,6 +364,7 @@ func (p *Pipeline) CallLLM(
 				))
 			}
 
+			p.al.flushTurnMemoryBeforeContextLoss(ctx, ts, "retry_compression")
 			if compactErr := p.ContextManager.Compact(ctx, &CompactRequest{
 				SessionKey: ts.sessionKey,
 				Reason:     ContextCompressReasonRetry,

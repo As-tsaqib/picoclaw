@@ -862,6 +862,7 @@ toolLoop:
 			}
 		}
 		if !ts.opts.NoHistory && ts.opts.EnableSummary {
+			al.flushTurnMemoryBeforeContextLoss(turnCtx, ts, "tool_delivery_summarization")
 			al.contextManager.Compact(turnCtx, &CompactRequest{
 				SessionKey: ts.sessionKey,
 				Reason:     ContextCompressReasonSummarize,
