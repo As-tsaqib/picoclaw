@@ -496,10 +496,10 @@ func TestCuratedStoreSerializedDocumentLimitRejectsAtomicWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	caller := testCaller("telegram:serialized-bound")
-	if _, err := store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{{
+	if _, applyErr := store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{{
 		Action: CuratedActionAdd, Content: strings.Repeat("a", 120), Type: CuratedTypeProjectFact,
-	}}, false); err != nil {
-		t.Fatalf("initial bounded write: %v", err)
+	}}, false); applyErr != nil {
+		t.Fatalf("initial bounded write: %v", applyErr)
 	}
 	path := filepath.Join(root, "workspace.json")
 	before, err := os.ReadFile(path)
@@ -531,8 +531,13 @@ func TestCuratedStoreRejectsOversizedEntryAndBatch(t *testing.T) {
 	for i := range mutations {
 		mutations[i] = CuratedMutation{Action: CuratedActionAdd, Content: fmt.Sprintf("bounded batch %d", i)}
 	}
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, mutations, false); !errors.Is(err, ErrCuratedInvalidAction) {
-		t.Fatalf("oversized batch error = %v", err)
+	if _, applyErr := store.ApplyBatch(
+		CuratedTargetCurrentUser,
+		caller,
+		mutations,
+		false,
+	); !errors.Is(applyErr, ErrCuratedInvalidAction) {
+		t.Fatalf("oversized batch error = %v", applyErr)
 	}
 	entries, err := store.List(CuratedTargetCurrentUser, caller)
 	if err != nil || len(entries) != 0 {

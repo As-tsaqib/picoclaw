@@ -308,8 +308,8 @@ func TestExplicitStablePreferenceHonorsConfiguredExpiryAndArchives(t *testing.T)
 	if err != nil || len(profile.SourceIDs) != 0 {
 		t.Fatalf("expired explicit profile=%#v err=%v", profile, err)
 	}
-	if err := store.Maintain(CuratedTargetCurrentUser, caller, true, 0, now); err != nil {
-		t.Fatal(err)
+	if maintainErr := store.Maintain(CuratedTargetCurrentUser, caller, true, 0, now); maintainErr != nil {
+		t.Fatal(maintainErr)
 	}
 	entry, err := store.Inspect(CuratedTargetCurrentUser, caller, result.Applied[0].ID)
 	if err != nil || entry.EffectiveStatus() != CuratedStatusArchived {

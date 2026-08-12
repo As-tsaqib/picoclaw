@@ -163,7 +163,12 @@ jobs:
           if (( ${#prettier_files[@]} == 0 )); then
             echo "No changed frontend text files require Prettier validation."
           else
-            pnpm exec prettier --check -- "${prettier_files[@]}"
+            pnpm exec prettier --write -- "${prettier_files[@]}"
+            if ! git -C ../.. diff --quiet -- "${changed_paths[@]}"; then
+              git -C ../.. diff -- "${changed_paths[@]}"
+              echo "Changed frontend files are not formatted with Prettier." >&2
+              exit 1
+            fi
           fi
 
       - name: Build frontend

@@ -718,7 +718,8 @@ func TestCompressionLifecycleFlushesBeforeCompaction(t *testing.T) {
 	}
 }
 
-func TestShutdownRegistryFlushesRememberedScopeOnce(t *testing.T) {
+func assertRegistryLifecycleFlushesRememberedScopeOnce(t *testing.T, boundary string) {
+	t.Helper()
 	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
 		"action": "add", "target": "workspace",
 		"content": "The project validates releases in remote CI",
@@ -736,46 +737,24 @@ func TestShutdownRegistryFlushesRememberedScopeOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	al.rememberMemoryCallerScope(caller)
-	al.flushMemoryReviewsForRegistry(context.Background(), al.registry, "shutdown_test")
-	al.flushMemoryReviewsForRegistry(context.Background(), al.registry, "shutdown_test_repeat")
+	al.flushMemoryReviewsForRegistry(context.Background(), al.registry, boundary)
+	al.flushMemoryReviewsForRegistry(context.Background(), al.registry, boundary+"_repeat")
 
 	entries, err := agent.CuratedMemory.List(memory.CuratedTargetWorkspace, caller)
 	if err != nil || len(entries) != 1 {
-		t.Fatalf("shutdown flush entries=%#v err=%v", entries, err)
+		t.Fatalf("%s flush entries=%#v err=%v", boundary, entries, err)
 	}
 	if calls, _, _ := provider.snapshot(); calls != 2 {
-		t.Fatalf("shutdown and repeat provider calls=%d, want one two-call review", calls)
+		t.Fatalf("%s and repeat provider calls=%d, want one two-call review", boundary, calls)
 	}
 }
 
-func TestRegistryReloadFlushesRememberedScopeOnce(t *testing.T) {
-	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
-		"action": "add", "target": "workspace",
-		"content": "The project validates releases in remote CI",
-		"type":    memory.CuratedTypeProjectFact,
-	}}
-	al, agent, caller := newMemoryReviewerHarness(t, provider)
-	al.registry = &AgentRegistry{
-		cfg: al.cfg,
-		agents: map[string]*AgentInstance{
-			"main": agent,
-		},
-	}
-	appendReviewerTurn(t, agent, caller, "turn-before-reload")
-	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
-		t.Fatal(err)
-	}
-	al.rememberMemoryCallerScope(caller)
-	al.flushMemoryReviewsForRegistry(context.Background(), al.registry, "registry_reload_test")
-	al.flushMemoryReviewsForRegistry(context.Background(), al.registry, "registry_reload_test_repeat")
+func TestShutdownRegistryFlushesRememberedScopeOnce(t *testing.T) {
+	assertRegistryLifecycleFlushesRememberedScopeOnce(t, "shutdown_test")
+}
 
-	entries, err := agent.CuratedMemory.List(memory.CuratedTargetWorkspace, caller)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("reload flush entries=%#v err=%v", entries, err)
-	}
-	if calls, _, _ := provider.snapshot(); calls != 2 {
-		t.Fatalf("reload and repeat provider calls=%d, want one two-call review", calls)
-	}
+func TestRegistryReloadFlushesRememberedScopeOnce(t *testing.T) {
+	assertRegistryLifecycleFlushesRememberedScopeOnce(t, "registry_reload_test")
 }
 
 func TestRegistryFlushNeverFallsBackAcrossAgentRoots(t *testing.T) {

@@ -52,16 +52,19 @@ func TestCuratedStoreLegacyEntriesMigrateAtomicallyWithTypedDefaults(t *testing.
 		t.Fatal("legacy schema was not migrated")
 	}
 	var migrated curatedDocument
-	if err := json.Unmarshal(after, &migrated); err != nil {
-		t.Fatalf("decode migrated document: %v", err)
+	if decodeErr := json.Unmarshal(after, &migrated); decodeErr != nil {
+		t.Fatalf("decode migrated document: %v", decodeErr)
 	}
 	if migrated.Version != curatedDocumentVersion || migrated.Revision == 0 {
 		t.Fatalf("migrated header = version %d revision %d", migrated.Version, migrated.Revision)
 	}
 	// A restart must accept the migrated representation without changing it.
 	restarted := newTestCuratedStore(t, root, 1_000, 1_000)
-	if _, err := restarted.List(CuratedTargetWorkspace, testCaller("telegram:user-a")); err != nil {
-		t.Fatalf("List after migration restart: %v", err)
+	if _, listErr := restarted.List(
+		CuratedTargetWorkspace,
+		testCaller("telegram:user-a"),
+	); listErr != nil {
+		t.Fatalf("List after migration restart: %v", listErr)
 	}
 	afterRestart, err := os.ReadFile(path)
 	if err != nil || !reflect.DeepEqual(afterRestart, after) {

@@ -78,8 +78,19 @@ var curatedPrivateFactPatterns = []*regexp.Regexp{
 }
 
 var unsupportedSensitiveInferencePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\b(?:user|pengguna|dia|he|she|they)\s+(?:is|seems?|appears?|terlihat|tampak|adalah)?\s*(?:impatient|stubborn|introverted|extroverted|emotional|unstable|aggressive|lazy|manipulative|neurotic|narcissistic|tidak sabar|keras kepala|introvert|ekstrovert|emosional|labil|agresif|malas)\b`),
-	regexp.MustCompile(`(?i)\b(?:political|religious|religion|faith|ethnicity|race|sexual orientation|gender identity|medical|diagnosis|diagnosed|mental health|psychological|personality disorder|politik|agama|kepercayaan|etnis|ras|orientasi seksual|identitas gender|medis|diagnosis|kesehatan mental|psikologis|gangguan kepribadian)\b`),
+	regexp.MustCompile(
+		`(?i)\b(?:user|pengguna|dia|he|she|they)\s+` +
+			`(?:is|seems?|appears?|terlihat|tampak|adalah)?\s*` +
+			`(?:impatient|stubborn|introverted|extroverted|emotional|unstable|aggressive|lazy|` +
+			`manipulative|neurotic|narcissistic|tidak sabar|keras kepala|introvert|ekstrovert|` +
+			`emosional|labil|agresif|malas)\b`,
+	),
+	regexp.MustCompile(
+		`(?i)\b(?:political|religious|religion|faith|ethnicity|race|sexual orientation|` +
+			`gender identity|medical|diagnosis|diagnosed|mental health|psychological|` +
+			`personality disorder|politik|agama|kepercayaan|etnis|ras|orientasi seksual|` +
+			`identitas gender|medis|diagnosis|kesehatan mental|psikologis|gangguan kepribadian)\b`,
+	),
 }
 
 var unsupportedSensitivePreferenceNamespaces = []string{

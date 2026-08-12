@@ -262,7 +262,12 @@ func TestCurrentUserProfileManagementAPIRejectsArbitraryIdentitySelectors(t *tes
 	}
 	profile := managementRequest(t, harness.mux, http.MethodGet, "/api/memory/current-user", "")
 	if profile.Code != http.StatusOK || strings.Contains(profile.Body.String(), "Telegram-only") {
-		t.Fatalf("dashboard exposed Telegram profile: status=%d body=%s cfg=%#v", profile.Code, profile.Body.String(), cfg.Memory)
+		t.Fatalf(
+			"dashboard exposed Telegram profile: status=%d body=%s cfg=%#v",
+			profile.Code,
+			profile.Body.String(),
+			cfg.Memory,
+		)
 	}
 }
 

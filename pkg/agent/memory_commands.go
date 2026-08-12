@@ -107,7 +107,12 @@ func configureMemoryCommandRuntime(
 			return formatMemoryEntries(workspace, user), nil
 		}
 		rt.MemoryEdit = func(id, content string) (string, error) {
-			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, memory.AllowsPrivateUserMemory(caller))
+			target, err := findMemoryEntryTarget(
+				agent.CuratedMemory,
+				caller,
+				id,
+				memory.AllowsPrivateUserMemory(caller),
+			)
 			if err != nil {
 				return "", err
 			}
@@ -122,7 +127,12 @@ func configureMemoryCommandRuntime(
 			return "Updated memory entry " + id + ".", nil
 		}
 		rt.MemoryEntryAction = func(action, id string) (string, error) {
-			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, memory.AllowsPrivateUserMemory(caller))
+			target, err := findMemoryEntryTarget(
+				agent.CuratedMemory,
+				caller,
+				id,
+				memory.AllowsPrivateUserMemory(caller),
+			)
 			if err != nil {
 				return "", err
 			}
@@ -142,14 +152,24 @@ func configureMemoryCommandRuntime(
 				// non-preference entries.
 				mutation.EvidenceKind = memory.CuratedEvidenceExplicit
 			}
-			_, err = agent.CuratedMemory.ApplyBatch(target, caller, []memory.CuratedMutation{mutation}, false)
+			_, err = agent.CuratedMemory.ApplyBatch(
+				target,
+				caller,
+				[]memory.CuratedMutation{mutation},
+				false,
+			)
 			if err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("Memory entry %s: %s.", id, action), nil
 		}
 		rt.MemoryForget = func(id string) (string, error) {
-			target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, memory.AllowsPrivateUserMemory(caller))
+			target, err := findMemoryEntryTarget(
+				agent.CuratedMemory,
+				caller,
+				id,
+				memory.AllowsPrivateUserMemory(caller),
+			)
 			if err != nil {
 				return "", err
 			}

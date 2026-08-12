@@ -120,7 +120,13 @@ func TestMemoryPromptExcludesCurrentUserMemoryFromSharedChat(t *testing.T) {
 	}}, false); err != nil {
 		t.Fatalf("ApplyBatch(workspace) error = %v", err)
 	}
-	if _, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, caller, []memory.CuratedMutation{{
+	privateCaller := caller
+	privateCaller.ChatID = "user-a"
+	privateCaller.GroupID = ""
+	privateCaller.TopicID = ""
+	privateCaller.SessionKey = "direct-a"
+	privateCaller.SessionRef = "direct-a"
+	if _, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, privateCaller, []memory.CuratedMutation{{
 		Action: memory.CuratedActionAdd, Content: "Private timezone is Asia/Makassar",
 	}}, false); err != nil {
 		t.Fatalf("ApplyBatch(current user) error = %v", err)
@@ -406,7 +412,7 @@ func TestBuildMessagesStructuredProfilePrecedesConflictingLegacyUserSeed(t *test
 	if !strings.Contains(system, "newer explicit structured preference overrides") {
 		t.Fatalf("assembled prompt omits deterministic conflict policy: %s", system)
 	}
-	var profilePartAt, legacyPartAt = -1, -1
+	profilePartAt, legacyPartAt := -1, -1
 	for i, part := range messages[0].SystemParts {
 		switch part.PromptSource {
 		case string(PromptSourceUserProfile):
