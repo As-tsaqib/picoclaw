@@ -115,8 +115,8 @@ func TestHandlePatchConfig_ParallelTurnsPreservesOtherFields(t *testing.T) {
 	cfg.Evolution.Mode = "draft"
 	cfg.Tools.MCP.Enabled = true
 	cfg.Agents.Defaults.SubTurn.MaxConcurrent = 7
-	if err := config.SaveConfig(configPath, cfg); err != nil {
-		t.Fatalf("SaveConfig() error = %v", err)
+	if saveErr := config.SaveConfig(configPath, cfg); saveErr != nil {
+		t.Fatalf("SaveConfig() error = %v", saveErr)
 	}
 
 	h := NewHandler(configPath)
@@ -154,7 +154,13 @@ func TestHandlePatchConfig_ParallelTurnsPreservesOtherFields(t *testing.T) {
 		rec = httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("max_parallel_turns=%s status = %d, want %d, body=%s", value, rec.Code, http.StatusBadRequest, rec.Body.String())
+			t.Fatalf(
+				"max_parallel_turns=%s status = %d, want %d, body=%s",
+				value,
+				rec.Code,
+				http.StatusBadRequest,
+				rec.Body.String(),
+			)
 		}
 		if !strings.Contains(rec.Body.String(), "max_parallel_turns") {
 			t.Fatalf("max_parallel_turns=%s body=%s, want validation error", value, rec.Body.String())
