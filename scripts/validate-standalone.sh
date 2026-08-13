@@ -79,7 +79,9 @@ for path in \
   done
 done
 
-if grep -R -n -F -- 'git push origin HEAD:main' .github scripts 2>/dev/null; then
+if grep -R -n -F \
+  --exclude='validate-standalone.sh' \
+  -- 'git push origin HEAD:main' .github scripts 2>/dev/null; then
   fail 'a workflow or script can push HEAD directly to main'
 fi
 
