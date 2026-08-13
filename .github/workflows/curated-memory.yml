@@ -6,6 +6,7 @@ on:
       - feat/curated-memory-recall
       - feat/contextual-memory-evolution
       - feat/personalization-completion
+      - feat/advanced-dashboard-settings
   workflow_dispatch: {}
 
 permissions:
@@ -78,6 +79,12 @@ jobs:
           go test -race ./pkg/evolution
           go test -race ./pkg/agent -run '^(Test.*Evolution.*)$'
           go test -race ./web/backend/api -run '^(Test.*(Memory|Evolution).*)$'
+
+      - name: Run session concurrency regression race tests
+        shell: bash
+        run: >-
+          go test -race ./pkg/agent
+          -run '^(TestParallelMessageProcessing_(DifferentSessionsProcessedConcurrently|SameSessionProcessedSequentially))$'
 
   static-analysis:
     name: Go static analysis

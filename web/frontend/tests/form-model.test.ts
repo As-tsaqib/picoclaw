@@ -11,6 +11,7 @@ import {
   MEMORY_NOTIFICATION_OPTIONS,
   MEMORY_RECALL_OPTIONS,
   MEMORY_RETRIEVAL_ENGINE_OPTIONS,
+  buildAdvancedAgentDefaultsPatch,
   buildEvolutionConfigPatch,
   buildFormFromConfig,
   buildMemoryConfigPatch,
@@ -59,11 +60,95 @@ test("legacy dashboard config receives active memory defaults", () => {
   assert.equal(form.memoryReviewMaxIterations, "3")
 })
 
+test("legacy parallel-turn values use the effective sequential default", () => {
+  assert.equal(buildFormFromConfig({}).maxParallelTurns, "1")
+  assert.equal(
+    buildFormFromConfig({ agents: { defaults: {} } }).maxParallelTurns,
+    "1",
+  )
+  assert.equal(
+    buildFormFromConfig({
+      agents: { defaults: { max_parallel_turns: 0 } },
+    }).maxParallelTurns,
+    "1",
+  )
+})
+
+test("parallel-turn values round trip at the exact nested config path", () => {
+  for (const value of ["1", "2", "3"]) {
+    const original = {
+      agents: {
+        defaults: {
+          workspace: "/srv/picoclaw",
+          max_parallel_turns: Number(value),
+          subturn: { max_concurrent: 7 },
+        },
+      },
+      memory: { enabled: true, future_memory_field: "keep" },
+      evolution: { enabled: false, future_evolution_field: "keep" },
+      tools: { mcp: { enabled: true, future_mcp_field: "keep" } },
+      launcher_extension: { enabled: true },
+      unrelated: { preserved: true },
+    }
+    const form = buildFormFromConfig(original)
+    const agentDefaultsPatch = buildAdvancedAgentDefaultsPatch(form)
+    const merged = mergePatch(original, {
+      agents: { defaults: agentDefaultsPatch },
+    })
+
+    assert.equal(form.maxParallelTurns, value)
+    assert.deepEqual(agentDefaultsPatch, {
+      max_parallel_turns: Number(value),
+    })
+    assert.equal(buildFormFromConfig(merged).maxParallelTurns, value)
+    assert.deepEqual(merged.agents as JsonObject, {
+      defaults: {
+        workspace: "/srv/picoclaw",
+        max_parallel_turns: Number(value),
+        subturn: { max_concurrent: 7 },
+      },
+    })
+    assert.deepEqual(merged.memory, original.memory)
+    assert.deepEqual(merged.evolution, original.evolution)
+    assert.deepEqual(merged.tools, original.tools)
+    assert.deepEqual(merged.launcher_extension, original.launcher_extension)
+    assert.deepEqual(merged.unrelated, original.unrelated)
+
+    const memoryOnlyMerged = mergePatch(merged, {
+      memory: { enabled: false },
+    })
+    assert.equal(
+      ((memoryOnlyMerged.agents as JsonObject).defaults as JsonObject)
+        .max_parallel_turns,
+      Number(value),
+    )
+  }
+})
+
+test("parallel-turn validation rejects empty, fractional, and sub-one values", () => {
+  for (const value of ["", "1.5", "0", "-1"]) {
+    assert.throws(
+      () =>
+        buildAdvancedAgentDefaultsPatch({
+          ...EMPTY_FORM,
+          maxParallelTurns: value,
+        }),
+      /must be an integer|must be >= 1/,
+    )
+  }
+})
+
 test("memory dashboard values round trip through its merge patch", () => {
   const original = {
     version: 3,
     gateway: { port: 19444, log_level: "debug" },
-    agents: { defaults: { workspace: "/srv/picoclaw", max_tokens: 8192 } },
+    agents: {
+      defaults: {
+        workspace: "/srv/picoclaw",
+        max_tokens: 8192,
+        max_parallel_turns: 3,
+      },
+    },
     channel_list: {
       telegram: { enabled: false, settings: { proxy: "socks5://localhost" } },
     },
@@ -71,6 +156,11 @@ test("memory dashboard values round trip through its merge patch", () => {
       enabled: false,
       workspace_char_limit: 24000,
       per_user_char_limit: 16000,
+      profile: {
+        enabled: false,
+        max_chars: 2400,
+        min_confidence: 0.8,
+      },
       write_approval: true,
       approval_mode: "all_writes",
       notifications: "verbose",
@@ -94,6 +184,7 @@ test("memory dashboard values round trip through its merge patch", () => {
         recency_half_life_days: 45,
         fuzzy_weight: 0.91,
         recent_fallback_count: 4,
+        user_share: 0.8,
       },
       lifecycle: {
         archived_retention_days: 730,
@@ -237,8 +328,12 @@ test("memory numeric and boolean controls serialize without coercion loss", () =
     memoryReviewMaxIterations: "3",
     memoryWorkspaceCharLimit: "34567",
     memoryPerUserCharLimit: "23456",
+    memoryProfileEnabled: false,
+    memoryProfileMaxChars: "2500",
+    memoryProfileMinConfidence: "0.75",
     memoryRecallMaxResults: "12",
     memoryRecallMaxChars: "12345",
+    memoryRecallMaxRecords: "3456",
     memoryCheckpointMaxCount: "456",
     memoryCheckpointMaxContextChars: "7654",
     memoryCheckpointCompletedRetentionDays: "365",
@@ -252,6 +347,7 @@ test("memory numeric and boolean controls serialize without coercion loss", () =
     memoryRetrievalRecencyHalfLifeDays: "120",
     memoryRetrievalFuzzyWeight: "1.2",
     memoryRetrievalRecentFallbackCount: "7",
+    memoryRetrievalUserShare: "0.85",
     memoryArchivedRetentionDays: "720",
     memoryStaleThresholdDays: "240",
     memoryAutoArchiveExpired: true,
@@ -259,6 +355,7 @@ test("memory numeric and boolean controls serialize without coercion loss", () =
 
   const patch = buildMemoryConfigPatch(form)
   const review = patch.background_review as JsonObject
+  const profile = patch.profile as JsonObject
   const recall = patch.recall as JsonObject
   const checkpoints = patch.checkpoints as JsonObject
   const retrieval = patch.retrieval as JsonObject
@@ -273,8 +370,12 @@ test("memory numeric and boolean controls serialize without coercion loss", () =
   assert.equal(review.interval, 23)
   assert.equal(review.timeout_seconds, 61)
   assert.equal(review.max_iterations, 3)
+  assert.equal(profile.enabled, false)
+  assert.equal(profile.max_chars, 2500)
+  assert.equal(profile.min_confidence, 0.75)
   assert.equal(recall.max_results, 12)
   assert.equal(recall.max_chars, 12345)
+  assert.equal(recall.max_records, 3456)
   assert.equal(checkpoints.enabled, true)
   assert.equal(checkpoints.max_count, 456)
   assert.equal(checkpoints.max_context_chars, 7654)
@@ -289,6 +390,7 @@ test("memory numeric and boolean controls serialize without coercion loss", () =
   assert.equal(retrieval.recency_half_life_days, 120)
   assert.equal(retrieval.fuzzy_weight, 1.2)
   assert.equal(retrieval.recent_fallback_count, 7)
+  assert.equal(retrieval.user_share, 0.85)
   assert.equal(lifecycle.archived_retention_days, 720)
   assert.equal(lifecycle.stale_threshold_days, 240)
   assert.equal(lifecycle.auto_archive_expired, true)

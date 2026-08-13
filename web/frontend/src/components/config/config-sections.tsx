@@ -62,6 +62,56 @@ interface MemoryRecallSectionProps {
   reviewModels: MemoryReviewModelOption[]
 }
 
+interface RuntimeConcurrencySectionProps {
+  form: CoreConfigForm
+  onFieldChange: UpdateCoreField
+}
+
+export function RuntimeConcurrencySection({
+  form,
+  onFieldChange,
+}: RuntimeConcurrencySectionProps) {
+  const { t } = useTranslation()
+  const maxParallelTurns = Number(form.maxParallelTurns)
+
+  return (
+    <ConfigSectionCard
+      title={t("pages.config.sections.runtime_concurrency")}
+      description={t("pages.config.max_parallel_turns_restart_hint")}
+    >
+      <Field
+        label={t("pages.config.max_parallel_turns")}
+        hint={t("pages.config.max_parallel_turns_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={1}
+          step={1}
+          inputMode="numeric"
+          aria-label={t("pages.config.max_parallel_turns")}
+          value={form.maxParallelTurns}
+          onChange={(event) =>
+            onFieldChange("maxParallelTurns", event.target.value)
+          }
+        />
+      </Field>
+
+      {Number.isFinite(maxParallelTurns) && maxParallelTurns > 1 && (
+        <div
+          className="my-3 flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm"
+          role="note"
+        >
+          <IconAlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-amber-950 dark:text-amber-100">
+            {t("pages.config.max_parallel_turns_warning")}
+          </p>
+        </div>
+      )}
+    </ConfigSectionCard>
+  )
+}
+
 const FOLLOW_MAIN_VALUE = "__follow_main__"
 
 export function MemoryRecallSection({
@@ -248,8 +298,8 @@ export function MemoryRecallSection({
       </Field>
 
       <Field
-        label="Memory approval mode"
-        hint="Stage background-only changes or require approval for every model-initiated write. Legacy write_approval maps to background_only."
+        label={t("pages.config.memory_approval_mode")}
+        hint={t("pages.config.memory_approval_mode_hint")}
         layout="setting-row"
       >
         <Select
@@ -273,7 +323,7 @@ export function MemoryRecallSection({
 
       <SwitchCardField
         label={t("pages.config.memory_write_approval")}
-        hint="Compatibility control: enabled maps to background_only unless all_writes is already selected."
+        hint={t("pages.config.memory_write_approval_hint")}
         layout="setting-row"
         checked={form.memoryApprovalMode !== "off"}
         onCheckedChange={(checked) => {
@@ -343,8 +393,51 @@ export function MemoryRecallSection({
       </Field>
 
       <SwitchCardField
-        label="Query-aware memory retrieval"
-        hint="Select only pinned and query-relevant active entries instead of injecting the whole store."
+        label={t("pages.config.memory_profile_enabled")}
+        hint={t("pages.config.memory_profile_enabled_hint")}
+        layout="setting-row"
+        checked={form.memoryProfileEnabled}
+        onCheckedChange={(checked) =>
+          onFieldChange("memoryProfileEnabled", checked)
+        }
+      />
+
+      <Field
+        label={t("pages.config.memory_profile_max_chars")}
+        hint={t("pages.config.memory_profile_max_chars_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={1}
+          max={4000}
+          value={form.memoryProfileMaxChars}
+          onChange={(event) =>
+            onFieldChange("memoryProfileMaxChars", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.memory_profile_min_confidence")}
+        hint={t("pages.config.memory_profile_min_confidence_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          max={1}
+          step="0.05"
+          value={form.memoryProfileMinConfidence}
+          onChange={(event) =>
+            onFieldChange("memoryProfileMinConfidence", event.target.value)
+          }
+        />
+      </Field>
+
+      <SwitchCardField
+        label={t("pages.config.memory_retrieval_enabled")}
+        hint={t("pages.config.memory_retrieval_enabled_hint")}
         layout="setting-row"
         checked={form.memoryRetrievalEnabled}
         onCheckedChange={(checked) =>
@@ -353,8 +446,8 @@ export function MemoryRecallSection({
       />
 
       <Field
-        label="Retrieval engine"
-        hint="Lightweight local lexical scoring; embeddings are not required."
+        label={t("pages.config.memory_retrieval_engine")}
+        hint={t("pages.config.memory_retrieval_engine_hint")}
         layout="setting-row"
       >
         <Select
@@ -376,7 +469,10 @@ export function MemoryRecallSection({
         </Select>
       </Field>
 
-      <Field label="Maximum workspace memory results" layout="setting-row">
+      <Field
+        label={t("pages.config.memory_retrieval_max_workspace_results")}
+        layout="setting-row"
+      >
         <Input
           type="number"
           min={1}
@@ -391,7 +487,10 @@ export function MemoryRecallSection({
         />
       </Field>
 
-      <Field label="Maximum current-user memory results" layout="setting-row">
+      <Field
+        label={t("pages.config.memory_retrieval_max_user_results")}
+        layout="setting-row"
+      >
         <Input
           type="number"
           min={1}
@@ -403,7 +502,10 @@ export function MemoryRecallSection({
         />
       </Field>
 
-      <Field label="Maximum retrieved memory characters" layout="setting-row">
+      <Field
+        label={t("pages.config.memory_retrieval_max_total_chars")}
+        layout="setting-row"
+      >
         <Input
           type="number"
           min={1}
@@ -415,7 +517,10 @@ export function MemoryRecallSection({
         />
       </Field>
 
-      <Field label="Pinned memory character budget" layout="setting-row">
+      <Field
+        label={t("pages.config.memory_retrieval_pinned_char_budget")}
+        layout="setting-row"
+      >
         <Input
           type="number"
           min={1}
@@ -427,7 +532,10 @@ export function MemoryRecallSection({
         />
       </Field>
 
-      <Field label="Minimum relevance score" layout="setting-row">
+      <Field
+        label={t("pages.config.memory_retrieval_minimum_score")}
+        layout="setting-row"
+      >
         <Input
           type="number"
           min={0}
@@ -440,7 +548,10 @@ export function MemoryRecallSection({
         />
       </Field>
 
-      <Field label="Recency weight" layout="setting-row">
+      <Field
+        label={t("pages.config.memory_retrieval_recency_weight")}
+        layout="setting-row"
+      >
         <Input
           type="number"
           min={0}
@@ -453,7 +564,10 @@ export function MemoryRecallSection({
         />
       </Field>
 
-      <Field label="Recency half-life (days)" layout="setting-row">
+      <Field
+        label={t("pages.config.memory_retrieval_recency_half_life")}
+        layout="setting-row"
+      >
         <Input
           type="number"
           min={1}
@@ -468,7 +582,10 @@ export function MemoryRecallSection({
         />
       </Field>
 
-      <Field label="Fuzzy/trigram weight" layout="setting-row">
+      <Field
+        label={t("pages.config.memory_retrieval_fuzzy_weight")}
+        layout="setting-row"
+      >
         <Input
           type="number"
           min={0}
@@ -481,7 +598,10 @@ export function MemoryRecallSection({
         />
       </Field>
 
-      <Field label="Recent fallback count" layout="setting-row">
+      <Field
+        label={t("pages.config.memory_retrieval_recent_fallback_count")}
+        layout="setting-row"
+      >
         <Input
           type="number"
           min={0}
@@ -496,7 +616,27 @@ export function MemoryRecallSection({
         />
       </Field>
 
-      <Field label="Archived memory retention (days)" layout="setting-row">
+      <Field
+        label={t("pages.config.memory_retrieval_user_share")}
+        hint={t("pages.config.memory_retrieval_user_share_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0.5}
+          max={0.9}
+          step="0.05"
+          value={form.memoryRetrievalUserShare}
+          onChange={(event) =>
+            onFieldChange("memoryRetrievalUserShare", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.memory_archived_retention_days")}
+        layout="setting-row"
+      >
         <Input
           type="number"
           min={1}
@@ -508,7 +648,10 @@ export function MemoryRecallSection({
         />
       </Field>
 
-      <Field label="Stale memory threshold (days)" layout="setting-row">
+      <Field
+        label={t("pages.config.memory_stale_threshold_days")}
+        layout="setting-row"
+      >
         <Input
           type="number"
           min={1}
@@ -521,8 +664,8 @@ export function MemoryRecallSection({
       </Field>
 
       <SwitchCardField
-        label="Automatically archive expired entries"
-        hint="Expired entries are always excluded from prompts; this optionally archives them during maintenance."
+        label={t("pages.config.memory_auto_archive_expired")}
+        hint={t("pages.config.memory_auto_archive_expired_hint")}
         layout="setting-row"
         checked={form.memoryAutoArchiveExpired}
         onCheckedChange={(checked) =>
@@ -589,6 +732,22 @@ export function MemoryRecallSection({
           value={form.memoryRecallMaxChars}
           onChange={(event) =>
             onFieldChange("memoryRecallMaxChars", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.memory_recall_max_records")}
+        hint={t("pages.config.memory_recall_max_records_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={1}
+          max={20000}
+          value={form.memoryRecallMaxRecords}
+          onChange={(event) =>
+            onFieldChange("memoryRecallMaxRecords", event.target.value)
           }
         />
       </Field>
@@ -1019,17 +1178,6 @@ export function EvolutionSection({
         }
       />
 
-      {form.evolutionEnabled && (
-        <div className="my-3 flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
-          <IconAlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          <p className="text-amber-950 dark:text-amber-100">
-            Pattern review and draft generation can consume additional model
-            tokens/API calls. Evolution remains isolated from private user
-            memory.
-          </p>
-        </div>
-      )}
-
       <Field
         label={t("pages.config.evolution_mode")}
         hint={t("pages.config.evolution_mode_hint")}
@@ -1059,48 +1207,6 @@ export function EvolutionSection({
       </Field>
 
       <Field
-        label="Apply policy"
-        hint="Approval-required is the safe default. Automatic may apply a locally reviewed draft without an administrator decision."
-        layout="setting-row"
-      >
-        <Select
-          value={form.evolutionApplyPolicy}
-          onValueChange={(value) =>
-            onFieldChange("evolutionApplyPolicy", value as EvolutionApplyPolicy)
-          }
-        >
-          <SelectTrigger aria-label="Evolution apply policy">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="approval_required">approval_required</SelectItem>
-            <SelectItem value="automatic">automatic</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
-
-      {form.evolutionMode === "apply" &&
-        form.evolutionApplyPolicy === "automatic" && (
-          <div className="my-3 flex gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm">
-            <IconAlertTriangle className="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400" />
-            <p className="text-red-950 dark:text-red-100">
-              Automatic apply can change reusable skills without a separate
-              approval. Prefer approval_required and review the diff first.
-            </p>
-          </div>
-        )}
-
-      <SwitchCardField
-        label="Private-data scrubbing"
-        hint="Required while evolution is enabled. Personal identifiers and credentials are removed before procedural evidence is stored."
-        layout="setting-row"
-        checked={form.evolutionPrivateDataScrubbing}
-        onCheckedChange={(checked) =>
-          onFieldChange("evolutionPrivateDataScrubbing", checked)
-        }
-      />
-
-      <Field
         label={t("pages.config.evolution_state_dir")}
         hint={t("pages.config.evolution_state_dir_hint")}
         layout="setting-row"
@@ -1124,54 +1230,6 @@ export function EvolutionSection({
           value={form.evolutionMinTaskCount}
           onChange={(e) =>
             onFieldChange("evolutionMinTaskCount", e.target.value)
-          }
-        />
-      </Field>
-
-      <Field label="Draft timeout (seconds)" layout="setting-row">
-        <Input
-          type="number"
-          min={1}
-          max={300}
-          value={form.evolutionDraftTimeoutSeconds}
-          onChange={(event) =>
-            onFieldChange("evolutionDraftTimeoutSeconds", event.target.value)
-          }
-        />
-      </Field>
-
-      <Field label="Maximum evidence records" layout="setting-row">
-        <Input
-          type="number"
-          min={2}
-          max={500}
-          value={form.evolutionMaxEvidenceRecords}
-          onChange={(event) =>
-            onFieldChange("evolutionMaxEvidenceRecords", event.target.value)
-          }
-        />
-      </Field>
-
-      <Field label="Maximum draft characters" layout="setting-row">
-        <Input
-          type="number"
-          min={1}
-          max={50000}
-          value={form.evolutionMaxDraftChars}
-          onChange={(event) =>
-            onFieldChange("evolutionMaxDraftChars", event.target.value)
-          }
-        />
-      </Field>
-
-      <Field label="Rollback version retention" layout="setting-row">
-        <Input
-          type="number"
-          min={1}
-          max={100}
-          value={form.evolutionRollbackRetention}
-          onChange={(event) =>
-            onFieldChange("evolutionRollbackRetention", event.target.value)
           }
         />
       </Field>
@@ -1242,6 +1300,136 @@ export function EvolutionSection({
           />
         </Field>
       )}
+    </ConfigSectionCard>
+  )
+}
+
+export function EvolutionSafetySection({
+  form,
+  onFieldChange,
+}: EvolutionSectionProps) {
+  const { t } = useTranslation()
+
+  return (
+    <ConfigSectionCard
+      title={t("pages.config.sections.evolution_safety")}
+      description={t("pages.config.evolution_safety_section_hint")}
+    >
+      {form.evolutionEnabled && (
+        <div
+          className="my-3 flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm"
+          role="note"
+        >
+          <IconAlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-amber-950 dark:text-amber-100">
+            {t("pages.config.evolution_cost_warning")}
+          </p>
+        </div>
+      )}
+
+      <Field
+        label={t("pages.config.evolution_apply_policy")}
+        hint={t("pages.config.evolution_apply_policy_hint")}
+        layout="setting-row"
+      >
+        <Select
+          value={form.evolutionApplyPolicy}
+          onValueChange={(value) =>
+            onFieldChange("evolutionApplyPolicy", value as EvolutionApplyPolicy)
+          }
+        >
+          <SelectTrigger aria-label={t("pages.config.evolution_apply_policy")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="approval_required">approval_required</SelectItem>
+            <SelectItem value="automatic">automatic</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+
+      {form.evolutionMode === "apply" &&
+        form.evolutionApplyPolicy === "automatic" && (
+          <div
+            className="my-3 flex gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm"
+            role="alert"
+          >
+            <IconAlertTriangle className="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400" />
+            <p className="text-red-950 dark:text-red-100">
+              {t("pages.config.evolution_automatic_apply_warning")}
+            </p>
+          </div>
+        )}
+
+      <SwitchCardField
+        label={t("pages.config.evolution_private_data_scrubbing")}
+        hint={t("pages.config.evolution_private_data_scrubbing_hint")}
+        layout="setting-row"
+        checked={form.evolutionPrivateDataScrubbing}
+        onCheckedChange={(checked) =>
+          onFieldChange("evolutionPrivateDataScrubbing", checked)
+        }
+      />
+
+      <Field
+        label={t("pages.config.evolution_draft_timeout")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={1}
+          max={300}
+          value={form.evolutionDraftTimeoutSeconds}
+          onChange={(event) =>
+            onFieldChange("evolutionDraftTimeoutSeconds", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.evolution_max_evidence_records")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={2}
+          max={500}
+          value={form.evolutionMaxEvidenceRecords}
+          onChange={(event) =>
+            onFieldChange("evolutionMaxEvidenceRecords", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.evolution_max_draft_chars")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={1}
+          max={50000}
+          value={form.evolutionMaxDraftChars}
+          onChange={(event) =>
+            onFieldChange("evolutionMaxDraftChars", event.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.evolution_rollback_retention")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={1}
+          max={100}
+          value={form.evolutionRollbackRetention}
+          onChange={(event) =>
+            onFieldChange("evolutionRollbackRetention", event.target.value)
+          }
+        />
+      </Field>
     </ConfigSectionCard>
   )
 }

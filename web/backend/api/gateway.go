@@ -414,6 +414,11 @@ func computeConfigSignature(cfg *config.Config) string {
 	if defaultModel != "" {
 		parts = append(parts, "model:"+defaultModel)
 	}
+	maxParallelTurns := cfg.Agents.Defaults.MaxParallelTurns
+	if maxParallelTurns < 1 {
+		maxParallelTurns = 1
+	}
+	parts = append(parts, "max_parallel_turns:"+strconv.Itoa(maxParallelTurns))
 	modelStreamingSignatures := computeModelStreamingSignatures(cfg)
 	if len(modelStreamingSignatures) > 0 {
 		parts = append(parts, "model_streaming:"+strings.Join(modelStreamingSignatures, ","))

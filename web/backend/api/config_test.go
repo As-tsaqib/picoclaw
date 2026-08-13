@@ -102,6 +102,72 @@ func TestHandlePatchConfig_RejectsInvalidTurnProfile(t *testing.T) {
 	}
 }
 
+func TestHandlePatchConfig_ParallelTurnsPreservesOtherFields(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	cfg.Memory.Enabled = false
+	cfg.Evolution.Enabled = true
+	cfg.Evolution.Mode = "draft"
+	cfg.Tools.MCP.Enabled = true
+	cfg.Agents.Defaults.SubTurn.MaxConcurrent = 7
+	if saveErr := config.SaveConfig(configPath, cfg); saveErr != nil {
+		t.Fatalf("SaveConfig() error = %v", saveErr)
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(`{
+		"agents": { "defaults": { "max_parallel_turns": 3 } }
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	updated, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig(updated) error = %v", err)
+	}
+	if got := updated.Agents.Defaults.MaxParallelTurns; got != 3 {
+		t.Fatalf("max_parallel_turns = %d, want 3", got)
+	}
+	if updated.Memory.Enabled != cfg.Memory.Enabled ||
+		updated.Evolution.Mode != cfg.Evolution.Mode ||
+		updated.Tools.MCP.Enabled != cfg.Tools.MCP.Enabled ||
+		updated.Agents.Defaults.SubTurn.MaxConcurrent != cfg.Agents.Defaults.SubTurn.MaxConcurrent {
+		t.Fatal("parallel-turn patch changed unrelated memory, evolution, MCP, or subturn config")
+	}
+
+	for _, value := range []string{"0", "-1", "1.5", `"two"`, "null"} {
+		body := `{"agents":{"defaults":{"max_parallel_turns":` + value + `}}}`
+		req = httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec = httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf(
+				"max_parallel_turns=%s status = %d, want %d, body=%s",
+				value,
+				rec.Code,
+				http.StatusBadRequest,
+				rec.Body.String(),
+			)
+		}
+		if !strings.Contains(rec.Body.String(), "max_parallel_turns") {
+			t.Fatalf("max_parallel_turns=%s body=%s, want validation error", value, rec.Body.String())
+		}
+	}
+}
+
 func assertGatewayLogLevelApplied(t *testing.T, method, body string, want logger.LogLevel) {
 	t.Helper()
 

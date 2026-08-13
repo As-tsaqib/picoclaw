@@ -1348,6 +1348,24 @@ func TestConfigSignatureIncludesModelStreamingForDefaultModelRef(t *testing.T) {
 	}
 }
 
+func TestConfigSignatureUsesEffectiveMaxParallelTurns(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.MaxParallelTurns = 0
+	legacySequential := computeConfigSignature(cfg)
+
+	cfg.Agents.Defaults.MaxParallelTurns = 1
+	explicitSequential := computeConfigSignature(cfg)
+	if legacySequential != explicitSequential {
+		t.Fatal("max_parallel_turns 0 and 1 should have the same effective config signature")
+	}
+
+	cfg.Agents.Defaults.MaxParallelTurns = 3
+	parallel := computeConfigSignature(cfg)
+	if explicitSequential == parallel {
+		t.Fatal("config signature should change when max_parallel_turns changes from 1 to 3")
+	}
+}
+
 func TestConfigSignatureIncludesModelStreamingForLoadBalancedAliasEntries(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.ModelList = []*config.ModelConfig{
