@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/evolution"
-	"github.com/sipeed/picoclaw/pkg/providers"
-	"github.com/sipeed/picoclaw/pkg/skills"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/evolution"
+	"github.com/As-tsaqib/picoclaw/pkg/providers"
+	"github.com/As-tsaqib/picoclaw/pkg/skills"
 )
 
 type stubDraftGenerator struct {

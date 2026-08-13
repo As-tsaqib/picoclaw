@@ -4,9 +4,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/constants"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/memory"
+	"github.com/As-tsaqib/picoclaw/pkg/constants"
+	"github.com/As-tsaqib/picoclaw/pkg/logger"
+	"github.com/As-tsaqib/picoclaw/pkg/memory"
 )
 
 type deferredMemoryDelivery struct {

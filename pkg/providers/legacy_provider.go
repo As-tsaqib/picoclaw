@@ -8,7 +8,7 @@ package providers
 import (
 	"fmt"
 
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
 )
 
 // CreateProvider creates a provider based on the configuration.

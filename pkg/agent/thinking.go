@@ -3,9 +3,9 @@ package agent
 import (
 	"strings"
 
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/logger"
+	"github.com/As-tsaqib/picoclaw/pkg/providers"
 )
 
 // ThinkingLevel controls how the provider sends thinking parameters.

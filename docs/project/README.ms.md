@@ -9,13 +9,8 @@
     <img src="https://img.shields.io/badge/Arch-x86__64%2C%20ARM64%2C%20MIPS%2C%20RISC--V%2C%20LoongArch-blue" alt="Hardware">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
     <br>
-    <a href="https://picoclaw.io"><img src="https://img.shields.io/badge/Website-picoclaw.io-blue?style=flat&logo=google-chrome&logoColor=white" alt="Website"></a>
-    <a href="https://docs.picoclaw.io/"><img src="https://img.shields.io/badge/Docs-Official-007acc?style=flat&logo=read-the-docs&logoColor=white" alt="Docs"></a>
-    <a href="https://deepwiki.com/sipeed/picoclaw"><img src="https://img.shields.io/badge/Wiki-DeepWiki-FFA500?style=flat&logo=wikipedia&logoColor=white" alt="Wiki"></a>
-    <br>
-    <a href="https://x.com/SipeedIO"><img src="https://img.shields.io/badge/X_(Twitter)-SipeedIO-black?style=flat&logo=x&logoColor=white" alt="Twitter"></a>
-    <a href="../../assets/wechat.png"><img src="https://img.shields.io/badge/WeChat-Group-41d56b?style=flat&logo=wechat&logoColor=white"></a>
-    <a href="https://discord.gg/V4sAZ9XWpN"><img src="https://img.shields.io/badge/Discord-Community-4c60eb?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
+    <a href="https://github.com/As-tsaqib/picoclaw/releases"><img src="https://img.shields.io/badge/Releases-GitHub-181717?style=flat&logo=github&logoColor=white" alt="Releases"></a>
+    <a href="../README.md"><img src="https://img.shields.io/badge/Docs-Repository-007acc?style=flat&logo=read-the-docs&logoColor=white" alt="Documentation"></a>
   </p>
 
 [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Português](README.pt-br.md) | [Tiếng Việt](README.vi.md) | [Français](README.fr.md) | [Italiano](README.it.md) | [Bahasa Indonesia](README.id.md) | **Malay** | [English](../../README.md)
@@ -24,7 +19,7 @@
 
 ---
 
-> **PicoClaw** adalah projek sumber terbuka bebas yang dilancarkan oleh [Sipeed](https://sipeed.com), ditulis sepenuhnya dalam **Go** dari awal — bukan cabang OpenClaw, NanoBot, atau projek lain.
+> **Notis pengedaran:** repositori ini ialah terbitan [Sipeed PicoClaw](https://github.com/sipeed/picoclaw) yang diselenggara secara bebas. Lesen MIT, atribusi dan sejarah Git dikekalkan, tetapi identiti modul, versi, pengemas kini, artifak dan proses keluaran adalah miliknya sendiri. Tiada penyegerakan upstream automatik.
 
 **PicoClaw** adalah pembantu AI peribadi ultra-ringan yang terinspirasi oleh [NanoBot](https://github.com/HKUDS/nanobot). Ia dibina semula dari awal dalam **Go** melalui proses "self-bootstrapping" — AI Agent itu sendiri yang memacu migrasi seni bina dan pengoptimuman kod.
 
@@ -49,12 +44,16 @@
 > **Notis Keselamatan**
 >
 > * **TIADA KRIPTO:** PicoClaw **tidak** mengeluarkan sebarang token atau mata wang kripto rasmi. Semua tuntutan di `pump.fun` atau platform dagangan lain adalah **penipuan**.
-> * **DOMAIN RASMI:** Satu-satunya laman web rasmi ialah **[picoclaw.io](https://picoclaw.io)**, dan laman web syarikat ialah **[sipeed.com](https://sipeed.com)**
+> * **SUMBER RASMI PENGEDARAN INI:** gunakan hanya [`As-tsaqib/picoclaw`](https://github.com/As-tsaqib/picoclaw), [GitHub Releases](https://github.com/As-tsaqib/picoclaw/releases), dan dokumentasi dalam repositori ini. `picoclaw.io` serta saluran Sipeed adalah untuk projek asal.
 > * **BERHATI-HATI:** Banyak domain `.ai/.org/.com/.net/...` telah didaftarkan oleh pihak ketiga. Jangan percayai mereka.
 > * **NOTA:** PicoClaw dalam pembangunan pesat awal. Mungkin terdapat isu keselamatan yang belum diselesaikan. Jangan deploy ke pengeluaran sebelum v1.0.
 
 
 ## 📢 Berita
+
+> Entri di bawah mendahului siri `v1.0.0` pengedaran ini dan dikekalkan sebagai
+> sejarah yang diwarisi daripada projek asal. Keluaran yang diselenggara oleh
+> repositori ini bermula pada `v1.0.0` dan disenaraikan pada halaman Releases fork.
 
 2026-05-11 🛒 **LicheeRV-Claw tersedia di AliExpress!** Anda kini boleh membeli LicheeRV-Claw di [AliExpress](https://www.aliexpress.com/item/1005006519668532.html), menjadikannya lebih mudah untuk mencuba PicoClaw pada perkakasan RISC-V yang kompak.
 
@@ -64,7 +63,7 @@
   </a>
 </p>
 
-2026-03-31 📱 **Sokongan Android!** PicoClaw sekarang berjalan di Android! Muat turun APK di [picoclaw.io](https://picoclaw.io/download)
+2026-03-31 📱 **Pencapaian Android upstream:** projek asal mengumumkan Android. Pengedaran ini menerbitkan bundle pustaka natif dan binari serasi Termux, bukan APK.
 
 2026-03-25 🚀 **v0.2.4 Dikeluarkan!** Penstrukturan semula seni bina Agent (SubTurn, Hooks, Steering, EventBus), integrasi WeChat/WeCom, penguatan keselamatan (.security.yml, penapisan data sensitif), penyedia baharu (AWS Bedrock, Azure, Xiaomi MiMo), dan 35 pembetulan pepijat. PicoClaw mencapai **26K Stars**!
 
@@ -163,13 +162,9 @@ PicoClaw boleh digunakan pada hampir mana-mana peranti Linux!
 
 ## 📦 Pemasangan
 
-### Muat turun dari picoclaw.io (Disyorkan)
+### Muat turun binari pra-kompil (Disyorkan)
 
-Lawati **[picoclaw.io](https://picoclaw.io)** — laman web rasmi mengesan platform anda secara automatik dan menyediakan muat turun satu klik.
-
-### Muat turun binari pra-kompil
-
-Muat turun binari untuk platform anda dari halaman [GitHub Releases](https://github.com/sipeed/picoclaw/releases).
+Muat turun binari untuk platform anda daripada [GitHub Releases](https://github.com/As-tsaqib/picoclaw/releases). Arkib dan checksum di sana ialah artifak rasmi pengedaran ini.
 
 ### Bina dari sumber (untuk pembangunan)
 
@@ -179,7 +174,7 @@ Prasyarat:
 - Node.js 22+ dan pnpm 10.33.0+ untuk binaan Web UI / launcher
 
 ```bash
-git clone https://github.com/sipeed/picoclaw.git
+git clone https://github.com/As-tsaqib/picoclaw.git
 cd picoclaw
 make deps
 
@@ -212,7 +207,7 @@ Pelancar WebUI menyediakan antara muka berasaskan pelayar untuk konfigurasi dan 
 
 **Pilihan 1: Klik dua kali (Desktop)**
 
-Selepas memuat turun dari [picoclaw.io](https://picoclaw.io), klik dua kali `picoclaw-launcher` (atau `picoclaw-launcher.exe` pada Windows). Pelayar anda akan dibuka secara automatik di `http://localhost:18800`.
+Selepas memuat turun launcher daripada [GitHub Releases](https://github.com/As-tsaqib/picoclaw/releases), klik dua kali `picoclaw-launcher` (atau `picoclaw-launcher.exe` pada Windows). Pelayar anda akan dibuka secara automatik di `http://localhost:18800`.
 
 **Pilihan 2: Baris arahan**
 
@@ -233,14 +228,14 @@ picoclaw-launcher
 
 **Memulakan:** Buka WebUI, kemudian: **1)** Konfigurasikan Penyedia (tambah kunci API LLM) -> **2)** Konfigurasikan Saluran (cth. Telegram) -> **3)** Mulakan Gateway -> **4)** Sembang!
 
-Untuk dokumentasi WebUI terperinci, lihat [docs.picoclaw.io](https://docs.picoclaw.io).
+Untuk dokumentasi WebUI terperinci, lihat [dokumentasi repositori](../README.md).
 
 <details>
 <summary><b>Docker (alternatif)</b></summary>
 
 ```bash
 # 1. Klon repo ini
-git clone https://github.com/sipeed/picoclaw.git
+git clone https://github.com/As-tsaqib/picoclaw.git
 cd picoclaw
 
 # 2. Jalankan pertama kali — jana docker/data/config.json secara automatik kemudian keluar
@@ -298,7 +293,7 @@ Selepas langkah sekali ini, `picoclaw-launcher` akan dibuka secara normal pada p
 
 Berikan telefon lama anda kehidupan baru! Jadikannya Pembantu AI pintar dengan PicoClaw.
 
-**Pilihan 1: Pasang APK**
+**Bundle pustaka natif Android**
 
 Pratonton:
 
@@ -311,9 +306,9 @@ Pratonton:
   </tr>
 </table>
 
-Muat turun APK dari [picoclaw.io](https://picoclaw.io/download/) dan pasang secara langsung. Tiada Termux diperlukan!
+Keluaran stabil menyertakan `picoclaw-android-universal.zip`, bundle pustaka ARM64 untuk integrator Android. Ia **bukan APK yang boleh dipasang**. Pengedaran ini belum menerbitkan APK.
 
-**Pilihan 2: Termux**
+**Pemasangan Termux**
 
 <details>
 <summary><b>Pelancar Terminal (untuk persekitaran terhad sumber)</b></summary>
@@ -323,7 +318,7 @@ Muat turun APK dari [picoclaw.io](https://picoclaw.io/download/) dan pasang seca
 
 ```bash
 # Muat turun keluaran terkini
-wget https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
+wget https://github.com/As-tsaqib/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
 tar xzf picoclaw_Linux_arm64.tar.gz
 pkg install proot
 termux-chroot ./picoclaw onboard   # chroot menyediakan susun atur sistem fail Linux standard
@@ -600,13 +595,6 @@ Untuk panduan terperinci melebihi README ini:
 
 PR dialu-alukan! Kod sumber sengaja dibuat kecil dan mudah dibaca.
 
-Lihat [Peta Jalan Komuniti](https://github.com/sipeed/picoclaw/issues/988) dan [CONTRIBUTING.md](../../CONTRIBUTING.md) untuk panduan.
+Lihat [ROADMAP.md](../../ROADMAP.md), [Issues pengedaran ini](https://github.com/As-tsaqib/picoclaw/issues), dan [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-Kumpulan pembangun sedang dibina, sertai selepas PR pertama anda digabungkan!
-
-Kumpulan Pengguna:
-
-Discord: <https://discord.gg/V4sAZ9XWpN>
-
-WeChat:
-<img src="../../assets/wechat.png" alt="Kod QR kumpulan WeChat" width="512">
+Pautan komuniti projek asal mungkin kekal dalam dokumen sejarah; pautan itu bukan saluran sokongan yang dikendalikan oleh pengedaran ini.

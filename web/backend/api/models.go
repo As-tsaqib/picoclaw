@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/audio/asr"
-	"github.com/sipeed/picoclaw/pkg/auth"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/As-tsaqib/picoclaw/pkg/audio/asr"
+	"github.com/As-tsaqib/picoclaw/pkg/auth"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/logger"
+	"github.com/As-tsaqib/picoclaw/pkg/providers"
 )
 
 // registerModelRoutes binds model list management endpoints to the ServeMux.

@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/bus"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
 )
 
 const testMarkdownTable = "**Metrics**\n\n" +

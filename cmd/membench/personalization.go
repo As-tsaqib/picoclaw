@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sipeed/picoclaw/pkg/memory"
+	"github.com/As-tsaqib/picoclaw/pkg/memory"
 )
 
 type personalizationBenchReport struct {

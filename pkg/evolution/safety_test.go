@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/evolution"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/evolution"
 )
 
 func TestScrubEvolutionTextRemovesSecretsPIIInjectionPathsAndControls(t *testing.T) {

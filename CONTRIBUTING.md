@@ -47,9 +47,9 @@ For documentation contributions, prefer the layout and naming conventions in [`d
    git clone https://github.com/<your-username>/picoclaw.git
    cd picoclaw
    ```
-3. Add the upstream remote:
+3. Add this independently maintained repository as the canonical contributor remote:
    ```bash
-   git remote add upstream https://github.com/sipeed/picoclaw.git
+   git remote add canonical https://github.com/As-tsaqib/picoclaw.git
    ```
 
 ---
@@ -101,7 +101,7 @@ Always branch off `main` and target `main` in your PR. Never push directly to `m
 
 ```bash
 git checkout main
-git pull upstream main
+git pull canonical main
 git checkout -b your-feature-branch
 ```
 
@@ -118,11 +118,11 @@ Use descriptive branch names, e.g. `fix/telegram-timeout`, `feat/ollama-provider
 
 ### Keeping Up to Date
 
-Rebase your branch onto upstream `main` before opening a PR:
+Rebase your branch onto the canonical `main` before opening a PR:
 
 ```bash
-git fetch upstream
-git rebase upstream/main
+git fetch canonical
+git rebase canonical/main
 ```
 
 ---

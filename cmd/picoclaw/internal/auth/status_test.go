@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgauth "github.com/sipeed/picoclaw/pkg/auth"
-	"github.com/sipeed/picoclaw/pkg/config"
+	pkgauth "github.com/As-tsaqib/picoclaw/pkg/auth"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
 )
 
 func captureAuthStdout(t *testing.T, fn func()) string {

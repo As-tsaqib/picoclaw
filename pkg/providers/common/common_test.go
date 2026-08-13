@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
+	"github.com/As-tsaqib/picoclaw/pkg/providers/protocoltypes"
 )
 
 // --- NewHTTPClient tests ---

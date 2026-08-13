@@ -4,34 +4,49 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag name (required, e.g. v0.2.0)"
+        description: "Stable tag name (required, e.g. v1.0.0)"
         required: true
         type: string
       commit:
-        description: "Target commit SHA (leave empty for latest main)"
+        description: "Full 40-character target commit SHA (leave empty for current main)"
         required: false
         type: string
         default: ""
+
+permissions: {}
+
+concurrency:
+  group: create-stable-tag
+  cancel-in-progress: false
 
 jobs:
   create-tag:
     name: Create Git Tag
     runs-on: ubuntu-latest
+    if: github.repository == 'As-tsaqib/picoclaw'
     permissions:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: main
+          persist-credentials: false
 
-      - name: Validate commit exists
-        if: ${{ inputs.commit != '' }}
+      - name: Validate stable tag
         shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          TARGET_COMMIT: ${{ inputs.commit }}
         run: |
-          if ! git cat-file -t "${{ inputs.commit }}" &>/dev/null; then
-            echo "::error::Commit '${{ inputs.commit }}' does not exist."
+          set -Eeuo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Tag is not a stable semantic version."
+            exit 1
+          fi
+          if [[ -n "$TARGET_COMMIT" && ! "$TARGET_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::Commit must be an empty value or a full 40-character SHA."
             exit 1
           fi
 
@@ -39,22 +54,52 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          if gh api "repos/${{ github.repository }}/git/ref/tags/${{ inputs.tag }}" --silent 2>/dev/null; then
-            echo "::error::Tag '${{ inputs.tag }}' already exists."
+          set -Eeuo pipefail
+          if gh api "repos/$REPOSITORY/git/ref/tags/$RELEASE_TAG" --silent 2>/dev/null; then
+            echo "::error::The requested tag already exists."
             exit 1
           fi
 
-      - name: Create and push tag
+      - name: Create annotated tag
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          TARGET_COMMIT: ${{ inputs.commit }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          TARGET="${{ inputs.commit || 'HEAD' }}"
-          COMMIT_SHA=$(git rev-parse "$TARGET")
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ inputs.tag }}" "$COMMIT_SHA" -m "Release ${{ inputs.tag }}"
-          git push origin "${{ inputs.tag }}"
-          echo "### Tag Created" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Tag:** \`${{ inputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Commit:** \`${COMMIT_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Branch:** \`$(git branch -r --contains "$COMMIT_SHA" | head -1 | xargs)\`" >> "$GITHUB_STEP_SUMMARY"
+          set -Eeuo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          target_ref="origin/main"
+          if [[ -n "$TARGET_COMMIT" ]]; then
+            target_ref="$TARGET_COMMIT"
+          fi
+          if ! git cat-file -e "${target_ref}^{commit}" 2>/dev/null; then
+            echo "::error::The requested commit does not exist."
+            exit 1
+          fi
+          COMMIT_SHA="$(git rev-parse "${target_ref}^{commit}")"
+          MAIN_SHA="$(git rev-parse "origin/main^{commit}")"
+          if [[ "$COMMIT_SHA" != "$MAIN_SHA" ]]; then
+            echo "::error::Stable releases must tag the current main commit ($MAIN_SHA); got $COMMIT_SHA."
+            exit 1
+          fi
+          tag_object_sha="$(gh api --method POST "repos/$REPOSITORY/git/tags" \
+            -f tag="$RELEASE_TAG" \
+            -f message="Release $RELEASE_TAG" \
+            -f object="$COMMIT_SHA" \
+            -f type=commit \
+            --jq .sha)"
+          gh api --method POST "repos/$REPOSITORY/git/refs" \
+            -f ref="refs/tags/$RELEASE_TAG" \
+            -f sha="$tag_object_sha" \
+            --silent
+          {
+            echo "### Tag Created"
+            echo "- **Tag:** \`$RELEASE_TAG\`"
+            echo "- **Commit:** \`$COMMIT_SHA\`"
+            echo "- **Source branch:** \`main\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -45,9 +45,9 @@ PicoClaw 本身在很大程度上是借助 AI 辅助开发的——我们拥抱�
    git clone https://github.com/<你的用户名>/picoclaw.git
    cd picoclaw
    ```
-3. 添加上游远程仓库：
+3. 将此独立维护的仓库添加为贡献者的 canonical 远程仓库：
    ```bash
-   git remote add upstream https://github.com/sipeed/picoclaw.git
+   git remote add canonical https://github.com/As-tsaqib/picoclaw.git
    ```
 
 ---
@@ -95,7 +95,7 @@ make lint  # 完整的 lint 检查
 
 ```bash
 git checkout main
-git pull upstream main
+git pull canonical main
 git checkout -b 你的功能分支名
 ```
 
@@ -110,13 +110,13 @@ git checkout -b 你的功能分支名
 - 对于小的清理或拼写修正，提 PR 前请将其合并为一个 commit。
 - 按照 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/v1.0.0/) 规范来撰写
 
-### 保持与上游同步
+### 保持与 canonical 仓库同步
 
-提 PR 前，请将你的分支变基到上游 `main`：
+提 PR 前，请将你的分支变基到 canonical 仓库的 `main`：
 
 ```bash
-git fetch upstream
-git rebase upstream/main
+git fetch canonical
+git rebase canonical/main
 ```
 
 ---

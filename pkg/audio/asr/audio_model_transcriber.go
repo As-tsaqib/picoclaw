@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/providers"
-	"github.com/sipeed/picoclaw/pkg/utils"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/logger"
+	"github.com/As-tsaqib/picoclaw/pkg/providers"
+	"github.com/As-tsaqib/picoclaw/pkg/utils"
 )
 
 type AudioModelTranscriber struct {

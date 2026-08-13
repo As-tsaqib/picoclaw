@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/sipeed/picoclaw/pkg/tools"
+	"github.com/As-tsaqib/picoclaw/pkg/tools"
 )
 
 const telegramOutputPromptSourceID PromptSourceID = "channel:telegram:output"

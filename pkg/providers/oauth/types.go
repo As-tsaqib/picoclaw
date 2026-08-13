@@ -3,7 +3,7 @@ package oauthprovider
 import (
 	"context"
 
-	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
+	"github.com/As-tsaqib/picoclaw/pkg/providers/protocoltypes"
 )
 
 type (

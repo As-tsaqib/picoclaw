@@ -9,13 +9,8 @@
     <img src="https://img.shields.io/badge/Arch-x86__64%2C%20ARM64%2C%20MIPS%2C%20RISC--V%2C%20LoongArch-blue" alt="Hardware">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
     <br>
-    <a href="https://picoclaw.io"><img src="https://img.shields.io/badge/Website-picoclaw.io-blue?style=flat&logo=google-chrome&logoColor=white" alt="Website"></a>
-    <a href="https://docs.picoclaw.io/"><img src="https://img.shields.io/badge/Docs-Official-007acc?style=flat&logo=read-the-docs&logoColor=white" alt="Docs"></a>
-    <a href="https://deepwiki.com/sipeed/picoclaw"><img src="https://img.shields.io/badge/Wiki-DeepWiki-FFA500?style=flat&logo=wikipedia&logoColor=white" alt="Wiki"></a>
-    <br>
-    <a href="https://x.com/SipeedIO"><img src="https://img.shields.io/badge/X_(Twitter)-SipeedIO-black?style=flat&logo=x&logoColor=white" alt="Twitter"></a>
-    <a href="../../assets/wechat.png"><img src="https://img.shields.io/badge/WeChat-Group-41d56b?style=flat&logo=wechat&logoColor=white"></a>
-    <a href="https://discord.gg/V4sAZ9XWpN"><img src="https://img.shields.io/badge/Discord-Community-4c60eb?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
+    <a href="https://github.com/As-tsaqib/picoclaw/releases"><img src="https://img.shields.io/badge/Releases-GitHub-181717?style=flat&logo=github&logoColor=white" alt="Releases"></a>
+    <a href="../README.md"><img src="https://img.shields.io/badge/Docs-Repository-007acc?style=flat&logo=read-the-docs&logoColor=white" alt="Documentation"></a>
   </p>
 
 [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Português](README.pt-br.md) | **Tiếng Việt** | [Français](README.fr.md) | [Italiano](README.it.md) | [Bahasa Indonesia](README.id.md) | [Malay](README.ms.md) | [English](../../README.md)
@@ -24,7 +19,7 @@
 
 ---
 
-> **PicoClaw** là một dự án mã nguồn mở độc lập do [Sipeed](https://sipeed.com) khởi xướng, được viết hoàn toàn bằng **Go** từ đầu — không phải fork của OpenClaw, NanoBot hay bất kỳ dự án nào khác.
+> **Thông báo bản phân phối:** kho này là một bản phái sinh của [Sipeed PicoClaw](https://github.com/sipeed/picoclaw), được duy trì độc lập. Giấy phép MIT, ghi công và lịch sử Git được giữ nguyên, nhưng định danh module, phiên bản, trình cập nhật, tạo tác và quy trình phát hành là riêng. Không có đồng bộ upstream tự động.
 
 **PicoClaw** là trợ lý AI cá nhân siêu nhẹ lấy cảm hứng từ [NanoBot](https://github.com/HKUDS/nanobot). Nó được xây dựng lại từ đầu bằng **Go** thông qua quá trình "tự khởi động" — chính AI Agent đã dẫn dắt quá trình di chuyển kiến trúc và tối ưu hóa mã nguồn.
 
@@ -49,12 +44,16 @@
 > **Thông báo Bảo mật**
 >
 > * **KHÔNG CÓ CRYPTO:** PicoClaw **chưa** phát hành bất kỳ token hay tiền điện tử chính thức nào. Mọi thông tin trên `pump.fun` hoặc các nền tảng giao dịch khác đều là **lừa đảo**.
-> * **DOMAIN CHÍNH THỨC:** Website chính thức **DUY NHẤT** là **[picoclaw.io](https://picoclaw.io)**, và website công ty là **[sipeed.com](https://sipeed.com)**
+> * **NGUỒN CHÍNH THỨC CỦA BẢN PHÂN PHỐI NÀY:** chỉ dùng [`As-tsaqib/picoclaw`](https://github.com/As-tsaqib/picoclaw), [GitHub Releases](https://github.com/As-tsaqib/picoclaw/releases) và tài liệu trong kho này. `picoclaw.io` cùng các kênh Sipeed thuộc dự án gốc.
 > * **CẢNH BÁO:** Nhiều domain `.ai/.org/.com/.net/...` đã bị bên thứ ba đăng ký. Đừng tin tưởng chúng.
 > * **LƯU Ý:** PicoClaw đang trong giai đoạn phát triển nhanh. Có thể còn các vấn đề bảo mật chưa được giải quyết. Không triển khai lên môi trường production trước v1.0.
 > * **LƯU Ý:** PicoClaw gần đây đã merge nhiều PR. Các bản build gần đây có thể dùng 10-20MB RAM. Tối ưu hóa tài nguyên được lên kế hoạch sau khi tính năng ổn định.
 
 ## 📢 Tin tức
+
+> Các mục bên dưới có trước dòng `v1.0.0` của bản phân phối này và được giữ lại
+> như lịch sử kế thừa từ dự án gốc. Các bản phát hành do kho này duy trì bắt đầu
+> từ `v1.0.0` và được liệt kê trên trang Releases của fork.
 
 2026-05-11 🛒 **LicheeRV-Claw đã có trên AliExpress!** Bạn hiện có thể mua LicheeRV-Claw trên [AliExpress](https://www.aliexpress.com/item/1005006519668532.html), giúp việc thử PicoClaw trên phần cứng RISC-V nhỏ gọn dễ dàng hơn.
 
@@ -64,7 +63,7 @@
   </a>
 </p>
 
-2026-03-31 📱 **Hỗ trợ Android!** PicoClaw giờ chạy trên Android! Tải APK tại [picoclaw.io](https://picoclaw.io/download)
+2026-03-31 📱 **Cột mốc Android upstream:** dự án gốc đã công bố Android. Bản phân phối này phát hành bundle thư viện native và binary tương thích Termux, không phải APK.
 
 2026-03-25 🚀 **v0.2.4 đã phát hành!** Tái cấu trúc kiến trúc Agent (SubTurn, Hooks, Steering, EventBus), tích hợp WeChat/WeCom, tăng cường bảo mật (.security.yml, lọc dữ liệu nhạy cảm), provider mới (AWS Bedrock, Azure, Xiaomi MiMo) và 35 bản vá lỗi. PicoClaw đã đạt **26K Stars**!
 
@@ -162,13 +161,9 @@ PicoClaw có thể được triển khai trên hầu hết mọi thiết bị Li
 
 ## 📦 Cài đặt
 
-### Tải xuống từ picoclaw.io (Khuyến nghị)
+### Tải xuống binary đã biên dịch sẵn (Khuyến nghị)
 
-Truy cập **[picoclaw.io](https://picoclaw.io)** — website chính thức tự động phát hiện nền tảng của bạn và cung cấp tải xuống một cú nhấp. Không cần chọn kiến trúc thủ công.
-
-### Tải xuống binary đã biên dịch sẵn
-
-Ngoài ra, tải binary cho nền tảng của bạn từ trang [GitHub Releases](https://github.com/sipeed/picoclaw/releases).
+Tải binary cho nền tảng của bạn từ [GitHub Releases](https://github.com/As-tsaqib/picoclaw/releases). Các kho lưu trữ và checksum tại đó là tạo tác chính thức của bản phân phối này.
 
 ### Xây dựng từ mã nguồn (để phát triển)
 
@@ -178,7 +173,7 @@ Yêu cầu:
 - Node.js 22+ và pnpm 10.33.0+ cho các bản build Web UI / launcher
 
 ```bash
-git clone https://github.com/sipeed/picoclaw.git
+git clone https://github.com/As-tsaqib/picoclaw.git
 
 cd picoclaw
 make deps
@@ -212,7 +207,7 @@ WebUI Launcher cung cấp giao diện dựa trên trình duyệt để cấu hì
 
 **Tùy chọn 1: Nhấp đúp (Desktop)**
 
-Sau khi tải xuống từ [picoclaw.io](https://picoclaw.io), nhấp đúp vào `picoclaw-launcher` (hoặc `picoclaw-launcher.exe` trên Windows). Trình duyệt của bạn sẽ tự động mở tại `http://localhost:18800`.
+Sau khi tải launcher từ [GitHub Releases](https://github.com/As-tsaqib/picoclaw/releases), nhấp đúp vào `picoclaw-launcher` (hoặc `picoclaw-launcher.exe` trên Windows). Trình duyệt của bạn sẽ tự động mở tại `http://localhost:18800`.
 
 **Tùy chọn 2: Dòng lệnh**
 
@@ -235,14 +230,14 @@ picoclaw-launcher
 
 Mở WebUI, sau đó: **1)** Cấu hình Provider (thêm API key LLM của bạn) -> **2)** Cấu hình Channel (ví dụ: Telegram) -> **3)** Khởi động Gateway -> **4)** Trò chuyện!
 
-Để biết tài liệu WebUI chi tiết, xem [docs.picoclaw.io](https://docs.picoclaw.io).
+Để biết tài liệu WebUI chi tiết, xem [tài liệu trong kho](../README.md).
 
 <details>
 <summary><b>Docker (thay thế)</b></summary>
 
 ```bash
 # 1. Clone this repo
-git clone https://github.com/sipeed/picoclaw.git
+git clone https://github.com/As-tsaqib/picoclaw.git
 cd picoclaw
 
 # 2. First run — auto-generates docker/data/config.json then exits
@@ -302,7 +297,7 @@ Sau bước này, `picoclaw-launcher` sẽ mở bình thường trong các lần
 
 Hãy cho chiếc điện thoại cũ của bạn một cuộc sống mới! Biến nó thành Trợ lý AI thông minh với PicoClaw.
 
-**Tùy chọn 1: Cài đặt APK**
+**Bundle thư viện native Android**
 
 Xem trước:
 
@@ -315,9 +310,9 @@ Xem trước:
   </tr>
 </table>
 
-Tải APK từ [picoclaw.io](https://picoclaw.io/download/) và cài đặt trực tiếp. Không cần Termux!
+Bản phát hành ổn định gồm `picoclaw-android-universal.zip`, bundle thư viện ARM64 cho nhà tích hợp Android. Đây **không phải APK có thể cài đặt**. Bản phân phối này hiện không phát hành APK.
 
-**Tùy chọn 2: Termux**
+**Cài đặt Termux**
 
 <details>
 <summary><b>Terminal Launcher (cho môi trường hạn chế tài nguyên)</b></summary>
@@ -327,7 +322,7 @@ Tải APK từ [picoclaw.io](https://picoclaw.io/download/) và cài đặt tr�
 
 ```bash
 # Download the latest release
-wget https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
+wget https://github.com/As-tsaqib/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
 tar xzf picoclaw_Linux_arm64.tar.gz
 pkg install proot
 termux-chroot ./picoclaw onboard   # chroot provides a standard Linux filesystem layout
@@ -605,13 +600,6 @@ PicoClaw hỗ trợ nhắc nhở đã lên lịch và tác vụ định kỳ th�
 
 PR luôn được chào đón! Codebase được thiết kế nhỏ gọn và dễ đọc.
 
-Xem [Lộ trình Cộng đồng](https://github.com/sipeed/picoclaw/issues/988) và [CONTRIBUTING.md](../../CONTRIBUTING.md) để biết hướng dẫn.
+Xem [ROADMAP.md](../../ROADMAP.md), [Issues của bản phân phối này](https://github.com/As-tsaqib/picoclaw/issues) và [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-Nhóm nhà phát triển đang được xây dựng, tham gia sau khi PR đầu tiên của bạn được merge!
-
-Nhóm Người dùng:
-
-Discord: <https://discord.gg/V4sAZ9XWpN>
-
-WeChat:
-<img src="../../assets/wechat.png" alt="WeChat group QR code" width="512">
+Liên kết cộng đồng của dự án gốc có thể còn trong tài liệu lịch sử; đó không phải là kênh hỗ trợ do bản phân phối này vận hành.

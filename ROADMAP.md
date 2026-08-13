@@ -42,7 +42,7 @@
 *Connect every model, reach every platform.*
 
 * **Provider**
-  * [**Architecture Upgrade**](https://github.com/sipeed/picoclaw/issues/283): Refactor from "Vendor-based" to "Protocol-based" classification (e.g., OpenAI-compatible, Ollama-compatible). *(Status: In progress by @Daming, ETA 5 days)*
+  * [**Architecture Upgrade**](https://github.com/sipeed/picoclaw/issues/283): Refactor from "Vendor-based" to "Protocol-based" classification (e.g., OpenAI-compatible, Ollama-compatible). *(Historical upstream item)*
   * **Local Models**: Deep integration with **Ollama**, **vLLM**, **LM Studio**, and **Mistral** (local inference).
   * **Online Models**: Continued support for frontier closed-source models.
 
@@ -104,7 +104,7 @@
 
 ## 🎨 7. Brand & Community
 
-* [**Logo Design**](https://github.com/sipeed/picoclaw/issues/297): We are looking for a **Mantis Shrimp (Stomatopoda)** logo design!
+* [**Logo Design**](https://github.com/sipeed/picoclaw/issues/297): Historical upstream design discussion.
   * *Concept*: Needs to reflect "Small but Mighty" and "Lightning Fast Strikes."
 
 

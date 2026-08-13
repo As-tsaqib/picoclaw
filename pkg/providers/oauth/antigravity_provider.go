@@ -14,9 +14,9 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/sipeed/picoclaw/pkg/auth"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/providers/common"
+	"github.com/As-tsaqib/picoclaw/pkg/auth"
+	"github.com/As-tsaqib/picoclaw/pkg/logger"
+	"github.com/As-tsaqib/picoclaw/pkg/providers/common"
 )
 
 const (

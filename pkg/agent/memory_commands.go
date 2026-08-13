@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/sipeed/picoclaw/pkg/commands"
-	"github.com/sipeed/picoclaw/pkg/memory"
+	"github.com/As-tsaqib/picoclaw/pkg/commands"
+	"github.com/As-tsaqib/picoclaw/pkg/memory"
 )
 
 func configureMemoryCommandRuntime(

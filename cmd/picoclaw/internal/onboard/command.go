@@ -3,7 +3,7 @@ package onboard
 import (
 	"github.com/spf13/cobra"
 
-	picoclaw "github.com/sipeed/picoclaw"
+	picoclaw "github.com/As-tsaqib/picoclaw"
 )
 
 var embeddedFiles = picoclaw.OnboardWorkspace

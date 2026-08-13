@@ -9,13 +9,8 @@
     <img src="https://img.shields.io/badge/Arch-x86__64%2C%20ARM64%2C%20MIPS%2C%20RISC--V%2C%20LoongArch-blue" alt="Hardware">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
     <br>
-    <a href="https://picoclaw.io"><img src="https://img.shields.io/badge/Website-picoclaw.io-blue?style=flat&logo=google-chrome&logoColor=white" alt="Website"></a>
-    <a href="https://docs.picoclaw.io/"><img src="https://img.shields.io/badge/Docs-Official-007acc?style=flat&logo=read-the-docs&logoColor=white" alt="Docs"></a>
-    <a href="https://deepwiki.com/sipeed/picoclaw"><img src="https://img.shields.io/badge/Wiki-DeepWiki-FFA500?style=flat&logo=wikipedia&logoColor=white" alt="Wiki"></a>
-    <br>
-    <a href="https://x.com/SipeedIO"><img src="https://img.shields.io/badge/X_(Twitter)-SipeedIO-black?style=flat&logo=x&logoColor=white" alt="Twitter"></a>
-    <a href="../../assets/wechat.png"><img src="https://img.shields.io/badge/WeChat-Group-41d56b?style=flat&logo=wechat&logoColor=white"></a>
-    <a href="https://discord.gg/V4sAZ9XWpN"><img src="https://img.shields.io/badge/Discord-Community-4c60eb?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
+    <a href="https://github.com/As-tsaqib/picoclaw/releases"><img src="https://img.shields.io/badge/Releases-GitHub-181717?style=flat&logo=github&logoColor=white" alt="Releases"></a>
+    <a href="../README.md"><img src="https://img.shields.io/badge/Docs-Repository-007acc?style=flat&logo=read-the-docs&logoColor=white" alt="Documentation"></a>
   </p>
 
 **中文** | [日本語](README.ja.md) | [한국어](README.ko.md) | [Português](README.pt-br.md) | [Tiếng Việt](README.vi.md) | [Français](README.fr.md) | [Italiano](README.it.md) | [Bahasa Indonesia](README.id.md) | [Malay](README.ms.md) | [English](../../README.md)
@@ -24,7 +19,7 @@
 
 ---
 
-> **PicoClaw** 是由 [矽速科技 (Sipeed)](https://sipeed.com) 发起的独立开源项目，完全使用 **Go 语言**从零编写——不是 OpenClaw、NanoBot 或其他项目的分支。
+> **发行版说明：** 本仓库是 [Sipeed PicoClaw](https://github.com/sipeed/picoclaw) 的独立维护衍生版。MIT 许可证、署名和 Git 历史均予以保留，但模块标识、版本、更新器、构建产物和发布流程均由本仓库独立维护，不进行 upstream 自动同步。
 
 🦐 **PicoClaw** 是一个受 [NanoBot](https://github.com/HKUDS/nanobot) 启发的超轻量级个人 AI 助手。它采用 **Go 语言** 从零重构，经历了一个"自举"过程——即由 AI Agent 自身驱动了整个架构迁移和代码优化。
 
@@ -49,12 +44,15 @@
 > **🚨 安全声明**
 >
 > - **无加密货币 (NO CRYPTO):** PicoClaw **没有** 发行任何官方代币、Token 或虚拟货币。所有在 `pump.fun` 或其他交易平台上的相关声称均为 **诈骗**。
-> - **官方域名:** 唯一的官方网站是 **[picoclaw.io](https://picoclaw.io)**，公司官网是 **[sipeed.com](https://sipeed.com)**。
+> - **本发行版的官方来源：** 仅使用 [`As-tsaqib/picoclaw`](https://github.com/As-tsaqib/picoclaw)、其 [GitHub Releases](https://github.com/As-tsaqib/picoclaw/releases) 以及本仓库内文档。`picoclaw.io` 和 Sipeed 社区渠道属于原项目，并非本发行版的官方渠道。
 > - **警惕:** 许多 `.ai/.org/.com/.net/...` 后缀的域名被第三方抢注，请勿轻信。
 > - **注意:** PicoClaw 正在初期的快速功能开发阶段，可能有尚未修复的网络安全问题，在 1.0 正式版发布前，请不要将其部署到生产环境中。
 > - **注意:** PicoClaw 最近合并了大量 PR，近期版本可能内存占用较大 (10~20MB)，我们将在功能较为收敛后进行资源占用优化。
 
 ## 📢 新闻
+
+> 以下条目早于本发行版的 `v1.0.0` 版本线，作为从原项目继承的历史记录保留。
+> 由本仓库维护的发行版从 `v1.0.0` 开始，并列在本 fork 的 Releases 页面中。
 
 2026-05-11 🛒 **LicheeRV-Claw 已上架淘宝！** 现在可以在 [淘宝](https://item.taobao.com/item.htm?abbucket=20&id=764939520376) 购买 LicheeRV-Claw，更方便地在小型 RISC-V 硬件上体验 PicoClaw。
 
@@ -64,7 +62,7 @@
   </a>
 </p>
 
-2026-03-31 📱 **Android 支持！** PicoClaw 现可在 Android 上运行！APK 下载地址：[picoclaw.io](https://picoclaw.io/download)
+2026-03-31 📱 **upstream Android 里程碑：** 原项目宣布支持 Android。本发行版提供原生库 bundle 和兼容 Termux 的二进制文件，不发布 APK。
 
 2026-03-25 🚀 **v0.2.4 发布！** Agent 架构全面重构（SubTurn、Hook、Steering、EventBus）、微信/企业微信深度集成、安全体系升级（.security.yml、敏感数据过滤）、新增 Provider（AWS Bedrock、Azure、小米 MiMo），以及 35 项 Bug 修复。PicoClaw 已达 **26K ⭐**！
 
@@ -162,13 +160,9 @@ PicoClaw 几乎可以部署在任何 Linux 设备上！
 
 ## 📦 安装
 
-### 从 picoclaw.io 下载（推荐）
+### 下载预编译二进制文件（推荐）
 
-访问 **[picoclaw.io](https://picoclaw.io)** — 官网自动检测你的平台，提供一键下载，无需手动选择架构。
-
-### 下载预编译二进制文件
-
-也可以从 [GitHub Releases](https://github.com/sipeed/picoclaw/releases) 页面手动下载对应平台的二进制文件。
+请从 [GitHub Releases](https://github.com/As-tsaqib/picoclaw/releases) 下载对应平台的二进制文件。该页面发布的归档和校验和是本发行版的权威产物。
 
 ### 从源码构建（开发用）
 
@@ -178,7 +172,7 @@ PicoClaw 几乎可以部署在任何 Linux 设备上！
 - Node.js 22+ 和 pnpm 10.33.0+（用于 Web UI / launcher 构建）
 
 ```bash
-git clone https://github.com/sipeed/picoclaw.git
+git clone https://github.com/As-tsaqib/picoclaw.git
 
 cd picoclaw
 make deps
@@ -212,7 +206,7 @@ WebUI Launcher 提供基于浏览器的配置与聊天界面，是最简单的�
 
 **方式一：双击启动（桌面）**
 
-从 [picoclaw.io](https://picoclaw.io) 下载后，双击 `picoclaw-launcher`（Windows 上为 `picoclaw-launcher.exe`），浏览器将自动打开 `http://localhost:18800`。
+从 [GitHub Releases](https://github.com/As-tsaqib/picoclaw/releases) 下载 launcher 后，双击 `picoclaw-launcher`（Windows 上为 `picoclaw-launcher.exe`），浏览器将自动打开 `http://localhost:18800`。
 
 **方式二：命令行**
 
@@ -235,14 +229,14 @@ picoclaw-launcher
 
 打开 WebUI，然后：**1)** 配置 Provider（填入 LLM API Key）-> **2)** 配置 Channel（如 Telegram）-> **3)** 启动 Gateway -> **4)** 开始聊天！
 
-详细 WebUI 文档请参阅 [docs.picoclaw.io](https://docs.picoclaw.io)。
+详细 WebUI 文档请参阅[仓库内文档](../README.md)。
 
 <details>
 <summary><b>Docker（备选方案）</b></summary>
 
 ```bash
 # 1. 克隆本仓库
-git clone https://github.com/sipeed/picoclaw.git
+git clone https://github.com/As-tsaqib/picoclaw.git
 cd picoclaw
 
 # 2. 首次运行——自动生成 docker/data/config.json 后退出
@@ -302,7 +296,7 @@ macOS 可能会在首次启动时拦截 `picoclaw-launcher`，因为它从互联
 
 让你十年前的旧手机焕发新生！将它变成你的 AI 助手。
 
-**方式一：APK 安装**
+**Android 原生库 bundle**
 
 预览：
 
@@ -315,9 +309,9 @@ macOS 可能会在首次启动时拦截 `picoclaw-launcher`，因为它从互联
   </tr>
 </table>
 
-从 [picoclaw.io](https://picoclaw.io/download/) 下载 APK 并直接安装，无需 Termux！
+稳定版包含 `picoclaw-android-universal.zip`，这是供 Android 集成者使用的 ARM64 原生库 bundle，**并非可安装的 APK**。本发行版目前不发布 APK。
 
-**方式二：Termux**
+**Termux 安装**
 
 <details>
 <summary><b>Terminal Launcher（适用于资源受限环境）</b></summary>
@@ -327,7 +321,7 @@ macOS 可能会在首次启动时拦截 `picoclaw-launcher`，因为它从互联
 
 ```bash
 # 从 Release 页面下载最新版本
-wget https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
+wget https://github.com/As-tsaqib/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
 tar xzf picoclaw_Linux_arm64.tar.gz
 pkg install proot
 termux-chroot ./picoclaw onboard   # chroot 提供标准 Linux 文件系统布局
@@ -613,13 +607,6 @@ PicoClaw 通过 `cron` 工具支持定时提醒和重复任务：
 
 欢迎提交 PR！代码库刻意保持小巧和可读。🤗
 
-查看完整的 [社区路线图](https://github.com/sipeed/picoclaw/issues/988) 和 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
+请查看 [ROADMAP.md](../../ROADMAP.md)、[本发行版的 Issues](https://github.com/As-tsaqib/picoclaw/issues) 和 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
 
-开发者群组正在组建中，入群门槛：至少合并过 1 个 PR。
-
-用户群组：
-
-Discord: <https://discord.gg/V4sAZ9XWpN>
-
-WeChat:
-<img src="../../assets/wechat.png" alt="WeChat group QR code" width="512">
+原项目的社区链接可能仍保留在历史文档中，但它们不是由本发行版运营的支持渠道。

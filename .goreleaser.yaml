@@ -23,10 +23,10 @@ builds:
       - stdjson
     ldflags:
       - -s -w
-      - -X github.com/sipeed/picoclaw/pkg/config.Version={{ .Version }}
-      - -X github.com/sipeed/picoclaw/pkg/config.GitCommit={{ .ShortCommit }}
-      - -X github.com/sipeed/picoclaw/pkg/config.BuildTime={{ .Date }}
-      - -X github.com/sipeed/picoclaw/pkg/config.GoVersion={{ with index .Env "GOVERSION" }}{{ . }}{{ else }}unknown{{ end }}
+      - -X github.com/As-tsaqib/picoclaw/pkg/config.Version={{ .Version }}
+      - -X github.com/As-tsaqib/picoclaw/pkg/config.GitCommit={{ .ShortCommit }}
+      - -X github.com/As-tsaqib/picoclaw/pkg/config.BuildTime={{ .Date }}
+      - -X github.com/As-tsaqib/picoclaw/pkg/config.GoVersion={{ with index .Env "GOVERSION" }}{{ . }}{{ else }}unknown{{ end }}
     goos:
       - linux
       - windows
@@ -66,10 +66,10 @@ builds:
       - stdjson
     ldflags:
       - -s -w
-      - -X github.com/sipeed/picoclaw/pkg/config.Version={{ .Version }}
-      - -X github.com/sipeed/picoclaw/pkg/config.GitCommit={{ .ShortCommit }}
-      - -X github.com/sipeed/picoclaw/pkg/config.BuildTime={{ .Date }}
-      - -X github.com/sipeed/picoclaw/pkg/config.GoVersion={{ with index .Env "GOVERSION" }}{{ . }}{{ else }}unknown{{ end }}
+      - -X github.com/As-tsaqib/picoclaw/pkg/config.Version={{ .Version }}
+      - -X github.com/As-tsaqib/picoclaw/pkg/config.GitCommit={{ .ShortCommit }}
+      - -X github.com/As-tsaqib/picoclaw/pkg/config.BuildTime={{ .Date }}
+      - -X github.com/As-tsaqib/picoclaw/pkg/config.GoVersion={{ with index .Env "GOVERSION" }}{{ . }}{{ else }}unknown{{ end }}
     goos:
       - linux
       - windows
@@ -108,8 +108,7 @@ dockers_v2:
     ids:
       - picoclaw
     images:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/picoclaw"
-      - 'docker.io/{{ .Env.DOCKERHUB_IMAGE_NAME }}'
+      - "ghcr.io/as-tsaqib/picoclaw"
     tags:
       - '{{ if isEnvSet "NIGHTLY_BUILD" }}nightly{{ else }}{{ .Tag }}{{ end }}'
       - '{{ if isEnvSet "NIGHTLY_BUILD" }}nightly{{ else }}latest{{ end }}'
@@ -124,8 +123,7 @@ dockers_v2:
       - picoclaw
       - picoclaw-launcher
     images:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/picoclaw"
-      - 'docker.io/{{ .Env.DOCKERHUB_IMAGE_NAME }}'
+      - "ghcr.io/as-tsaqib/picoclaw"
     tags:
       - '{{ if isEnvSet "NIGHTLY_BUILD" }}nightly-launcher{{ else }}{{ .Tag }}-launcher{{ end }}'
       - '{{ if isEnvSet "NIGHTLY_BUILD" }}nightly-launcher{{ else }}launcher{{ end }}'

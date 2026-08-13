@@ -8,7 +8,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
 )
 
 func TestHandlePatchConfigMemoryRoundTripPreservesOtherFields(t *testing.T) {
