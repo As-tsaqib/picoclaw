@@ -318,8 +318,7 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
   const docsUrl = useMemo(() => {
     if (!channel) return ""
     if (CHANNELS_WITHOUT_DOCS.has(channel.name)) return ""
-    const base =
-      "https://github.com/As-tsaqib/picoclaw/tree/main/docs/channels"
+    const base = "https://github.com/As-tsaqib/picoclaw/tree/main/docs/channels"
     return `${base}/${getChannelDocSlug(channel.name)}`
   }, [channel])
 

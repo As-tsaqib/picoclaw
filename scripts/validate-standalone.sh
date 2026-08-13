@@ -55,10 +55,10 @@ require_literal .github/workflows/nightly.yml "github.repository == 'As-tsaqib/p
 require_literal .github/workflows/docker-build.yml "github.repository == 'As-tsaqib/picoclaw'"
 
 while IFS= read -r path; do
-  if grep -Fq -- '"github.com/sipeed/picoclaw/' "$path"; then
+  if grep -Eq -- '"github\.com/sipeed/picoclaw(/|"[[:space:]]*$)' "$path"; then
     fail "old Go module import remains in $path"
   fi
-done < <(find cmd pkg web -type f -name '*.go' -print)
+done < <(git ls-files 'cmd/**/*.go' 'pkg/**/*.go' 'web/**/*.go')
 
 for path in \
   .goreleaser.yaml \
