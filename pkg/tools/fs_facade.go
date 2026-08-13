@@ -3,8 +3,8 @@ package tools
 import (
 	"regexp"
 
-	"github.com/sipeed/picoclaw/pkg/media"
-	fstools "github.com/sipeed/picoclaw/pkg/tools/fs"
+	"github.com/As-tsaqib/picoclaw/pkg/media"
+	fstools "github.com/As-tsaqib/picoclaw/pkg/tools/fs"
 )
 
 type (

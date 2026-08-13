@@ -4,4 +4,4 @@ Operational docs for debugging, diagnosis, and production troubleshooting.
 
 - [Troubleshooting](troubleshooting.md): common failures, symptoms, and recovery steps.
 - [Debugging PicoClaw](debug.md): logs, runtime visibility, and debugging workflow.
-- [Reviewable upstream release sync](upstream-release-sync.md): stable-release import, conflict handling, and fork PR review.
+- [Standalone releases](standalone-releases.md): independent versioning, validation, tagging, and publishing from this repository.

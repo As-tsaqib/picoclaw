@@ -2,7 +2,7 @@
 
 > Back to [Guides](README.md)
 
-This guide covers running the PicoClaw terminal binary on an ARM64 Android phone with Termux. Use the APK from [picoclaw.io](https://picoclaw.io/download/) if you want the Android app experience; use Termux when you want a lightweight command-line install on an older or resource-constrained device.
+This guide covers running the PicoClaw terminal binary on an ARM64 Android phone with Termux. This distribution publishes a universal Android native-library bundle, not an installable APK. Use Termux for the supported command-line installation described below.
 
 ## Requirements
 
@@ -25,7 +25,7 @@ Download and unpack the ARM64 Linux release:
 ```bash
 mkdir -p ~/picoclaw
 cd ~/picoclaw
-wget https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
+wget https://github.com/As-tsaqib/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
 tar xzf picoclaw_Linux_arm64.tar.gz
 chmod +x ./picoclaw
 ```
@@ -71,7 +71,7 @@ Your config and workspace live under `~/.picoclaw`, so updating the binary does 
 ```bash
 cd ~/picoclaw
 rm -f picoclaw_Linux_arm64.tar.gz
-wget https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
+wget https://github.com/As-tsaqib/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
 tar xzf picoclaw_Linux_arm64.tar.gz
 chmod +x ./picoclaw
 termux-chroot ./picoclaw version

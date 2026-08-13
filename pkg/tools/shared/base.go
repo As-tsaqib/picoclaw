@@ -3,8 +3,8 @@ package toolshared
 import (
 	"context"
 
-	"github.com/sipeed/picoclaw/pkg/memory"
-	"github.com/sipeed/picoclaw/pkg/session"
+	"github.com/As-tsaqib/picoclaw/pkg/memory"
+	"github.com/As-tsaqib/picoclaw/pkg/session"
 )
 
 // Tool is the interface that all tools must implement.

@@ -9,13 +9,8 @@
     <img src="https://img.shields.io/badge/Arch-x86__64%2C%20ARM64%2C%20MIPS%2C%20RISC--V%2C%20LoongArch-blue" alt="Hardware">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
     <br>
-    <a href="https://picoclaw.io"><img src="https://img.shields.io/badge/Website-picoclaw.io-blue?style=flat&logo=google-chrome&logoColor=white" alt="Website"></a>
-    <a href="https://docs.picoclaw.io/"><img src="https://img.shields.io/badge/Docs-Official-007acc?style=flat&logo=read-the-docs&logoColor=white" alt="Docs"></a>
-    <a href="https://deepwiki.com/sipeed/picoclaw"><img src="https://img.shields.io/badge/Wiki-DeepWiki-FFA500?style=flat&logo=wikipedia&logoColor=white" alt="Wiki"></a>
-    <br>
-    <a href="https://x.com/SipeedIO"><img src="https://img.shields.io/badge/X_(Twitter)-SipeedIO-black?style=flat&logo=x&logoColor=white" alt="Twitter"></a>
-    <a href="../../assets/wechat.png"><img src="https://img.shields.io/badge/WeChat-Group-41d56b?style=flat&logo=wechat&logoColor=white"></a>
-    <a href="https://discord.gg/V4sAZ9XWpN"><img src="https://img.shields.io/badge/Discord-Community-4c60eb?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
+    <a href="https://github.com/As-tsaqib/picoclaw/releases"><img src="https://img.shields.io/badge/Releases-GitHub-181717?style=flat&logo=github&logoColor=white" alt="Releases"></a>
+    <a href="../README.md"><img src="https://img.shields.io/badge/Docs-Repository-007acc?style=flat&logo=read-the-docs&logoColor=white" alt="Documentation"></a>
   </p>
 
 [中文](README.zh.md) | **日本語** | [한국어](README.ko.md) | [Português](README.pt-br.md) | [Tiếng Việt](README.vi.md) | [Français](README.fr.md) | [Italiano](README.it.md) | [Bahasa Indonesia](README.id.md) | [Malay](README.ms.md) | [English](../../README.md)
@@ -24,7 +19,7 @@
 
 ---
 
-> **PicoClaw** は [Sipeed](https://sipeed.com) が立ち上げた独立したオープンソースプロジェクトです。完全に **Go 言語**で一から書かれており、OpenClaw、NanoBot、その他のプロジェクトのフォークではありません。
+> **配布版に関する注意:** このリポジトリは、[Sipeed PicoClaw](https://github.com/sipeed/picoclaw) から派生し、独立して保守されている配布版です。MIT ライセンス、帰属表示、Git 履歴は維持しますが、モジュール ID、バージョン、アップデーター、成果物、リリース手順は独自です。upstream との自動同期は行いません。
 
 **PicoClaw** は [NanoBot](https://github.com/HKUDS/nanobot) にインスパイアされた超軽量パーソナル AI アシスタントです。**Go** でゼロからリビルドされ、「セルフブートストラッピング」プロセスで構築されました — AI Agent 自身がアーキテクチャの移行とコード最適化を推進しました。
 
@@ -49,12 +44,16 @@
 > **セキュリティに関する注意**
 >
 > * **暗号通貨なし:** PicoClaw には公式トークン/コインは**一切ありません**。`pump.fun` やその他の取引プラットフォームでの主張はすべて**詐欺**です。
-> * **公式ドメイン:** **唯一**の公式サイトは **[picoclaw.io](https://picoclaw.io)**、企業サイトは **[sipeed.com](https://sipeed.com)** です。
+> * **この配布版の公式ソース:** [`As-tsaqib/picoclaw`](https://github.com/As-tsaqib/picoclaw)、その [GitHub Releases](https://github.com/As-tsaqib/picoclaw/releases)、およびこのリポジトリ内のドキュメントのみを使用してください。`picoclaw.io` と Sipeed の各チャンネルは元プロジェクトのものです。
 > * **注意:** 多くの `.ai/.org/.com/.net/...` ドメインは第三者によって登録されています。信頼しないでください。
 > * **注記:** PicoClaw は初期開発段階にあり、未解決のネットワークセキュリティ問題がある可能性があります。v1.0 リリース前に本番環境へのデプロイは避けてください。
 > * **注記:** PicoClaw は最近多くの PR をマージしており、最新バージョンではメモリフットプリントが大きくなる場合があります（10〜20MB）。機能セットが安定次第、リソース最適化を優先する予定です。
 
 ## 📢 ニュース
+
+> 以下はこの配布版の `v1.0.0` 系列より前に元プロジェクトから継承された履歴です。
+> このリポジトリが管理するリリースは `v1.0.0` から始まり、この fork の Releases
+> ページに掲載されます。
 
 2026-05-11 🛒 **LicheeRV-Claw が AliExpress で購入可能に！** [AliExpress](https://www.aliexpress.com/item/1005006519668532.html) から LicheeRV-Claw を購入できるようになり、コンパクトな RISC-V ハードウェアで PicoClaw を試しやすくなりました。
 
@@ -64,7 +63,7 @@
   </a>
 </p>
 
-2026-03-31 📱 **Android サポート！** PicoClawがAndroidで動作！APKは[picoclaw.io](https://picoclaw.io/download)からダウンロード
+2026-03-31 📱 **upstream の Android マイルストーン:** 元プロジェクトが Android 対応を発表しました。この配布版はネイティブライブラリのバンドルと Termux 対応バイナリを公開しますが、APK は公開しません。
 
 2026-03-25 🚀 **v0.2.4 リリース！** Agent アーキテクチャ全面刷新（SubTurn、Hooks、Steering、EventBus）、WeChat/WeCom 統合、セキュリティ強化（.security.yml、機密データフィルタリング）、新プロバイダー（AWS Bedrock、Azure、Xiaomi MiMo）、35 件のバグ修正。PicoClaw **26K ⭐** 達成！
 
@@ -162,13 +161,9 @@ PicoClaw はほぼすべての Linux デバイスにデプロイできます！
 
 ## 📦 インストール
 
-### picoclaw.io からダウンロード（推奨）
+### プリコンパイル済みバイナリをダウンロード（推奨）
 
-**[picoclaw.io](https://picoclaw.io)** にアクセス — 公式サイトがプラットフォームを自動検出し、ワンクリックでダウンロードできます。アーキテクチャを手動で選ぶ必要はありません。
-
-### プリコンパイル済みバイナリをダウンロード
-
-または、[GitHub Releases](https://github.com/sipeed/picoclaw/releases) ページからプラットフォームに合ったバイナリをダウンロードしてください。
+[GitHub Releases](https://github.com/As-tsaqib/picoclaw/releases) からプラットフォームに合ったバイナリをダウンロードしてください。そこで公開されるアーカイブとチェックサムが、この配布版の正式な成果物です。
 
 ### ソースからビルド（開発用）
 
@@ -178,7 +173,7 @@ PicoClaw はほぼすべての Linux デバイスにデプロイできます！
 - Web UI / launcher のビルドには Node.js 22+ と pnpm 10.33.0+ が必要
 
 ```bash
-git clone https://github.com/sipeed/picoclaw.git
+git clone https://github.com/As-tsaqib/picoclaw.git
 
 cd picoclaw
 make deps
@@ -212,7 +207,7 @@ WebUI Launcher はブラウザベースの設定・チャットインターフ�
 
 **オプション 1: ダブルクリック（デスクトップ）**
 
-[picoclaw.io](https://picoclaw.io) からダウンロード後、`picoclaw-launcher`（Windows では `picoclaw-launcher.exe`）をダブルクリックしてください。ブラウザが自動的に `http://localhost:18800` を開きます。
+[GitHub Releases](https://github.com/As-tsaqib/picoclaw/releases) からランチャーをダウンロード後、`picoclaw-launcher`（Windows では `picoclaw-launcher.exe`）をダブルクリックしてください。ブラウザが自動的に `http://localhost:18800` を開きます。
 
 **オプション 2: コマンドライン**
 
@@ -235,14 +230,14 @@ picoclaw-launcher
 
 WebUI を開いたら：**1)** Provider を設定（LLM API キーを追加）→ **2)** Channel を設定（例：Telegram）→ **3)** Gateway を起動 → **4)** チャット！
 
-WebUI の詳細なドキュメントは [docs.picoclaw.io](https://docs.picoclaw.io) を参照してください。
+WebUI の詳細は[リポジトリ内ドキュメント](../README.md)を参照してください。
 
 <details>
 <summary><b>Docker（代替手段）</b></summary>
 
 ```bash
 # 1. このリポジトリをクローン
-git clone https://github.com/sipeed/picoclaw.git
+git clone https://github.com/As-tsaqib/picoclaw.git
 cd picoclaw
 
 # 2. 初回実行 — docker/data/config.json を自動生成して終了
@@ -302,7 +297,7 @@ docker compose -f docker/docker-compose.yml --profile launcher up -d
 
 10 年前のスマホに第二の人生を！PicoClaw でスマート AI アシスタントに変身させましょう。
 
-**オプション 1: APK インストール**
+**Android ネイティブライブラリバンドル**
 
 プレビュー：
 
@@ -315,9 +310,9 @@ docker compose -f docker/docker-compose.yml --profile launcher up -d
   </tr>
 </table>
 
-[picoclaw.io](https://picoclaw.io/download/) から APK をダウンロードして直接インストール。Termux 不要！
+安定版には、Android インテグレーター向け ARM64 ネイティブライブラリの `picoclaw-android-universal.zip` が含まれます。これは**インストール可能な APK ではありません**。現在、この配布版は APK を公開していません。
 
-**オプション 2: Termux**
+**Termux インストール**
 
 <details>
 <summary><b>Terminal Launcher（リソース制約環境向け）</b></summary>
@@ -327,7 +322,7 @@ docker compose -f docker/docker-compose.yml --profile launcher up -d
 
 ```bash
 # 最新リリースをダウンロード
-wget https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
+wget https://github.com/As-tsaqib/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
 tar xzf picoclaw_Linux_arm64.tar.gz
 pkg install proot
 termux-chroot ./picoclaw onboard   # chroot で標準的な Linux ファイルシステムレイアウトを提供
@@ -605,13 +600,6 @@ PicoClaw は `cron` ツールによるスケジュールリマインダーと定
 
 PR 歓迎！コードベースは意図的に小さく読みやすくしています。
 
-[コミュニティロードマップ](https://github.com/sipeed/picoclaw/issues/988)と[CONTRIBUTING.md](../../CONTRIBUTING.md)をご覧ください。
+[ROADMAP.md](../../ROADMAP.md)、[この配布版の Issues](https://github.com/As-tsaqib/picoclaw/issues)、[CONTRIBUTING.md](../../CONTRIBUTING.md)をご覧ください。
 
-開発者グループ構築中、最初の PR がマージされたら参加できます！
-
-ユーザーグループ:
-
-Discord: <https://discord.gg/V4sAZ9XWpN>
-
-WeChat:
-<img src="../../assets/wechat.png" alt="WeChat group QR code" width="512">
+元プロジェクトのコミュニティリンクが履歴文書に残る場合がありますが、この配布版が運営するサポート窓口ではありません。

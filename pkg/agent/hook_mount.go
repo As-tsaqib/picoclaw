@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/config"
-	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
+	runtimeevents "github.com/As-tsaqib/picoclaw/pkg/events"
 )
 
 type hookRuntime struct {

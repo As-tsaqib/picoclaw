@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"sync"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/As-tsaqib/picoclaw/pkg/logger"
 )
 
 // rpcRequest is a single JSON-RPC 2.0 request. Delta Chat uses positional

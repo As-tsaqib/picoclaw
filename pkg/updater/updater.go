@@ -22,8 +22,8 @@ import (
 	"github.com/minio/selfupdate"
 	"github.com/spf13/cobra"
 
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/utils"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/utils"
 )
 
 // httpClient is a shared HTTP client used for release checks and downloads.
@@ -192,20 +192,23 @@ func GetReleaseAPIURL(owner string) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/picoclaw/releases/latest", owner)
 }
 
-// GetProdReleaseAPIURL returns the production release API URL (upstream).
+const releaseRepositoryOwner = "As-tsaqib"
+
+// GetProdReleaseAPIURL returns the production release API URL for this
+// independently maintained distribution.
 func GetProdReleaseAPIURL() string {
-	return GetReleaseAPIURL("sipeed")
+	return GetReleaseAPIURL(releaseRepositoryOwner)
 }
 
 // GetReleaseTagAPIURL returns the GitHub Releases API URL for a specific tag.
-// Example: owner="sipeed", tag="nightly" -> https://api.github.com/repos/sipeed/picoclaw/releases/tags/nightly
+// Example: owner="As-tsaqib", tag="nightly" -> https://api.github.com/repos/As-tsaqib/picoclaw/releases/tags/nightly
 func GetReleaseTagAPIURL(owner, tag string) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/picoclaw/releases/tags/%s", owner, tag)
 }
 
-// GetNightlyReleaseAPIURL returns the nightly release API URL for the production repo.
+// GetNightlyReleaseAPIURL returns the nightly release API URL for this repository.
 func GetNightlyReleaseAPIURL() string {
-	return GetReleaseTagAPIURL("sipeed", "nightly")
+	return GetReleaseTagAPIURL(releaseRepositoryOwner, "nightly")
 }
 
 // findAssetURL resolves the appropriate asset URL for the given release

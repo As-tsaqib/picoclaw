@@ -3,7 +3,7 @@ package providers
 import (
 	"time"
 
-	cliprovider "github.com/sipeed/picoclaw/pkg/providers/cli"
+	cliprovider "github.com/As-tsaqib/picoclaw/pkg/providers/cli"
 )
 
 type (

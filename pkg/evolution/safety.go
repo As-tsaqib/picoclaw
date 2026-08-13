@@ -7,7 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/sipeed/picoclaw/pkg/skills"
+	"github.com/As-tsaqib/picoclaw/pkg/skills"
 )
 
 var evolutionSecretPatterns = []*regexp.Regexp{

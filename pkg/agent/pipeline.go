@@ -3,10 +3,10 @@
 package agent
 
 import (
-	"github.com/sipeed/picoclaw/pkg/agent/interfaces"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/media"
-	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/As-tsaqib/picoclaw/pkg/agent/interfaces"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/media"
+	"github.com/As-tsaqib/picoclaw/pkg/providers"
 )
 
 // Pipeline holds the runtime dependencies used by Pipeline methods.

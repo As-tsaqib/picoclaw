@@ -5,8 +5,8 @@ package interfaces
 import (
 	"context"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/channels"
+	"github.com/As-tsaqib/picoclaw/pkg/bus"
+	"github.com/As-tsaqib/picoclaw/pkg/channels"
 )
 
 // MessageBus publishes inbound and outbound messages.

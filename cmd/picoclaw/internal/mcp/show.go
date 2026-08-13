@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/cliui"
-	"github.com/sipeed/picoclaw/pkg/config"
-	picomcp "github.com/sipeed/picoclaw/pkg/mcp"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/cliui"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
+	picomcp "github.com/As-tsaqib/picoclaw/pkg/mcp"
 )
 
 type toolDetail struct {

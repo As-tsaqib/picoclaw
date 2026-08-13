@@ -1,0 +1,59 @@
+name: Standalone Distribution Validation
+
+on:
+  push:
+    branches:
+      - chore/standalone-v1.0.0
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: standalone-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    name: Identity, workflow, and publication policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate standalone policy
+        run: bash ./scripts/validate-standalone.sh
+
+      - name: Setup Go for actionlint
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Validate GitHub Actions syntax
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
+  goreleaser:
+    name: GoReleaser configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check release configuration
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          distribution: goreleaser
+          version: ~> v2
+          args: check
+        env:
+          GITHUB_REPOSITORY_OWNER: As-tsaqib

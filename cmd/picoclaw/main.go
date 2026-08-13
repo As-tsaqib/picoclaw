@@ -15,29 +15,29 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal"
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/agent"
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/auth"
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/cliui"
-	configcmd "github.com/sipeed/picoclaw/cmd/picoclaw/internal/config"
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/cron"
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/gateway"
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/mcp"
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/migrate"
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/model"
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/onboard"
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/skills"
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/status"
-	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/version"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/updater"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/agent"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/auth"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/cliui"
+	configcmd "github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/config"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/cron"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/gateway"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/mcp"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/migrate"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/model"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/onboard"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/skills"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/status"
+	"github.com/As-tsaqib/picoclaw/cmd/picoclaw/internal/version"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/updater"
 )
 
 var rootNoColor bool
 
 // initTermuxSSL detects Termux environment and sets SSL_CERT_FILE if not already set.
 // This fixes X509 certificate errors when running PicoClaw inside Termux or termux-chroot.
-// See: https://github.com/sipeed/picoclaw/issues/2944
+// Historical context: https://github.com/sipeed/picoclaw/issues/2944
 func initTermuxSSL() {
 	// Only applicable on Linux/Android
 	if runtime.GOOS != "linux" && runtime.GOOS != "android" {
