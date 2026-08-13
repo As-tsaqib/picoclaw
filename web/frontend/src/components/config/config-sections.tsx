@@ -1338,9 +1338,7 @@ export function EvolutionSafetySection({
             onFieldChange("evolutionApplyPolicy", value as EvolutionApplyPolicy)
           }
         >
-          <SelectTrigger
-            aria-label={t("pages.config.evolution_apply_policy")}
-          >
+          <SelectTrigger aria-label={t("pages.config.evolution_apply_policy")}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

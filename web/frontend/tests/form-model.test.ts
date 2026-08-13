@@ -101,7 +101,7 @@ test("parallel-turn values round trip at the exact nested config path", () => {
       max_parallel_turns: Number(value),
     })
     assert.equal(buildFormFromConfig(merged).maxParallelTurns, value)
-    assert.deepEqual((merged.agents as JsonObject), {
+    assert.deepEqual(merged.agents as JsonObject, {
       defaults: {
         workspace: "/srv/picoclaw",
         max_parallel_turns: Number(value),
@@ -118,8 +118,8 @@ test("parallel-turn values round trip at the exact nested config path", () => {
       memory: { enabled: false },
     })
     assert.equal(
-      (((memoryOnlyMerged.agents as JsonObject).defaults as JsonObject)
-        .max_parallel_turns),
+      ((memoryOnlyMerged.agents as JsonObject).defaults as JsonObject)
+        .max_parallel_turns,
       Number(value),
     )
   }

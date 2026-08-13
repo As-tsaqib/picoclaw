@@ -67,7 +67,7 @@ export function ConfigTabs({ activeTab, onChange }: ConfigTabsProps) {
               selectAndFocus(tabs[nextIndex].key)
             }}
             className={cn(
-              "hover:text-foreground relative shrink-0 cursor-pointer pb-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              "hover:text-foreground focus-visible:ring-ring relative shrink-0 cursor-pointer pb-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
               activeTab === tab.key
                 ? "text-foreground"
                 : "text-muted-foreground",

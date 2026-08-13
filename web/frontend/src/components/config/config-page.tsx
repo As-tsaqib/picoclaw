@@ -27,10 +27,7 @@ import {
   MCPSection,
   RuntimeSection,
 } from "@/components/config/config-sections"
-import {
-  ConfigTabs,
-  type ConfigPageTab,
-} from "@/components/config/config-tabs"
+import { type ConfigPageTab, ConfigTabs } from "@/components/config/config-tabs"
 import {
   type CoreConfigForm,
   EMPTY_FORM,
@@ -368,8 +365,7 @@ export function ConfigPage() {
           { min: 1, max: 100 },
         )
         const turnProfile = buildTurnProfilePatch(form.turnProfile)
-        const advancedAgentDefaultsPatch =
-          buildAdvancedAgentDefaultsPatch(form)
+        const advancedAgentDefaultsPatch = buildAdvancedAgentDefaultsPatch(form)
         const memoryConfigPatch = buildMemoryConfigPatch(form)
         const evolutionConfigPatch = buildEvolutionConfigPatch(form)
         const heartbeatInterval = parseIntField(

@@ -4,12 +4,12 @@ import { useState } from "react"
 import { I18nextProvider } from "react-i18next"
 import { beforeAll, describe, expect, it } from "vitest"
 
-import { EMPTY_FORM, type CoreConfigForm } from "@/components/config/form-model"
+import { type CoreConfigForm, EMPTY_FORM } from "@/components/config/form-model"
 import i18n from "@/i18n"
 
 import { AdvancedConfigLayout } from "./advanced-config-layout"
 import { RuntimeConcurrencySection } from "./config-sections"
-import { ConfigTabs, type ConfigPageTab } from "./config-tabs"
+import { type ConfigPageTab, ConfigTabs } from "./config-tabs"
 
 function AdvancedTabsHarness() {
   const [activeTab, setActiveTab] = useState<ConfigPageTab>("settings")
@@ -31,10 +31,7 @@ function AdvancedTabsHarness() {
         {activeTab === "settings" ? (
           <p>Upstream settings content</p>
         ) : (
-          <RuntimeConcurrencySection
-            form={form}
-            onFieldChange={updateField}
-          />
+          <RuntimeConcurrencySection form={form} onFieldChange={updateField} />
         )}
       </div>
     </I18nextProvider>
@@ -71,7 +68,9 @@ describe("Advanced configuration tabs", () => {
     ).toHaveAttribute("step", "1")
     expect(screen.getByText(/Restart the gateway after saving/)).toBeVisible()
     expect(
-      screen.getByText(/messages within the same session or topic remain serialized/),
+      screen.getByText(
+        /messages within the same session or topic remain serialized/,
+      ),
     ).toBeVisible()
     expect(
       screen.getByText(/separate from subagent or subturn concurrency/),
