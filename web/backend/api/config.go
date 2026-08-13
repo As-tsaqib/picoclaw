@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -189,6 +191,10 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
 	}
+	if err = validateParallelTurnsPatch(patch); err != nil {
+		writeConfigValidationError(w, err.Error())
+		return
+	}
 
 	// Load existing config and marshal to a map for merging
 	cfg, err := config.LoadConfig(h.configPath)
@@ -272,6 +278,35 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func validateParallelTurnsPatch(patch map[string]any) error {
+	agents, ok := patch["agents"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	defaults, ok := agents["defaults"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	raw, exists := defaults["max_parallel_turns"]
+	if !exists {
+		return nil
+	}
+	value, ok := raw.(float64)
+	if !ok || value < 1 || value != math.Trunc(value) {
+		return errors.New("agents.defaults.max_parallel_turns must be an integer >= 1")
+	}
+	return nil
+}
+
+func writeConfigValidationError(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": "validation_error",
+		"errors": []string{message},
+	})
 }
 
 // handleResetConfig resets the configuration to factory defaults.

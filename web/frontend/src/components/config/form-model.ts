@@ -18,6 +18,7 @@ export interface CoreConfigForm {
   maxTokens: string
   contextWindow: string
   maxToolIterations: string
+  maxParallelTurns: string
   summarizeMessageThreshold: string
   summarizeTokenPercent: string
   turnProfile: TurnProfileForm
@@ -58,9 +59,13 @@ export interface CoreConfigForm {
   memoryNotifications: MemoryNotificationMode
   memoryWorkspaceCharLimit: string
   memoryPerUserCharLimit: string
+  memoryProfileEnabled: boolean
+  memoryProfileMaxChars: string
+  memoryProfileMinConfidence: string
   memoryRecallMode: MemoryRecallMode
   memoryRecallMaxResults: string
   memoryRecallMaxChars: string
+  memoryRecallMaxRecords: string
   memoryCheckpointsEnabled: boolean
   memoryCheckpointMaxCount: string
   memoryCheckpointMaxContextChars: string
@@ -76,6 +81,7 @@ export interface CoreConfigForm {
   memoryRetrievalRecencyHalfLifeDays: string
   memoryRetrievalFuzzyWeight: string
   memoryRetrievalRecentFallbackCount: string
+  memoryRetrievalUserShare: string
   memoryArchivedRetentionDays: string
   memoryStaleThresholdDays: string
   memoryAutoArchiveExpired: boolean
@@ -218,6 +224,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   maxTokens: "32768",
   contextWindow: "",
   maxToolIterations: "50",
+  maxParallelTurns: "1",
   summarizeMessageThreshold: "20",
   summarizeTokenPercent: "75",
   turnProfile: {
@@ -266,9 +273,13 @@ export const EMPTY_FORM: CoreConfigForm = {
   memoryNotifications: "off",
   memoryWorkspaceCharLimit: "12000",
   memoryPerUserCharLimit: "8000",
+  memoryProfileEnabled: true,
+  memoryProfileMaxChars: "1200",
+  memoryProfileMinConfidence: "0.65",
   memoryRecallMode: "isolated",
   memoryRecallMaxResults: "5",
   memoryRecallMaxChars: "4000",
+  memoryRecallMaxRecords: "2000",
   memoryCheckpointsEnabled: false,
   memoryCheckpointMaxCount: "100",
   memoryCheckpointMaxContextChars: "2000",
@@ -284,6 +295,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   memoryRetrievalRecencyHalfLifeDays: "90",
   memoryRetrievalFuzzyWeight: "0.75",
   memoryRetrievalRecentFallbackCount: "2",
+  memoryRetrievalUserShare: "0.7",
   memoryArchivedRetentionDays: "365",
   memoryStaleThresholdDays: "180",
   memoryAutoArchiveExpired: false,
@@ -326,6 +338,12 @@ function asNumberString(value: unknown, fallback: string): string {
     return value
   }
   return fallback
+}
+
+function asPositiveNumberString(value: unknown, fallback: string): string {
+  const normalized = asNumberString(value, fallback)
+  const number = Number(normalized)
+  return Number.isFinite(number) && number > 0 ? normalized : fallback
 }
 
 function toMCPServerType(value: unknown): MCPServerType {
@@ -471,6 +489,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const evolution = asRecord(root.evolution)
   const memory = asRecord(root.memory)
   const memoryBackgroundReview = asRecord(memory.background_review)
+  const memoryProfile = asRecord(memory.profile)
   const memoryRecall = asRecord(memory.recall)
   const memoryCheckpoints = asRecord(memory.checkpoints)
   const memoryRetrieval = asRecord(memory.retrieval)
@@ -546,6 +565,10 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
     maxToolIterations: asNumberString(
       defaults.max_tool_iterations,
       EMPTY_FORM.maxToolIterations,
+    ),
+    maxParallelTurns: asPositiveNumberString(
+      defaults.max_parallel_turns,
+      EMPTY_FORM.maxParallelTurns,
     ),
     summarizeMessageThreshold: asNumberString(
       defaults.summarize_message_threshold,
@@ -678,6 +701,18 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       memory.per_user_char_limit,
       EMPTY_FORM.memoryPerUserCharLimit,
     ),
+    memoryProfileEnabled:
+      memoryProfile.enabled === undefined
+        ? EMPTY_FORM.memoryProfileEnabled
+        : asBool(memoryProfile.enabled),
+    memoryProfileMaxChars: asPositiveNumberString(
+      memoryProfile.max_chars,
+      EMPTY_FORM.memoryProfileMaxChars,
+    ),
+    memoryProfileMinConfidence: asPositiveNumberString(
+      memoryProfile.min_confidence,
+      EMPTY_FORM.memoryProfileMinConfidence,
+    ),
     memoryRecallMode: toMemoryRecallMode(memoryRecall.mode),
     memoryRecallMaxResults: asNumberString(
       memoryRecall.max_results,
@@ -686,6 +721,10 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
     memoryRecallMaxChars: asNumberString(
       memoryRecall.max_chars,
       EMPTY_FORM.memoryRecallMaxChars,
+    ),
+    memoryRecallMaxRecords: asPositiveNumberString(
+      memoryRecall.max_records,
+      EMPTY_FORM.memoryRecallMaxRecords,
     ),
     memoryCheckpointsEnabled:
       memoryCheckpoints.enabled === undefined
@@ -747,6 +786,10 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
     memoryRetrievalRecentFallbackCount: asNumberString(
       memoryRetrieval.recent_fallback_count,
       EMPTY_FORM.memoryRetrievalRecentFallbackCount,
+    ),
+    memoryRetrievalUserShare: asPositiveNumberString(
+      memoryRetrieval.user_share,
+      EMPTY_FORM.memoryRetrievalUserShare,
     ),
     memoryArchivedRetentionDays: asNumberString(
       memoryLifecycle.archived_retention_days,
@@ -836,6 +879,19 @@ export function buildMemoryConfigPatch(
     write_approval: form.memoryApprovalMode !== "off",
     approval_mode: form.memoryApprovalMode,
     notifications: form.memoryNotifications,
+    profile: {
+      enabled: form.memoryProfileEnabled,
+      max_chars: parseIntField(
+        form.memoryProfileMaxChars,
+        "Compiled profile character limit",
+        { min: 1, max: 4000 },
+      ),
+      min_confidence: parseFloatField(
+        form.memoryProfileMinConfidence,
+        "Compiled profile minimum confidence",
+        { min: 0, max: 1 },
+      ),
+    },
     background_review: {
       enabled: form.memoryBackgroundReviewEnabled,
       interval: parseIntField(form.memoryReviewInterval, "Review interval", {
@@ -902,6 +958,11 @@ export function buildMemoryConfigPatch(
         "Recent memory fallback count",
         { min: 0, max: 50 },
       ),
+      user_share: parseFloatField(
+        form.memoryRetrievalUserShare,
+        "Current-user memory budget share",
+        { min: 0.5, max: 0.9 },
+      ),
     },
     lifecycle: {
       archived_retention_days: parseIntField(
@@ -928,6 +989,11 @@ export function buildMemoryConfigPatch(
         "Maximum recall characters",
         { min: 1, max: 20000 },
       ),
+      max_records: parseIntField(
+        form.memoryRecallMaxRecords,
+        "Maximum recall records scanned",
+        { min: 1, max: 20000 },
+      ),
     },
     checkpoints: {
       enabled: form.memoryCheckpointsEnabled,
@@ -947,6 +1013,18 @@ export function buildMemoryConfigPatch(
         { min: 1 },
       ),
     },
+  }
+}
+
+export function buildAdvancedAgentDefaultsPatch(
+  form: CoreConfigForm,
+): Record<string, unknown> {
+  return {
+    max_parallel_turns: parseIntField(
+      form.maxParallelTurns,
+      "Maximum parallel turns",
+      { min: 1 },
+    ),
   }
 }
 

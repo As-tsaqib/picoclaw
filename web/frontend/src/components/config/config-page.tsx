@@ -16,6 +16,7 @@ import {
   setLauncherConfig as updateLauncherConfig,
 } from "@/api/system"
 import { ConfigChangeNotice } from "@/components/config-change-notice"
+import { AdvancedConfigLayout } from "@/components/config/advanced-config-layout"
 import {
   AgentDefaultsSection,
   CronSection,
@@ -24,9 +25,12 @@ import {
   ExecSection,
   LauncherSection,
   MCPSection,
-  MemoryRecallSection,
   RuntimeSection,
 } from "@/components/config/config-sections"
+import {
+  ConfigTabs,
+  type ConfigPageTab,
+} from "@/components/config/config-tabs"
 import {
   type CoreConfigForm,
   EMPTY_FORM,
@@ -34,6 +38,7 @@ import {
   type LauncherForm,
   type MCPServerForm,
   type TurnProfileForm,
+  buildAdvancedAgentDefaultsPatch,
   buildEvolutionConfigPatch,
   buildFormFromConfig,
   buildMemoryConfigPatch,
@@ -43,11 +48,6 @@ import {
   parseJSONObjectField,
   parseMultilineList,
 } from "@/components/config/form-model"
-import {
-  CurrentUserProfileManagementSection,
-  EvolutionManagementSection,
-  MemoryManagementSection,
-} from "@/components/config/memory-evolution-management"
 import { PageHeader } from "@/components/page-header"
 import {
   AlertDialog,
@@ -119,6 +119,7 @@ export function ConfigPage() {
   const [autoStartEnabled, setAutoStartEnabled] = useState(false)
   const [autoStartBaseline, setAutoStartBaseline] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [activeTab, setActiveTab] = useState<ConfigPageTab>("settings")
   const [showFactoryResetDialog, setShowFactoryResetDialog] = useState(false)
 
   const { data, isLoading, error } = useQuery({
@@ -367,6 +368,8 @@ export function ConfigPage() {
           { min: 1, max: 100 },
         )
         const turnProfile = buildTurnProfilePatch(form.turnProfile)
+        const advancedAgentDefaultsPatch =
+          buildAdvancedAgentDefaultsPatch(form)
         const memoryConfigPatch = buildMemoryConfigPatch(form)
         const evolutionConfigPatch = buildEvolutionConfigPatch(form)
         const heartbeatInterval = parseIntField(
@@ -591,6 +594,7 @@ export function ConfigPage() {
               max_tokens: maxTokens,
               context_window: contextWindow,
               max_tool_iterations: maxToolIterations,
+              ...advancedAgentDefaultsPatch,
               summarize_message_threshold: summarizeMessageThreshold,
               summarize_token_percent: summarizeTokenPercent,
               turn_profile: turnProfile,
@@ -780,6 +784,7 @@ export function ConfigPage() {
           </Button>
         }
       />
+      <ConfigTabs activeTab={activeTab} onChange={setActiveTab} />
       <div className="flex-1 overflow-auto p-3 lg:p-6">
         <div className="mx-auto w-full max-w-[1000px] space-y-6">
           {isLoading ? (
@@ -794,61 +799,68 @@ export function ConfigPage() {
               <div className="flex justify-end">{factoryResetButton}</div>
             </div>
           ) : (
-            <div className="space-y-6">
-              <LauncherSection
-                launcherForm={launcherForm}
-                onFieldChange={updateLauncherField}
-                disabled={saving || isLauncherLoading}
-              />
+            <div
+              id={`config-panel-${activeTab}`}
+              role="tabpanel"
+              aria-labelledby={`config-tab-${activeTab}`}
+              className="space-y-6"
+            >
+              {activeTab === "settings" ? (
+                <>
+                  <LauncherSection
+                    launcherForm={launcherForm}
+                    onFieldChange={updateLauncherField}
+                    disabled={saving || isLauncherLoading}
+                  />
 
-              <AgentDefaultsSection
-                form={form}
-                onFieldChange={updateField}
-                onTurnProfileFieldChange={handleTurnProfileFieldChange}
-              />
+                  <AgentDefaultsSection
+                    form={form}
+                    onFieldChange={updateField}
+                    onTurnProfileFieldChange={handleTurnProfileFieldChange}
+                  />
 
-              <RuntimeSection form={form} onFieldChange={updateField} />
+                  <RuntimeSection form={form} onFieldChange={updateField} />
 
-              <MemoryRecallSection
-                form={form}
-                onFieldChange={updateField}
-                reviewProviders={memoryReviewOptions.providers}
-                reviewModels={memoryReviewOptions.models}
-              />
+                  <EvolutionSection form={form} onFieldChange={updateField} />
 
-              <MemoryManagementSection />
+                  <MCPSection
+                    form={form}
+                    onFieldChange={updateField}
+                    onAddServer={handleMCPServerAdd}
+                    onRemoveServer={handleMCPServerRemove}
+                    onServerFieldChange={handleMCPServerFieldChange}
+                  />
 
-              <CurrentUserProfileManagementSection />
+                  <ExecSection form={form} onFieldChange={updateField} />
 
-              <EvolutionSection form={form} onFieldChange={updateField} />
+                  <CronSection form={form} onFieldChange={updateField} />
 
-              <EvolutionManagementSection />
-
-              <MCPSection
-                form={form}
-                onFieldChange={updateField}
-                onAddServer={handleMCPServerAdd}
-                onRemoveServer={handleMCPServerRemove}
-                onServerFieldChange={handleMCPServerFieldChange}
-              />
-
-              <ExecSection form={form} onFieldChange={updateField} />
-
-              <CronSection form={form} onFieldChange={updateField} />
-
-              <DevicesSection
-                form={form}
-                onFieldChange={updateField}
-                autoStartEnabled={autoStartEnabled}
-                autoStartHint={autoStartHint}
-                autoStartDisabled={
-                  isAutoStartLoading ||
-                  Boolean(autoStartError) ||
-                  !autoStartSupported ||
-                  saving
-                }
-                onAutoStartChange={setAutoStartEnabled}
-              />
+                  <DevicesSection
+                    form={form}
+                    onFieldChange={updateField}
+                    autoStartEnabled={autoStartEnabled}
+                    autoStartHint={autoStartHint}
+                    autoStartDisabled={
+                      isAutoStartLoading ||
+                      Boolean(autoStartError) ||
+                      !autoStartSupported ||
+                      saving
+                    }
+                    onAutoStartChange={setAutoStartEnabled}
+                  />
+                </>
+              ) : (
+                <AdvancedConfigLayout
+                  runtimeConcurrency={{ form, onFieldChange: updateField }}
+                  memoryRecall={{
+                    form,
+                    onFieldChange: updateField,
+                    reviewProviders: memoryReviewOptions.providers,
+                    reviewModels: memoryReviewOptions.models,
+                  }}
+                  evolutionSafety={{ form, onFieldChange: updateField }}
+                />
+              )}
 
               {!isDirty && actionButtons}
             </div>
