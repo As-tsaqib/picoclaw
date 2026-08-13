@@ -51,7 +51,7 @@ export function ConfigTabs({ activeTab, onChange }: ConfigTabsProps) {
             tabIndex={activeTab === tab.key ? 0 : -1}
             onClick={() => onChange(tab.key)}
             onKeyDown={(event) => {
-              let nextIndex = index
+              let nextIndex: number
               if (event.key === "ArrowRight") {
                 nextIndex = (index + 1) % tabs.length
               } else if (event.key === "ArrowLeft") {
