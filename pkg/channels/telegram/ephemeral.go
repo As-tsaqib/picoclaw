@@ -276,13 +276,15 @@ func (c *TelegramChannel) resolveEphemeralTarget(
 	defer c.ephemeralMu.Unlock()
 	c.ensureEphemeralMapsLocked()
 	c.pruneEphemeralRoutesLocked(time.Now())
-	if sessionToken := c.ephemeralSessions[strings.TrimSpace(sessionKey)]; sessionToken != "" {
-		privateRequested = true
-		// The explicit capability from the current verified turn always wins.
-		// Replacing it with the latest session binding could route an older
-		// concurrent response through the wrong callback or client instance.
-		if token == "" {
-			token = sessionToken
+	if !inbound.SessionDashboard {
+		if sessionToken := c.ephemeralSessions[strings.TrimSpace(sessionKey)]; sessionToken != "" {
+			privateRequested = true
+			// The explicit capability from the current verified turn always wins.
+			// Replacing it with the latest session binding could route an older
+			// concurrent response through the wrong callback or client instance.
+			if token == "" {
+				token = sessionToken
+			}
 		}
 	}
 	if !privateRequested {

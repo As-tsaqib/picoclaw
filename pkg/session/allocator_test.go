@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/As-tsaqib/picoclaw/pkg/bus"
 	"github.com/As-tsaqib/picoclaw/pkg/routing"
 )
@@ -306,4 +308,43 @@ func containsAlias(aliases []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestTelegramOriginMetadataUsesNumericOwnershipFailClosed(t *testing.T) {
+	base := bus.InboundContext{
+		Channel: "telegram", ChatID: "42", ChatType: "direct", SenderID: "42",
+		Raw: map[string]string{"platform": "telegram"},
+	}
+	allocation := AllocateRouteSession(AllocationInput{
+		AgentID: "main", Context: base, SessionPolicy: routing.SessionPolicy{Dimensions: []string{"chat"}},
+	})
+	assert.Equal(t, "42", allocation.Scope.OwnerUserID)
+	assert.Equal(t, "telegram", allocation.Scope.Platform)
+	assert.Equal(t, "telegram", allocation.Scope.BotAccount)
+	assert.Equal(t, "42", allocation.Scope.OriginChatID)
+
+	group := base
+	group.ChatID = "-1001"
+	group.ChatType = "group"
+	shared := AllocateRouteSession(AllocationInput{
+		AgentID: "main", Context: group, SessionPolicy: routing.SessionPolicy{Dimensions: []string{"chat"}},
+	})
+	assert.Empty(t, shared.Scope.OwnerUserID, "shared group session must not be claimed by the sender")
+
+	owned := AllocateRouteSession(AllocationInput{
+		AgentID: "main", Context: group, SessionPolicy: routing.SessionPolicy{Dimensions: []string{"chat", "sender"}},
+	})
+	assert.Equal(
+		t, "42", owned.Scope.OwnerUserID,
+		"sender-scoped group session may be owned by that numeric Telegram user",
+	)
+
+	username := base
+	username.SenderID = "@alice"
+	untrusted := AllocateRouteSession(AllocationInput{
+		AgentID:       "main",
+		Context:       username,
+		SessionPolicy: routing.SessionPolicy{Dimensions: []string{"chat", "sender"}},
+	})
+	assert.Empty(t, untrusted.Scope.OwnerUserID, "username must never be accepted as owner authorization")
 }

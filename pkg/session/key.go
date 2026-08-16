@@ -301,7 +301,13 @@ func LegacyAliasesProveScope(scope *SessionScope, aliases []string) []string {
 // Ambiguous Telegram aliases must never be persisted or promoted into a scoped
 // session that can later appear in the multi-session catalog.
 func metadataAliasesForScope(scope *SessionScope, aliases []string) []string {
-	if scope == nil || !strings.EqualFold(strings.TrimSpace(scope.Channel), "telegram") {
+	if scope == nil {
+		return uniqueAliases(aliases)
+	}
+	isTelegram := strings.EqualFold(strings.TrimSpace(scope.Platform), "telegram") ||
+		strings.TrimSpace(scope.BotAccount) != "" ||
+		strings.EqualFold(strings.TrimSpace(scope.Channel), "telegram")
+	if !isTelegram {
 		return uniqueAliases(aliases)
 	}
 	return LegacyAliasesProveScope(scope, aliases)

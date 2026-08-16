@@ -45,19 +45,20 @@ type StructuredContent struct {
 // session keys in callback_data. The channel stores this object server-side
 // and only sends a short opaque menu token to the platform.
 type InteractionMenu struct {
-	Kind    string
-	OwnerID string
-	Channel string
-	Account string
-	ChatID  string
-	TopicID string
-	AgentID string
-	Scope   string
-	Inbound InboundContext
-	Page    int
-	Pages   int
-	Entries []InteractionEntry
-	Current string
+	Kind          string
+	OwnerID       string
+	Channel       string
+	Account       string
+	ChatID        string
+	TopicID       string
+	AgentID       string
+	Scope         string
+	DashboardMode string
+	Inbound       InboundContext
+	Page          int
+	Pages         int
+	Entries       []InteractionEntry
+	Current       string
 }
 
 type InteractionEntry struct {
@@ -71,20 +72,21 @@ type InteractionEntry struct {
 // message location; the agent validates the session scope again before
 // mutating durable state.
 type InternalCallbackRequest struct {
-	Kind       string
-	Action     string
-	Value      string
-	OwnerID    string
-	Channel    string
-	Account    string
-	ChatID     string
-	TopicID    string
-	MessageID  string
-	AgentID    string
-	Scope      string
-	Inbound    InboundContext
-	Page       int
-	SessionKey string
+	Kind          string
+	Action        string
+	Value         string
+	OwnerID       string
+	Channel       string
+	Account       string
+	ChatID        string
+	TopicID       string
+	MessageID     string
+	AgentID       string
+	Scope         string
+	DashboardMode string
+	Inbound       InboundContext
+	Page          int
+	SessionKey    string
 }
 
 type InternalCallbackResponse struct {

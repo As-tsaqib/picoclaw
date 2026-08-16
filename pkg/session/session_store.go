@@ -46,3 +46,14 @@ type ScopedSessionStore interface {
 	ListScopedSessions(scope *SessionScope, routeAliases []string) ([]SessionRecord, error)
 	ResolveScopedSelector(scope *SessionScope, routeAliases []string, selector string) (SessionRecord, error)
 }
+
+// DashboardSessionStore extends scoped session storage with private Telegram
+// dashboard catalogs and durable dashboard-only active mappings.
+type DashboardSessionStore interface {
+	ScopedSessionStore
+	ListDashboardSessions(query DashboardQuery) ([]SessionRecord, error)
+	ActiveDashboardSession(query DashboardQuery) string
+	SetActiveDashboardSession(query DashboardQuery, sessionKey string) error
+	RenameDashboardSession(query DashboardQuery, sessionKey, name string) error
+	ResolveDashboardSelector(query DashboardQuery, selector string) (SessionRecord, error)
+}

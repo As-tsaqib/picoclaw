@@ -85,7 +85,10 @@ func MigrateFromJSON(
 					return migrated, fmt.Errorf("memory: migrate active session mapping: %w", setErr)
 				}
 			}
-			if renameErr := os.Rename(filepath.Join(sessionsDir, name), filepath.Join(sessionsDir, name+".migrated")); renameErr != nil {
+			if renameErr := os.Rename(
+				filepath.Join(sessionsDir, name),
+				filepath.Join(sessionsDir, name+".migrated"),
+			); renameErr != nil {
 				log.Printf("memory: migrate: rename %s: %v", name, renameErr)
 			}
 			continue
@@ -150,7 +153,13 @@ func MigrateFromJSON(
 				}
 			}
 			if strings.TrimSpace(sess.Name) != "" {
-				if nameErr := metadataStore.SetSessionName(ctx, key, sess.Name, sess.NameSource, sess.AutoNamePending); nameErr != nil {
+				if nameErr := metadataStore.SetSessionName(
+					ctx,
+					key,
+					sess.Name,
+					sess.NameSource,
+					sess.AutoNamePending,
+				); nameErr != nil {
 					return migrated, fmt.Errorf("memory: migrate %s: session name: %w", name, nameErr)
 				}
 			}

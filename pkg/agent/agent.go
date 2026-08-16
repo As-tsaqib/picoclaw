@@ -175,7 +175,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			}
 
 			// Resolve the session key for this message
-			sessionKey, agentID, ok := al.resolveSteeringTarget(msg)
+			sessionKey, agentID, dashboardAttached, ok := al.resolveSteeringTarget(msg)
 			if !ok {
 				// Non-routable message (e.g., system) — process immediately.
 				// Note: system messages are processed in the main goroutine,
@@ -185,8 +185,11 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			}
 			// Freeze the selected session on the inbound message. A callback may
 			// switch the durable active mapping while this turn is running, but
-			// this worker and its queued response remain bound to this key.
+			// this worker and its queued response remain bound to this key. The
+			// process-local dashboard marker makes subsequent resolution trust this
+			// frozen key instead of consulting a newer dashboard mapping.
 			msg.SessionKey = sessionKey
+			msg.Context.SessionDashboard = dashboardAttached
 			if err := al.bindPrivateInboundRoute(msg, sessionKey); err != nil {
 				logger.WarnCF("agent", "Private route binding rejected; dropping turn", map[string]any{
 					"channel": msg.Channel,
@@ -602,12 +605,14 @@ func (al *AgentLoop) runAgentLoop(
 		}
 	}
 
-	ensureSessionMetadata(
-		agent.Sessions,
-		opts.Dispatch.SessionKey,
-		opts.Dispatch.SessionScope,
-		opts.Dispatch.SessionAliases,
-	)
+	if !opts.Dispatch.SessionDashboard {
+		ensureSessionMetadata(
+			agent.Sessions,
+			opts.Dispatch.SessionKey,
+			opts.Dispatch.SessionScope,
+			opts.Dispatch.SessionAliases,
+		)
+	}
 	al.cancelMemoryReviewForLiveTurn(agent, opts)
 
 	turnScope := al.newTurnEventScope(

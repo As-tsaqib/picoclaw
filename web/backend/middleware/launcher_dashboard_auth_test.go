@@ -265,3 +265,28 @@ func TestLauncherDashboardAuth_WebSocketUnauthorizedDoesNotRedirect(t *testing.T
 		t.Fatalf("Location = %q, want empty", got)
 	}
 }
+
+func TestLauncherDashboardAuth_ProtectsSessionSuperadminEndpoints(t *testing.T) {
+	cfg := LauncherDashboardAuthConfig{ExpectedCookie: "dashboard-secret"}
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+	h := LauncherDashboardAuth(cfg, next)
+
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		req := httptest.NewRequest(method, "/api/dashboard/superadmin", nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s unauthenticated status = %d, want %d", method, rec.Code, http.StatusUnauthorized)
+		}
+
+		req = httptest.NewRequest(method, "/api/dashboard/superadmin", nil)
+		req.AddCookie(&http.Cookie{Name: LauncherDashboardCookieName, Value: "dashboard-secret"})
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusTeapot {
+			t.Fatalf("%s authenticated status = %d, want %d", method, rec.Code, http.StatusTeapot)
+		}
+	}
+}

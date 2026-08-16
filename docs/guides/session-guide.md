@@ -201,6 +201,22 @@ In this example:
 - most traffic uses one shared context per chat
 - the support group uses one context per user inside that chat
 
+
+## Telegram private session dashboards
+
+Telegram private chats have an additional safe session view on top of normal route scoping:
+
+- every private Telegram user automatically receives a personal dashboard keyed by the numeric Telegram `from.id`, private `chat.id`, bot/channel account, and routed agent;
+- personal dashboards only list sessions whose durable metadata proves that same user owns them; a shared group/topic session is not assigned to the latest sender merely because they spoke there;
+- selecting an owned group/topic session from private chat changes only the private-dashboard active mapping. It does not change the group/topic's own active mapping, and replies remain in the private chat;
+- the personal active selection is durable across gateway restarts.
+
+The launcher dashboard can configure exactly one optional Telegram session superadmin. The record contains a numeric Telegram User ID, bot account, agent/instance, enabled state, and an explicit `Legacy/Unknown` opt-in. Global mode activates only when all configured values match a **private** Telegram chat. The same superadmin remains route-scoped in groups/topics. Replacing or deleting the record removes the previous global authorization. With no enabled superadmin, personal dashboards continue to work and the global catalog is unavailable.
+
+The global catalog shows origin metadata instead of full session keys or transcript content. Sessions with unverifiable legacy scope are hidden unless the administrator explicitly enables `Legacy/Unknown`; personal dashboards never use that opt-in to claim ownership.
+
+Telegram session menus use native Rich Message tables when supported and fall back to readable text otherwise. Callback tokens are short, opaque, owner/chat/account/agent/mode-bound, expire after 15 minutes, and are handled internally rather than sent to the model or stored in history.
+
 ## Identity Links
 
 `session.identity_links` helps when the same user may appear under multiple raw sender IDs and you want PicoClaw to treat them as one sender identity.

@@ -11,13 +11,15 @@ import (
 // DispatchRequest is the normalized runtime input passed into the agent loop
 // after routing and session allocation have completed.
 type DispatchRequest struct {
-	SessionKey     string
-	SessionAliases []string
-	InboundContext *bus.InboundContext
-	RouteResult    *routing.ResolvedRoute
-	SessionScope   *session.SessionScope
-	UserMessage    string
-	Media          []string
+	SessionKey       string
+	RouteSessionKey  string
+	SessionDashboard bool
+	SessionAliases   []string
+	InboundContext   *bus.InboundContext
+	RouteResult      *routing.ResolvedRoute
+	SessionScope     *session.SessionScope
+	UserMessage      string
+	Media            []string
 }
 
 func (r DispatchRequest) Channel() string {

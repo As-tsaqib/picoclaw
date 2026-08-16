@@ -245,7 +245,9 @@ func structuredKeyboardMarkup(rows [][]bus.StructuredButton) *telego.InlineKeybo
 				continue
 			}
 			style := normalizeButtonStyle(button.Style)
-			buttons = append(buttons, telego.InlineKeyboardButton{Text: button.Text, CallbackData: button.CallbackData, Style: style})
+			buttons = append(buttons, telego.InlineKeyboardButton{
+				Text: button.Text, CallbackData: button.CallbackData, Style: style,
+			})
 		}
 		if len(buttons) > 0 {
 			keyboard = append(keyboard, buttons)
@@ -320,20 +322,30 @@ func (c *TelegramChannel) structuredReplyMarkup(
 		if parseErr != nil {
 			continue
 		}
-		button := telego.InlineKeyboardButton{Text: entry.Label, CallbackData: callback("p" + strconv.Itoa(page)), Style: telego.ButtonStylePrimary}
+		button := telego.InlineKeyboardButton{
+			Text:         entry.Label,
+			CallbackData: callback("p" + strconv.Itoa(page)),
+			Style:        telego.ButtonStylePrimary,
+		}
 		if page < menu.Page {
 			prev = button
 		} else if page > menu.Page {
 			next = button
 		}
 	}
-	pageButton := telego.InlineKeyboardButton{Text: fmt.Sprintf("Halaman %d/%d", menu.Page+1, menu.Pages), CallbackData: callback("o")}
+	pageButton := telego.InlineKeyboardButton{
+		Text:         fmt.Sprintf("Halaman %d/%d", menu.Page+1, menu.Pages),
+		CallbackData: callback("o"),
+	}
 	keyboard = append(keyboard, []telego.InlineKeyboardButton{prev, pageButton, next})
 	keyboard = append(keyboard, []telego.InlineKeyboardButton{
 		{Text: "➕ Baru", CallbackData: callback("n"), Style: telego.ButtonStylePrimary},
 		{Text: "✏️ Rename", CallbackData: callback("r"), Style: telego.ButtonStylePrimary},
 	})
-	keyboard = append(keyboard, []telego.InlineKeyboardButton{{Text: "✖️ Tutup", CallbackData: callback("x"), Style: telego.ButtonStyleDanger}})
+	keyboard = append(
+		keyboard,
+		[]telego.InlineKeyboardButton{{Text: "✖️ Tutup", CallbackData: callback("x"), Style: telego.ButtonStyleDanger}},
+	)
 	for _, row := range keyboard {
 		for _, button := range row {
 			if len([]byte(button.CallbackData)) == 0 || len([]byte(button.CallbackData)) > 64 {
@@ -466,31 +478,36 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 		return nil
 	}
 	response, err := handler(ctx, bus.InternalCallbackRequest{
-		Kind:       menu.menu.Kind,
-		Action:     action,
-		Value:      value,
-		OwnerID:    menu.menu.OwnerID,
-		Channel:    menu.menu.Channel,
-		Account:    menu.menu.Account,
-		ChatID:     menu.menu.ChatID,
-		TopicID:    menu.menu.TopicID,
-		MessageID:  strconv.Itoa(message.MessageID),
-		AgentID:    menu.menu.AgentID,
-		Scope:      menu.menu.Scope,
-		Inbound:    menu.menu.Inbound,
-		Page:       menu.menu.Page,
-		SessionKey: menu.menu.Current,
+		Kind:          menu.menu.Kind,
+		Action:        action,
+		Value:         value,
+		OwnerID:       menu.menu.OwnerID,
+		Channel:       menu.menu.Channel,
+		Account:       menu.menu.Account,
+		ChatID:        menu.menu.ChatID,
+		TopicID:       menu.menu.TopicID,
+		MessageID:     strconv.Itoa(message.MessageID),
+		AgentID:       menu.menu.AgentID,
+		Scope:         menu.menu.Scope,
+		DashboardMode: menu.menu.DashboardMode,
+		Inbound:       menu.menu.Inbound,
+		Page:          menu.menu.Page,
+		SessionKey:    menu.menu.Current,
 	})
 	if err != nil {
-		logger.WarnCF("telegram", "Internal session callback was rejected", map[string]any{"reason": "scope_or_state_validation"})
-		return nil
+		logger.WarnCF(
+			"telegram",
+			"Internal session callback was rejected",
+			map[string]any{"reason": "scope_or_state_validation"},
+		)
+		return fmt.Errorf("internal session callback rejected: %w", err)
 	}
 	if response == nil {
 		return nil
 	}
 	if response.Close {
-		if err := c.clearSessionMenuKeyboard(ctx, message, menu); err != nil {
-			return err
+		if clearErr := c.clearSessionMenuKeyboard(ctx, message, menu); clearErr != nil {
+			return clearErr
 		}
 		c.deleteSessionMenu(token)
 		return nil
@@ -498,12 +515,15 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 	if response.Content == nil {
 		return nil
 	}
-	markup, pending, err := c.structuredReplyMarkup(response.Content, menu.chatID, menu.threadID)
-	if err != nil || pending == nil {
+	markup, pending, markupErr := c.structuredReplyMarkup(response.Content, menu.chatID, menu.threadID)
+	if markupErr != nil {
+		return fmt.Errorf("render session callback response: %w", markupErr)
+	}
+	if pending == nil {
 		return nil
 	}
-	if err := c.editStructuredSessionMenu(ctx, message, menu, response.Content, markup); err != nil {
-		return err
+	if editErr := c.editStructuredSessionMenu(ctx, message, menu, response.Content, markup); editErr != nil {
+		return editErr
 	}
 	pending.messageID = menu.messageID
 	pending.ephemeralID = menu.ephemeralID
@@ -603,7 +623,11 @@ func (c *TelegramChannel) editStructuredSessionMenu(
 			Text:               fallback,
 			ReplyMarkup:        markup,
 		}
-		if err := c.bot.EditEphemeralMessageText(ctx, params); err != nil && !strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
+		if err := c.bot.EditEphemeralMessageText(
+			ctx,
+			params,
+		); err != nil &&
+			!strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
 			return err
 		}
 		return nil

@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/As-tsaqib/picoclaw/pkg/bus"
@@ -116,7 +117,91 @@ func buildSessionScope(input AllocationInput) SessionScope {
 		scope.Values = values
 	}
 
+	applySessionOriginMetadata(&scope, input, policyDimensions)
 	return scope
+}
+
+func applySessionOriginMetadata(scope *SessionScope, input AllocationInput, dimensions []string) {
+	if scope == nil {
+		return
+	}
+	inbound := input.Context
+	scope.OriginChannel = strings.ToLower(strings.TrimSpace(inbound.Channel))
+	scope.OriginAccount = routing.NormalizeAccountID(inbound.Account)
+	scope.OriginAgentID = routing.NormalizeAgentID(input.AgentID)
+	scope.OriginChatID = strings.TrimSpace(inbound.ChatID)
+	scope.OriginTopicID = strings.TrimSpace(inbound.TopicID)
+	scope.OriginSenderID = strings.TrimSpace(inbound.SenderID)
+	scope.OriginChatType = strings.ToLower(strings.TrimSpace(inbound.ChatType))
+	scope.OriginRoute = sessionOriginRoute(scope)
+
+	if !isTelegramInboundContext(inbound) {
+		return
+	}
+	scope.Platform = "telegram"
+	// Telegram Channel is the configured channel instance name and therefore
+	// the bot-account boundary. Keep Account separately for routing policy.
+	scope.BotAccount = strings.TrimSpace(inbound.Channel)
+	scope.OriginChannel = "telegram"
+	scope.OriginRoute = sessionOriginRoute(scope)
+
+	if owner := trustedTelegramOwner(inbound, dimensions); owner != "" {
+		scope.OwnerUserID = owner
+	}
+}
+
+func isTelegramInboundContext(inbound bus.InboundContext) bool {
+	if strings.EqualFold(strings.TrimSpace(inbound.Raw["platform"]), "telegram") {
+		return true
+	}
+	// Preserve compatibility with the standard singleton channel name used by
+	// older metadata before adapters started recording the platform explicitly.
+	return strings.EqualFold(strings.TrimSpace(inbound.Channel), "telegram")
+}
+
+func trustedTelegramOwner(inbound bus.InboundContext, dimensions []string) string {
+	userID := strings.TrimSpace(inbound.SenderID)
+	parsed, err := strconv.ParseInt(userID, 10, 64)
+	if err != nil || parsed <= 0 {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(inbound.ChatType), "direct") ||
+		inbound.PrivateSession || inbound.PrivateResponse || containsSessionDimension(dimensions, "sender") {
+		return strconv.FormatInt(parsed, 10)
+	}
+	return ""
+}
+
+func containsSessionDimension(dimensions []string, target string) bool {
+	for _, dimension := range dimensions {
+		if strings.EqualFold(strings.TrimSpace(dimension), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionOriginRoute(scope *SessionScope) string {
+	if scope == nil {
+		return ""
+	}
+	channel := strings.TrimSpace(scope.OriginChannel)
+	if channel == "" {
+		channel = strings.TrimSpace(scope.Channel)
+	}
+	parts := []string{channel}
+	if account := strings.TrimSpace(scope.BotAccount); account != "" {
+		parts = append(parts, account)
+	} else if account := strings.TrimSpace(scope.OriginAccount); account != "" {
+		parts = append(parts, account)
+	}
+	if chat := strings.TrimSpace(scope.OriginChatID); chat != "" {
+		parts = append(parts, chat)
+	}
+	if topic := strings.TrimSpace(scope.OriginTopicID); topic != "" {
+		parts = append(parts, "topic="+topic)
+	}
+	return strings.Join(parts, "/")
 }
 
 func buildLegacySessionAliases(input AllocationInput) []string {
@@ -189,7 +274,7 @@ func ensurePrivateDimension(dimensions []string, target string) []string {
 
 func shouldPreserveTelegramForumIsolation(input AllocationInput) bool {
 	inbound := input.Context
-	if !strings.EqualFold(strings.TrimSpace(inbound.Channel), "telegram") {
+	if !isTelegramInboundContext(inbound) {
 		return false
 	}
 	if strings.TrimSpace(inbound.TopicID) == "" {

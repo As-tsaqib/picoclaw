@@ -12,6 +12,21 @@ type SessionScope struct {
 	Dimensions []string          `json:"dimensions"`
 	Values     map[string]string `json:"values"`
 
+	// Ownership and origin metadata are deliberately excluded from the
+	// canonical scope signature. They enrich existing durable session metadata
+	// without changing session keys created by older PicoClaw versions.
+	OwnerUserID    string `json:"owner_user_id,omitempty"`
+	OriginChannel  string `json:"origin_channel,omitempty"`
+	OriginAccount  string `json:"origin_account,omitempty"`
+	OriginAgentID  string `json:"origin_agent_id,omitempty"`
+	OriginChatID   string `json:"origin_chat_id,omitempty"`
+	OriginTopicID  string `json:"origin_topic_id,omitempty"`
+	OriginSenderID string `json:"origin_sender_id,omitempty"`
+	OriginChatType string `json:"origin_chat_type,omitempty"`
+	OriginRoute    string `json:"origin_route,omitempty"`
+	Platform       string `json:"platform,omitempty"`
+	BotAccount     string `json:"bot_account,omitempty"`
+
 	// PrivateResponse is a non-secret, persisted fail-closed marker. It keeps a
 	// resumed or queued turn private even after its session scope is reloaded.
 	// The receiver capability itself remains process-local and is never stored.

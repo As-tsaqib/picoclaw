@@ -26,12 +26,17 @@ func (al *AgentLoop) buildContinuationTarget(msg bus.InboundMessage) (*continuat
 		return nil, err
 	}
 	allocation := al.allocateRouteSession(route, msg)
+	sessionKey, dashboardAttached := al.resolveTurnSession(agent, allocation, &msg.Context, msg.SessionKey)
+	inbound := cloneInboundContext(&msg.Context)
+	if inbound != nil {
+		inbound.SessionDashboard = dashboardAttached
+	}
 
 	return &continuationTarget{
-		SessionKey:     resolveAllocatedSession(agent, allocation, msg.SessionKey),
+		SessionKey:     sessionKey,
 		Channel:        msg.Channel,
 		ChatID:         msg.ChatID,
-		InboundContext: cloneInboundContext(&msg.Context),
+		InboundContext: inbound,
 	}, nil
 }
 
@@ -177,10 +182,11 @@ func (al *AgentLoop) processMessageWithStructured(
 
 	allocation := al.allocateRouteSession(route, msg)
 
-	// Resolve session key from the route allocation, while preserving explicit
-	// agent-scoped keys supplied by the caller.
+	// Resolve the normal route session first, then apply a durable private
+	// Telegram dashboard attachment without mutating the origin route mapping.
 	scopeKey := resolveAllocatedSession(agent, allocation, msg.SessionKey)
-	sessionKey := scopeKey
+	sessionKey, dashboardAttached := al.resolveTurnSession(agent, allocation, &msg.Context, msg.SessionKey)
+	msg.Context.SessionDashboard = dashboardAttached
 	if err := al.bindPrivateInboundRoute(msg, sessionKey); err != nil {
 		// Bind only the route capability issued by the Telegram update. If the
 		// channel rejects it, propagate the error through the verified private
@@ -218,13 +224,15 @@ func (al *AgentLoop) processMessageWithStructured(
 	}
 	opts := processOptions{
 		Dispatch: DispatchRequest{
-			SessionKey:     sessionKey,
-			SessionAliases: sessionAliases,
-			InboundContext: cloneInboundContext(&msg.Context),
-			RouteResult:    cloneResolvedRoute(&route),
-			SessionScope:   session.CloneScope(&allocation.Scope),
-			UserMessage:    msg.Content,
-			Media:          append([]string(nil), msg.Media...),
+			SessionKey:       sessionKey,
+			RouteSessionKey:  scopeKey,
+			SessionDashboard: dashboardAttached,
+			SessionAliases:   sessionAliases,
+			InboundContext:   cloneInboundContext(&msg.Context),
+			RouteResult:      cloneResolvedRoute(&route),
+			SessionScope:     session.CloneScope(&allocation.Scope),
+			UserMessage:      msg.Content,
+			Media:            append([]string(nil), msg.Media...),
 		},
 		SenderID:                msg.SenderID,
 		SenderDisplayName:       msg.Sender.DisplayName,
@@ -240,10 +248,16 @@ func (al *AgentLoop) processMessageWithStructured(
 	}
 
 	if !commands.HasCommandPrefix(msg.Content) {
-		ensureSessionMetadata(agent.Sessions, sessionKey, opts.Dispatch.SessionScope, opts.Dispatch.SessionAliases)
+		if !opts.Dispatch.SessionDashboard {
+			ensureSessionMetadata(agent.Sessions, sessionKey, opts.Dispatch.SessionScope, opts.Dispatch.SessionAliases)
+		}
 		if catalog, ok := agent.Sessions.(session.ScopedSessionStore); ok {
 			if nameErr := catalog.SetAutomaticSessionName(sessionKey, msg.Content); nameErr != nil {
-				logger.WarnCF("session", "Failed to assign automatic session name", map[string]any{"error": nameErr.Error()})
+				logger.WarnCF(
+					"session",
+					"Failed to assign automatic session name",
+					map[string]any{"error": nameErr.Error()},
+				)
 			}
 		}
 	}
@@ -304,7 +318,12 @@ func resolveAllocatedSession(agent *AgentInstance, allocation session.Allocation
 	if session.IsSessionInstanceKey(explicit) {
 		if agent != nil {
 			if catalog, ok := agent.Sessions.(session.ScopedSessionStore); ok &&
-				catalogSessionInScope(catalog, &allocation.Scope, allocation.SessionAliases, strings.TrimSpace(explicit)) {
+				catalogSessionInScope(
+					catalog,
+					&allocation.Scope,
+					allocation.SessionAliases,
+					strings.TrimSpace(explicit),
+				) {
 				return strings.TrimSpace(explicit)
 			}
 		}
@@ -319,12 +338,49 @@ func resolveAllocatedSession(agent *AgentInstance, allocation session.Allocation
 	}
 	if agent != nil {
 		if catalog, ok := agent.Sessions.(session.ScopedSessionStore); ok {
-			if active := strings.TrimSpace(catalog.ActiveScopedSession(&allocation.Scope, allocation.SessionAliases)); active != "" {
+			if active := strings.TrimSpace(
+				catalog.ActiveScopedSession(&allocation.Scope, allocation.SessionAliases),
+			); active != "" {
 				return active
 			}
 		}
 	}
 	return allocation.SessionKey
+}
+
+func (al *AgentLoop) resolveTurnSession(
+	agent *AgentInstance,
+	allocation session.Allocation,
+	inbound *bus.InboundContext,
+	explicit string,
+) (string, bool) {
+	// SessionDashboard is process-local and can only be set after PicoClaw has
+	// already authorized and frozen a private-dashboard selection. Never
+	// re-read the durable mapping for that turn: a concurrent callback may
+	// change the next-turn selection, but it must not retarget this one.
+	if inbound != nil && inbound.SessionDashboard && strings.TrimSpace(explicit) != "" {
+		return strings.TrimSpace(explicit), true
+	}
+
+	routeSessionKey := resolveAllocatedSession(agent, allocation, explicit)
+	if agent == nil {
+		return routeSessionKey, false
+	}
+	dashboardCatalog, ok := agent.Sessions.(session.DashboardSessionStore)
+	if !ok {
+		return routeSessionKey, false
+	}
+	_, query, dashboard := al.telegramSessionDashboard(
+		inbound, agent.ID, routeSessionKey, &allocation.Scope, allocation.SessionAliases,
+	)
+	if !dashboard {
+		return routeSessionKey, false
+	}
+	active := strings.TrimSpace(dashboardCatalog.ActiveDashboardSession(query))
+	if active == "" || active == routeSessionKey {
+		return routeSessionKey, false
+	}
+	return active, true
 }
 
 func (al *AgentLoop) processSystemMessage(

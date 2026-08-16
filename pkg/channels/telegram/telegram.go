@@ -1415,6 +1415,7 @@ func (c *TelegramChannel) handleMessagesWithPrivatePlan(
 	}
 
 	metadata := map[string]string{
+		"platform":   "telegram",
 		"user_id":    fmt.Sprintf("%d", user.ID),
 		"username":   user.Username,
 		"first_name": user.FirstName,
