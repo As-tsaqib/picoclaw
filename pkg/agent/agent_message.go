@@ -253,7 +253,11 @@ func (al *AgentLoop) processMessageWithStructured(
 		}
 		if catalog, ok := agent.Sessions.(session.ScopedSessionStore); ok {
 			if nameErr := catalog.SetAutomaticSessionName(sessionKey, msg.Content); nameErr != nil {
-				logger.WarnCF("session", "Failed to assign automatic session name", map[string]any{"error": nameErr.Error()})
+				logger.WarnCF(
+					"session",
+					"Failed to assign automatic session name",
+					map[string]any{"error": nameErr.Error()},
+				)
 			}
 		}
 	}

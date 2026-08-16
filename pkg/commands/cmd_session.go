@@ -11,11 +11,34 @@ func sessionCommand() Definition {
 		Description: "Manage sessions; Telegram private chats open a personal dashboard, or the configured superadmin global catalog",
 		Handler:     sessionOperationHandler("list", 1),
 		SubCommands: []SubCommand{
-			{Name: "list", Description: "List route sessions, or owned/global sessions from an authorized Telegram private dashboard", Handler: sessionOperationHandler("list", 2)},
-			{Name: "current", Description: "Show the active session, origin, owner, short ID, and dashboard mode", Handler: sessionOperationHandler("current", 2)},
-			{Name: "new", Description: "Create and activate a named session", ArgsUsage: "[name]", Handler: sessionOperationHandler("new", 2)},
-			{Name: "rename", Description: "Rename the active session", ArgsUsage: "<new-name>", Handler: sessionOperationHandler("rename", 2)},
-			{Name: "use", Description: "Switch by number or short ID", ArgsUsage: "<number|short-id>", Handler: sessionOperationHandler("use", 2)},
+			{
+				Name:        "list",
+				Description: "List route sessions, or owned/global sessions from an authorized Telegram private dashboard",
+				Handler:     sessionOperationHandler("list", 2),
+			},
+			{
+				Name:        "current",
+				Description: "Show the active session, origin, owner, short ID, and dashboard mode",
+				Handler:     sessionOperationHandler("current", 2),
+			},
+			{
+				Name:        "new",
+				Description: "Create and activate a named session",
+				ArgsUsage:   "[name]",
+				Handler:     sessionOperationHandler("new", 2),
+			},
+			{
+				Name:        "rename",
+				Description: "Rename the active session",
+				ArgsUsage:   "<new-name>",
+				Handler:     sessionOperationHandler("rename", 2),
+			},
+			{
+				Name:        "use",
+				Description: "Switch by number or short ID",
+				ArgsUsage:   "<number|short-id>",
+				Handler:     sessionOperationHandler("use", 2),
+			},
 		},
 	}
 }

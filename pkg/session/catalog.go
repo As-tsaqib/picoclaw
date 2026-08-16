@@ -396,11 +396,6 @@ func (b *JSONLBackend) sessionBelongsToScope(
 	return false
 }
 
-func isLegacyMainSession(key string) bool {
-	parsed := ParseLegacyAgentSessionKey(key)
-	return parsed != nil && strings.EqualFold(strings.TrimSpace(parsed.Rest), "main")
-}
-
 func containsSessionRecord(records []SessionRecord, key string) bool {
 	for _, record := range records {
 		if record.Key == key {
@@ -439,7 +434,9 @@ func visibleSessionStats(history []providers.Message) (int, time.Time) {
 		case "user":
 			visible = strings.TrimSpace(message.Content) != "" || len(message.Media) > 0 || len(message.Attachments) > 0
 		case "assistant":
-			visible = strings.TrimSpace(message.Content) != "" && len(message.ToolCalls) == 0 && strings.TrimSpace(message.ToolCallID) == ""
+			visible = strings.TrimSpace(message.Content) != "" &&
+				len(message.ToolCalls) == 0 &&
+				strings.TrimSpace(message.ToolCallID) == ""
 		}
 		if !visible {
 			continue

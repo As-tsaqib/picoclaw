@@ -99,7 +99,10 @@ func (h *Handler) restartGatewayForDashboardConfig() {
 		return
 	}
 	if _, err := h.RestartGateway(); err != nil {
-		logger.ErrorF("failed to restart gateway after session dashboard config change", map[string]any{"error": err.Error()})
+		logger.ErrorF(
+			"failed to restart gateway after session dashboard config change",
+			map[string]any{"error": err.Error()},
+		)
 	}
 }
 

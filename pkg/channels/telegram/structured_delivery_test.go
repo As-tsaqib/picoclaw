@@ -21,11 +21,14 @@ import (
 func testSessionStructuredContent() *bus.StructuredContent {
 	inbound := bus.InboundContext{Channel: "telegram", ChatID: "12345", ChatType: "direct", SenderID: "42"}
 	return &bus.StructuredContent{
-		Kind: "session_list", Title: "Session", Tables: []bus.StructuredTable{{
+		Kind:  "session_list",
+		Title: "Session",
+		Tables: []bus.StructuredTable{{
 			Columns: []string{"No", "Nama Session", "Pesan", "Terakhir"},
 			Rows:    [][]string{{"✅1", "<b>Main</b> * safe | data", "2", "15:00"}, {"2", "Other", "1", "Kemarin"}},
 			Border:  true, Striped: true, Header: true,
-		}}, Fallback: "| No | Nama Session | Pesan | Terakhir |\n|---|---|---|---|\n| ✅1 | Main | 2 | 15:00 |",
+		}},
+		Fallback: "| No | Nama Session | Pesan | Terakhir |\n|---|---|---|---|\n| ✅1 | Main | 2 | 15:00 |",
 		Interaction: &bus.InteractionMenu{Kind: "session", OwnerID: "42", Channel: "telegram", ChatID: "12345", AgentID: "main", Scope: "scope-signature", Inbound: inbound, Page: 0, Pages: 1, Current: "si_v1_secret-session-key-that-must-not-leak", Entries: []bus.InteractionEntry{
 			{Label: "1", Action: "select", Value: "si_v1_secret-session-key-that-must-not-leak"},
 			{Label: "2", Action: "select", Value: "si_v1_other-secret"},

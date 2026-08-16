@@ -460,7 +460,10 @@ func (sm *SessionManager) CreateScopedSession(scope *SessionScope, name string) 
 	if err := sm.Save(key); err != nil {
 		return SessionRecord{}, err
 	}
-	return SessionRecord{Key: key, ShortID: ShortSessionID(key), Name: cleanName, NameSource: source, CreatedAt: now, UpdatedAt: now, Scope: CloneScope(scope)}, nil
+	return SessionRecord{
+		Key: key, ShortID: ShortSessionID(key), Name: cleanName, NameSource: source,
+		CreatedAt: now, UpdatedAt: now, Scope: CloneScope(scope),
+	}, nil
 }
 
 func (sm *SessionManager) RenameScopedSession(scope *SessionScope, aliases []string, key, name string) error {

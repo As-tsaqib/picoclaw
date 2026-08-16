@@ -334,7 +334,10 @@ func TestTelegramOriginMetadataUsesNumericOwnershipFailClosed(t *testing.T) {
 	owned := AllocateRouteSession(AllocationInput{
 		AgentID: "main", Context: group, SessionPolicy: routing.SessionPolicy{Dimensions: []string{"chat", "sender"}},
 	})
-	assert.Equal(t, "42", owned.Scope.OwnerUserID, "sender-scoped group session may be owned by that numeric Telegram user")
+	assert.Equal(
+		t, "42", owned.Scope.OwnerUserID,
+		"sender-scoped group session may be owned by that numeric Telegram user",
+	)
 
 	username := base
 	username.SenderID = "@alice"

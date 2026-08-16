@@ -35,7 +35,15 @@ func listMCPServersHandler() Handler {
 			lines = append(lines, fmt.Sprintf("  Connected: %s", yesNo(server.Connected)))
 			if server.Connected {
 				lines = append(lines, fmt.Sprintf("  Active tools: %d", server.ToolCount))
-				rows = append(rows, []string{fmt.Sprintf("%d", idx+1), "MCP", server.Name, fmt.Sprintf("enabled=%s, connected=%s, tools=%d", yesNo(server.Enabled), yesNo(server.Connected), server.ToolCount)})
+				rows = append(rows, []string{
+					fmt.Sprintf("%d", idx+1),
+					"MCP",
+					server.Name,
+					fmt.Sprintf(
+						"enabled=%s, connected=%s, tools=%d",
+						yesNo(server.Enabled), yesNo(server.Connected), server.ToolCount,
+					),
+				})
 				continue
 			}
 			lines = append(lines, "  Active tools: unavailable")

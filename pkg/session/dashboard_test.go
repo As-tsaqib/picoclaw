@@ -60,13 +60,25 @@ func TestPersonalDashboardOnlyListsVerifiedOwnerSessions(t *testing.T) {
 	backend, _ := newCatalogBackend(t, t.TempDir())
 	t.Cleanup(func() { _ = backend.Close() })
 
-	private, err := backend.CreateScopedSession(dashboardScope("main", "bot-a", "telegram", "42", "", "42", true), "Private")
+	private, err := backend.CreateScopedSession(
+		dashboardScope("main", "bot-a", "telegram", "42", "", "42", true),
+		"Private",
+	)
 	require.NoError(t, err)
-	group, err := backend.CreateScopedSession(dashboardScope("main", "bot-a", "telegram", "-1001", "7", "42", true), "Group topic")
+	group, err := backend.CreateScopedSession(
+		dashboardScope("main", "bot-a", "telegram", "-1001", "7", "42", true),
+		"Group topic",
+	)
 	require.NoError(t, err)
-	other, err := backend.CreateScopedSession(dashboardScope("main", "bot-a", "telegram", "99", "", "99", true), "Other user")
+	other, err := backend.CreateScopedSession(
+		dashboardScope("main", "bot-a", "telegram", "99", "", "99", true),
+		"Other user",
+	)
 	require.NoError(t, err)
-	otherBot, err := backend.CreateScopedSession(dashboardScope("main", "bot-a", "telegram-secondary", "42", "", "42", true), "Other bot")
+	otherBot, err := backend.CreateScopedSession(
+		dashboardScope("main", "bot-a", "telegram-secondary", "42", "", "42", true),
+		"Other bot",
+	)
 	require.NoError(t, err)
 	otherAgent, err := backend.CreateScopedSession(dashboardScope("other", "bot-a", "telegram", "42", "", "42", true), "Other agent")
 	require.NoError(t, err)

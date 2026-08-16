@@ -19,7 +19,12 @@ func showCommand() Definition {
 					}
 					name, provider := rt.GetModelInfo()
 					fallback := fmt.Sprintf("Current Model: %s (Provider: %s)", name, provider)
-					return req.replyStructured(tableContent("Model", []string{"Properti", "Nilai"}, [][]string{{"Model", name}, {"Provider", provider}}, fallback))
+					return req.replyStructured(tableContent(
+						"Model",
+						[]string{"Properti", "Nilai"},
+						[][]string{{"Model", name}, {"Provider", provider}},
+						fallback,
+					))
 				},
 			},
 			{

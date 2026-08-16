@@ -27,7 +27,8 @@ func (al *AgentLoop) telegramSessionDashboard(
 	botAccount := strings.TrimSpace(inbound.Channel)
 	mode := session.DashboardModePersonal
 	includeLegacyUnknown := false
-	if cfg := al.GetConfig(); cfg != nil && cfg.Dashboard.Superadmin.AllowsTelegramPrivate(userID, botAccount, agentID) {
+	if cfg := al.GetConfig(); cfg != nil &&
+		cfg.Dashboard.Superadmin.AllowsTelegramPrivate(userID, botAccount, agentID) {
 		mode = session.DashboardModeSuperadmin
 		includeLegacyUnknown = cfg.Dashboard.Superadmin.IncludeLegacyUnknown
 	}

@@ -99,8 +99,8 @@ func TestScopedSessionListFailsClosedAcrossTelegramBoundaries(t *testing.T) {
 		telegramScope("main", "primary", "-1001", "7", "52", true),
 	}
 	for i, variant := range variants {
-		_, err := backend.CreateScopedSession(variant, "Forbidden")
-		require.NoError(t, err, "variant %d", i)
+		_, createErr := backend.CreateScopedSession(variant, "Forbidden")
+		require.NoError(t, createErr, "variant %d", i)
 	}
 
 	records, err := backend.ListScopedSessions(current, nil)
@@ -121,7 +121,9 @@ func TestVisibleSessionStatsExcludeToolsAndThoughts(t *testing.T) {
 	require.NoError(t, err)
 	now := time.Now()
 	backend.AddFullMessage(record.Key, providers.Message{Role: "user", Content: "hello", CreatedAt: &now})
-	backend.AddFullMessage(record.Key, providers.Message{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call-1"}}, CreatedAt: &now})
+	backend.AddFullMessage(record.Key, providers.Message{
+		Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call-1"}}, CreatedAt: &now,
+	})
 	backend.AddFullMessage(record.Key, providers.Message{Role: "tool", Content: "internal", ToolCallID: "call-1", CreatedAt: &now})
 	backend.AddFullMessage(record.Key, providers.Message{Role: "assistant", Content: "visible reply", CreatedAt: &now})
 

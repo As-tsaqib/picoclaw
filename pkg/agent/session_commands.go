@@ -100,7 +100,9 @@ func (al *AgentLoop) handleInternalCallback(
 			active = record.Key
 			page = 0
 		case "rename":
-			return &bus.InternalCallbackResponse{Text: "Gunakan /session rename <nama baru> untuk mengganti nama session aktif."}, nil
+			return &bus.InternalCallbackResponse{
+				Text: "Gunakan /session rename <nama baru> untuk mengganti nama session aktif.",
+			}, nil
 		case "noop":
 			return &bus.InternalCallbackResponse{Text: fmt.Sprintf("Halaman %d", page+1)}, nil
 		case "close":
@@ -529,13 +531,23 @@ func sessionRecordOrigin(record session.SessionRecord) (channel, account, agentI
 }
 
 func sessionTableFallback(records []session.SessionRecord, active string, offset int) string {
-	lines := []string{"| No | Nama Session | Pesan | Terakhir |", "|---|---|---:|---|"}
+	lines := make([]string, 0, 2+len(records))
+	lines = append(lines,
+		"| No | Nama Session | Pesan | Terakhir |",
+		"|---|---|---:|---|",
+	)
 	for i, record := range records {
 		no := strconv.Itoa(offset + i + 1)
 		if record.Key == active {
 			no = "✅" + no
 		}
-		lines = append(lines, fmt.Sprintf("| %s | %s | %d | %s |", escapeTableCell(no), escapeTableCell(record.Name), record.MessageCount, escapeTableCell(compactSessionTime(record.UpdatedAt))))
+		lines = append(lines, fmt.Sprintf(
+			"| %s | %s | %d | %s |",
+			escapeTableCell(no),
+			escapeTableCell(record.Name),
+			record.MessageCount,
+			escapeTableCell(compactSessionTime(record.UpdatedAt)),
+		))
 	}
 	return strings.Join(lines, "\n")
 }

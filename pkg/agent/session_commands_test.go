@@ -47,7 +47,11 @@ func TestSessionAndHelpCommandsReturnStructuredContentWithoutLLMOrHistory(t *tes
 
 	for _, command := range []string{"/help", "/session"} {
 		var structured *bus.StructuredContent
-		response, err := al.processMessageWithStructured(context.Background(), telegramSessionTestMessage(command), &structured)
+		response, err := al.processMessageWithStructured(
+			context.Background(),
+			telegramSessionTestMessage(command),
+			&structured,
+		)
 		require.NoError(t, err)
 		require.NotNil(t, structured)
 		assert.NotEmpty(t, response)

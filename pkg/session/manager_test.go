@@ -124,8 +124,8 @@ func TestSessionManagerNamedCatalogAndActiveMappingPersist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateScopedSession: %v", err)
 	}
-	if err := sm.SetActiveScopedSession(scope, nil, record.Key); err != nil {
-		t.Fatalf("SetActiveScopedSession: %v", err)
+	if setErr := sm.SetActiveScopedSession(scope, nil, record.Key); setErr != nil {
+		t.Fatalf("SetActiveScopedSession: %v", setErr)
 	}
 
 	reopened := NewSessionManager(dir)

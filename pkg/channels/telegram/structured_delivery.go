@@ -245,7 +245,9 @@ func structuredKeyboardMarkup(rows [][]bus.StructuredButton) *telego.InlineKeybo
 				continue
 			}
 			style := normalizeButtonStyle(button.Style)
-			buttons = append(buttons, telego.InlineKeyboardButton{Text: button.Text, CallbackData: button.CallbackData, Style: style})
+			buttons = append(buttons, telego.InlineKeyboardButton{
+				Text: button.Text, CallbackData: button.CallbackData, Style: style,
+			})
 		}
 		if len(buttons) > 0 {
 			keyboard = append(keyboard, buttons)
@@ -483,15 +485,19 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 		SessionKey:    menu.menu.Current,
 	})
 	if err != nil {
-		logger.WarnCF("telegram", "Internal session callback was rejected", map[string]any{"reason": "scope_or_state_validation"})
-		return nil
+		logger.WarnCF(
+			"telegram",
+			"Internal session callback was rejected",
+			map[string]any{"reason": "scope_or_state_validation"},
+		)
+		return fmt.Errorf("internal session callback rejected: %w", err)
 	}
 	if response == nil {
 		return nil
 	}
 	if response.Close {
-		if err := c.clearSessionMenuKeyboard(ctx, message, menu); err != nil {
-			return err
+		if clearErr := c.clearSessionMenuKeyboard(ctx, message, menu); clearErr != nil {
+			return clearErr
 		}
 		c.deleteSessionMenu(token)
 		return nil
@@ -499,12 +505,15 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 	if response.Content == nil {
 		return nil
 	}
-	markup, pending, err := c.structuredReplyMarkup(response.Content, menu.chatID, menu.threadID)
-	if err != nil || pending == nil {
+	markup, pending, markupErr := c.structuredReplyMarkup(response.Content, menu.chatID, menu.threadID)
+	if markupErr != nil {
+		return fmt.Errorf("render session callback response: %w", markupErr)
+	}
+	if pending == nil {
 		return nil
 	}
-	if err := c.editStructuredSessionMenu(ctx, message, menu, response.Content, markup); err != nil {
-		return err
+	if editErr := c.editStructuredSessionMenu(ctx, message, menu, response.Content, markup); editErr != nil {
+		return editErr
 	}
 	pending.messageID = menu.messageID
 	pending.ephemeralID = menu.ephemeralID

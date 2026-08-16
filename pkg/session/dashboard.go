@@ -182,8 +182,8 @@ func (b *JSONLBackend) ResolveDashboardSelector(q DashboardQuery, selector strin
 		if matched != nil {
 			return SessionRecord{}, ErrAmbiguousSessionSelector
 		}
-		copy := records[i]
-		matched = &copy
+		candidate := records[i]
+		matched = &candidate
 	}
 	if matched == nil {
 		return SessionRecord{}, ErrSessionNotInScope
@@ -216,7 +216,9 @@ func dashboardRecordAllowed(record SessionRecord, q DashboardQuery) bool {
 		}
 		return true
 	}
-	if !isTelegramSessionScope(scope, q.BotAccount) || bot == "" || !strings.EqualFold(bot, strings.TrimSpace(q.BotAccount)) {
+	if !isTelegramSessionScope(scope, q.BotAccount) ||
+		bot == "" ||
+		!strings.EqualFold(bot, strings.TrimSpace(q.BotAccount)) {
 		return false
 	}
 	owner, ok := VerifiedTelegramOwner(scope, q.BotAccount)

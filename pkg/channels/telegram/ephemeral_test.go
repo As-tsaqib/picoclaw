@@ -827,9 +827,11 @@ func TestTelegramEphemeralBind_RejectsForgedSenderOrChannel(t *testing.T) {
 }
 
 func TestTelegramDashboardAttachmentDoesNotReuseOriginEphemeralCapability(t *testing.T) {
-	channel := newTestChannel(t, &stubCaller{callFn: func(_ context.Context, _ string, _ *ta.RequestData) (*ta.Response, error) {
-		return successBoolResponse(), nil
-	}})
+	channel := newTestChannel(t, &stubCaller{
+		callFn: func(_ context.Context, _ string, _ *ta.RequestData) (*ta.Response, error) {
+			return successBoolResponse(), nil
+		},
+	})
 	target := mustRegisterEphemeralTarget(t, channel, -100600, 7, 48, 0, "")
 	origin := privateOutboundContext(target)
 	require.NoError(t, channel.BindPrivateRoute("attached-session", origin))

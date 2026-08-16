@@ -28,7 +28,10 @@ func TestSessionCommandDispatchesAllSupportedForms(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.text, func(t *testing.T) {
 			var got SessionCommandRequest
-			rt := &Runtime{SessionCommand: func(_ context.Context, req SessionCommandRequest) (*bus.StructuredContent, error) {
+			rt := &Runtime{SessionCommand: func(
+				_ context.Context,
+				req SessionCommandRequest,
+			) (*bus.StructuredContent, error) {
 				got = req
 				return &bus.StructuredContent{Kind: "paragraph", Fallback: "ok"}, nil
 			}}

@@ -1,6 +1,6 @@
 module github.com/As-tsaqib/picoclaw
 
-go 1.25.12
+go 1.25.13
 
 require (
 	fyne.io/systray v1.12.2

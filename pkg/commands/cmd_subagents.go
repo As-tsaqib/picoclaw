@@ -34,7 +34,12 @@ func subagentsCommand() Definition {
 					return req.Reply("No active tasks running in this session.")
 				}
 				fallback := fmt.Sprintf("🤖 **Active Subagents Tree**\n```text\n%s\n```", treeStr)
-				return req.replyStructured(tableContent("Active Subagents", []string{"Agent", "Status/Informasi"}, [][]string{{"Task tree", treeStr}}, fallback))
+				return req.replyStructured(tableContent(
+					"Active Subagents",
+					[]string{"Agent", "Status/Informasi"},
+					[][]string{{"Task tree", treeStr}},
+					fallback,
+				))
 			}
 
 			fallback := fmt.Sprintf("🤖 **Active Subagents List**\n```text\n%+v\n```", turnRaw)
