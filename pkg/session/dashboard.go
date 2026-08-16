@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,7 +68,8 @@ func (b *JSONLBackend) ListDashboardSessions(q DashboardQuery) ([]SessionRecord,
 	if !q.valid() {
 		return nil, ErrSessionNotInScope
 	}
-	if _, err := b.catalogStore(); err != nil {
+	store, err := b.catalogStore()
+	if err != nil {
 		return nil, err
 	}
 	b.ensureDashboardDefault(q)
@@ -75,16 +77,17 @@ func (b *JSONLBackend) ListDashboardSessions(q DashboardQuery) ([]SessionRecord,
 	keys := b.ListSessions()
 	records := make([]SessionRecord, 0, len(keys))
 	for _, key := range keys {
-		record, err := b.sessionRecord(key, nil, nil)
-		if err != nil {
+		allowed, legacyUnknown, allowErr := dashboardSessionMetaAllowed(store, key, q)
+		if allowErr != nil || !allowed {
 			continue
 		}
-		if record.Scope == nil {
-			record.LegacyUnknown = true
-		}
-		if !dashboardRecordAllowed(record, q) {
+		// Authorization is intentionally completed from metadata before history
+		// is read. Hidden sessions must not incur history I/O or name mutation.
+		record, recordErr := b.sessionRecord(key, nil, nil)
+		if recordErr != nil {
 			continue
 		}
+		record.LegacyUnknown = legacyUnknown
 		records = append(records, record)
 	}
 	sort.SliceStable(records, func(i, j int) bool {
@@ -116,16 +119,17 @@ func (b *JSONLBackend) ActiveDashboardSession(q DashboardQuery) string {
 	signature := dashboardSignature(q)
 	key, err := store.GetActiveSession(context.Background(), signature)
 	if err == nil && strings.TrimSpace(key) != "" {
-		record, recordErr := b.sessionRecord(strings.TrimSpace(key), nil, nil)
-		if recordErr == nil && dashboardRecordAllowed(record, q) {
-			return record.Key
+		key = strings.TrimSpace(key)
+		allowed, _, allowErr := dashboardSessionMetaAllowed(store, key, q)
+		if allowErr == nil && allowed {
+			return key
 		}
 		_ = store.ClearActiveSession(context.Background(), signature)
 	}
 	if fallback := strings.TrimSpace(q.DefaultSessionKey); fallback != "" {
-		record, recordErr := b.sessionRecord(fallback, q.DefaultScope, q.DefaultAliases)
-		if recordErr == nil && dashboardRecordAllowed(record, q) {
-			return record.Key
+		allowed, _, allowErr := dashboardSessionMetaAllowed(store, fallback, q)
+		if allowErr == nil && allowed {
+			return fallback
 		}
 	}
 	return ""
@@ -139,11 +143,12 @@ func (b *JSONLBackend) SetActiveDashboardSession(q DashboardQuery, sessionKey st
 	if err != nil {
 		return err
 	}
-	record, err := b.sessionRecord(strings.TrimSpace(sessionKey), nil, nil)
-	if err != nil || !dashboardRecordAllowed(record, q) {
+	key := strings.TrimSpace(sessionKey)
+	allowed, _, allowErr := dashboardSessionMetaAllowed(store, key, q)
+	if allowErr != nil || !allowed {
 		return ErrSessionNotInScope
 	}
-	return store.SetActiveSession(context.Background(), dashboardSignature(q), record.Key)
+	return store.SetActiveSession(context.Background(), dashboardSignature(q), key)
 }
 
 func (b *JSONLBackend) RenameDashboardSession(q DashboardQuery, sessionKey, name string) error {
@@ -151,15 +156,19 @@ func (b *JSONLBackend) RenameDashboardSession(q DashboardQuery, sessionKey, name
 	if cleanName == "" {
 		return ErrInvalidSessionName
 	}
+	if !q.valid() {
+		return ErrSessionNotInScope
+	}
 	store, err := b.catalogStore()
 	if err != nil {
 		return err
 	}
-	record, err := b.sessionRecord(strings.TrimSpace(sessionKey), nil, nil)
-	if err != nil || !dashboardRecordAllowed(record, q) {
+	key := strings.TrimSpace(sessionKey)
+	allowed, _, allowErr := dashboardSessionMetaAllowed(store, key, q)
+	if allowErr != nil || !allowed {
 		return ErrSessionNotInScope
 	}
-	return store.SetSessionName(context.Background(), record.Key, cleanName, "custom", false)
+	return store.SetSessionName(context.Background(), key, cleanName, "custom", false)
 }
 
 func (b *JSONLBackend) ResolveDashboardSelector(q DashboardQuery, selector string) (SessionRecord, error) {
@@ -191,14 +200,40 @@ func (b *JSONLBackend) ResolveDashboardSelector(q DashboardQuery, selector strin
 	return *matched, nil
 }
 
+func dashboardSessionMetaAllowed(store catalogStore, key string, q DashboardQuery) (bool, bool, error) {
+	if !q.valid() || strings.TrimSpace(key) == "" {
+		return false, false, nil
+	}
+	meta, err := store.GetSessionMeta(context.Background(), strings.TrimSpace(key))
+	if err != nil {
+		return false, false, err
+	}
+	if len(meta.Scope) > 0 {
+		var scope SessionScope
+		if err := json.Unmarshal(meta.Scope, &scope); err != nil {
+			// Malformed structured metadata is never downgraded to legacy/unknown.
+			return false, false, nil
+		}
+		return dashboardScopeAllowed(&scope, q), false, nil
+	}
+	legacyUnknown := true
+	if q.Mode != DashboardModeSuperadmin || !q.IncludeLegacyUnknown {
+		return false, legacyUnknown, nil
+	}
+	return legacyDashboardAliasAllowed(key, meta.Aliases, q), legacyUnknown, nil
+}
+
 func dashboardRecordAllowed(record SessionRecord, q DashboardQuery) bool {
-	if !q.valid() {
+	if record.Scope == nil {
 		return false
 	}
-	if record.Scope == nil {
-		return q.Mode == DashboardModeSuperadmin && q.IncludeLegacyUnknown && record.LegacyUnknown
+	return dashboardScopeAllowed(record.Scope, q)
+}
+
+func dashboardScopeAllowed(scope *SessionScope, q DashboardQuery) bool {
+	if !q.valid() || scope == nil {
+		return false
 	}
-	scope := record.Scope
 	if routing.NormalizeAgentID(scope.AgentID) != routing.NormalizeAgentID(q.AgentID) {
 		return false
 	}
@@ -223,6 +258,37 @@ func dashboardRecordAllowed(record SessionRecord, q DashboardQuery) bool {
 	}
 	owner, ok := VerifiedTelegramOwner(scope, q.BotAccount)
 	return ok && owner == strings.TrimSpace(q.OwnerUserID)
+}
+
+// legacyDashboardAliasAllowed permits metadata-free sessions only when a
+// legacy alias itself proves every dashboard boundary we still need: agent,
+// Telegram bot/channel instance, routing account, direct route, and raw peer.
+// Ambiguous account-less/group aliases and opaque keys fail closed.
+func legacyDashboardAliasAllowed(key string, aliases []string, q DashboardQuery) bool {
+	if q.Mode != DashboardModeSuperadmin || !q.IncludeLegacyUnknown {
+		return false
+	}
+	agent := routing.NormalizeAgentID(q.AgentID)
+	bot := strings.ToLower(strings.TrimSpace(q.BotAccount))
+	account := routing.NormalizeAccountID(q.Account)
+	if agent == "" || bot == "" || account == "" {
+		return false
+	}
+	prefix := "agent:" + agent + ":" + bot + ":" + account + ":direct:"
+	candidates := make([]string, 0, len(aliases)+1)
+	candidates = append(candidates, key)
+	candidates = append(candidates, aliases...)
+	for _, raw := range candidates {
+		alias := strings.ToLower(strings.TrimSpace(raw))
+		if !strings.HasPrefix(alias, prefix) {
+			continue
+		}
+		peer := strings.TrimSpace(strings.TrimPrefix(alias, prefix))
+		if positiveTelegramID(peer) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func isTelegramSessionScope(scope *SessionScope, authorizedBotAccount string) bool {
@@ -253,7 +319,8 @@ func SessionBotAccount(scope *SessionScope) string {
 
 // VerifiedTelegramOwner extracts a numeric owner only when durable metadata
 // proves a user-scoped Telegram session. Shared group/topic sessions with no
-// sender ownership dimension deliberately fail closed.
+// raw owner evidence deliberately fail closed. In particular Values["sender"]
+// is canonical session identity data and is never treated as a raw Telegram ID.
 func VerifiedTelegramOwner(scope *SessionScope, botAccount string) (string, bool) {
 	if scope == nil {
 		return "", false
@@ -271,11 +338,9 @@ func VerifiedTelegramOwner(scope *SessionScope, botAccount string) (string, bool
 		return "", false
 	}
 
-	if hasScopeDimension(scope, "sender") {
-		if owner := positiveTelegramID(scope.Values["sender"]); owner != "" {
-			return owner, true
-		}
-	}
+	// OriginSenderID is recorded from the raw platform sender. Restrict this
+	// fallback to direct chats; sender-scoped legacy groups without durable
+	// OwnerUserID cannot distinguish raw IDs from identity-linked canonical IDs.
 	if strings.EqualFold(strings.TrimSpace(scope.OriginChatType), "direct") {
 		if owner := positiveTelegramID(scope.OriginSenderID); owner != "" {
 			return owner, true
@@ -294,9 +359,6 @@ func VerifiedTelegramOwner(scope *SessionScope, botAccount string) (string, bool
 
 func positiveTelegramID(value string) string {
 	value = strings.TrimSpace(value)
-	if idx := strings.LastIndex(value, ":"); idx >= 0 {
-		value = strings.TrimSpace(value[idx+1:])
-	}
 	id, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || id <= 0 {
 		return ""
