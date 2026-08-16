@@ -80,7 +80,7 @@ export function TelegramSuperadminForm({
     }
   }, [defaultBotAccount, t])
 
-  const setField = <K extends keyof SessionSuperadminConfig,>(
+  const setField = <K extends keyof SessionSuperadminConfig>(
     key: K,
     value: SessionSuperadminConfig[K],
   ) => {
