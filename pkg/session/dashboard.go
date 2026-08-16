@@ -212,7 +212,7 @@ func dashboardSessionMetaAllowed(store catalogStore, key string, q DashboardQuer
 		var scope SessionScope
 		if err := json.Unmarshal(meta.Scope, &scope); err != nil {
 			// Malformed structured metadata is never downgraded to legacy/unknown.
-			return false, false, nil
+			return false, false, err
 		}
 		return dashboardScopeAllowed(&scope, q), false, nil
 	}
@@ -221,13 +221,6 @@ func dashboardSessionMetaAllowed(store catalogStore, key string, q DashboardQuer
 		return false, legacyUnknown, nil
 	}
 	return legacyDashboardAliasAllowed(key, meta.Aliases, q), legacyUnknown, nil
-}
-
-func dashboardRecordAllowed(record SessionRecord, q DashboardQuery) bool {
-	if record.Scope == nil {
-		return false
-	}
-	return dashboardScopeAllowed(record.Scope, q)
 }
 
 func dashboardScopeAllowed(scope *SessionScope, q DashboardQuery) bool {
