@@ -13,6 +13,10 @@ import (
 
 const sessionDashboardConfigBodyLimit = 64 << 10
 
+var sessionDashboardGatewayReloader = func(h *Handler) error {
+	return h.restartGatewayForDashboardConfig()
+}
+
 func (h *Handler) registerSessionDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/dashboard/superadmin", h.handleGetSessionSuperadmin)
 	mux.HandleFunc("PUT /api/dashboard/superadmin", h.handlePutSessionSuperadmin)
@@ -55,14 +59,21 @@ func (h *Handler) handlePutSessionSuperadmin(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Failed to load config", http.StatusInternalServerError)
 		return
 	}
-	// Replacement is atomic and singular by construction. Saving this value
-	// immediately removes the old Telegram user from the authorized config.
+	// Replacement is atomic and singular on disk. If the running gateway needs
+	// a restart, the API does not report success until that reload succeeds.
 	cfg.Dashboard = dashboard
 	if err := config.SaveConfig(h.configPath, cfg); err != nil {
 		http.Error(w, "Failed to save superadmin config", http.StatusInternalServerError)
 		return
 	}
-	h.restartGatewayForDashboardConfig()
+	if err := sessionDashboardGatewayReloader(h); err != nil {
+		logger.ErrorF(
+			"failed to apply session dashboard config to running gateway",
+			map[string]any{"error": err.Error()},
+		)
+		http.Error(w, "Superadmin config was saved but could not be applied to the running gateway", http.StatusInternalServerError)
+		return
+	}
 	writeSessionSuperadminResponse(w, requested)
 }
 
@@ -77,7 +88,14 @@ func (h *Handler) handleDeleteSessionSuperadmin(w http.ResponseWriter, _ *http.R
 		http.Error(w, "Failed to delete superadmin config", http.StatusInternalServerError)
 		return
 	}
-	h.restartGatewayForDashboardConfig()
+	if err := sessionDashboardGatewayReloader(h); err != nil {
+		logger.ErrorF(
+			"failed to apply session dashboard revocation to running gateway",
+			map[string]any{"error": err.Error()},
+		)
+		http.Error(w, "Superadmin revocation was saved but could not be applied to the running gateway", http.StatusInternalServerError)
+		return
+	}
 	writeSessionSuperadminResponse(w, config.SessionSuperadminConfig{})
 }
 
@@ -92,18 +110,14 @@ func ensureSingleJSONValue(decoder *json.Decoder) error {
 	return nil
 }
 
-func (h *Handler) restartGatewayForDashboardConfig() {
+func (h *Handler) restartGatewayForDashboardConfig() error {
 	status := h.gatewayStatusData()
 	gatewayStatus, _ := status["gateway_status"].(string)
 	if gatewayStatus != "running" {
-		return
+		return nil
 	}
-	if _, err := h.RestartGateway(); err != nil {
-		logger.ErrorF(
-			"failed to restart gateway after session dashboard config change",
-			map[string]any{"error": err.Error()},
-		)
-	}
+	_, err := h.RestartGateway()
+	return err
 }
 
 func writeSessionSuperadminResponse(w http.ResponseWriter, superadmin config.SessionSuperadminConfig) {
