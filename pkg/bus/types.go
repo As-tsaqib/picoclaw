@@ -41,6 +41,12 @@ type InboundContext struct {
 	PrivateResponse   bool   `json:"-"`
 	PrivateSession    bool   `json:"-"`
 	PrivateRouteToken string `json:"-"`
+
+	// SessionDashboard marks a process-local private-chat attachment to a
+	// session whose origin may be another Telegram route. It prevents channel
+	// adapters from reusing origin-only delivery capabilities (for example an
+	// old ephemeral group route) while the reply must stay in this private chat.
+	SessionDashboard bool `json:"-"`
 }
 
 type InboundMessage struct {

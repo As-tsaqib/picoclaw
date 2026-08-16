@@ -100,6 +100,12 @@ export function TelegramForm({
   return (
     <div className="space-y-6">
       <Card className="shadow-sm">
+        <CardHeader className="border-border/60 border-b pb-5">
+          <CardTitle>{t("channels.telegram.chatbot.title")}</CardTitle>
+          <CardDescription>
+            {t("channels.telegram.chatbot.description")}
+          </CardDescription>
+        </CardHeader>
         <CardContent className="divide-border/60 divide-y px-6 py-0 [&>div]:py-5">
           <Field
             label={t("channels.field.token")}

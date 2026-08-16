@@ -67,17 +67,21 @@ Telegram auto-registers PicoClaw's top-level bot commands at startup, including 
 
 Named conversation sessions:
 
-- `/session` or `/session list` opens the current route's session list.
-- `/session current` shows the active session.
-- `/session new [name]` creates a separate session and activates it immediately.
+- In a normal group/topic route, `/session` or `/session list` shows only sessions from that exact safe route scope.
+- A Telegram **private chat automatically becomes `👤 Session Saya`**. No user registration is required. The list can include that numeric `from.id` user's verified private, sender-owned group/topic, and personal ephemeral sessions from the same bot account and agent. Sessions owned by another user and shared group sessions without provable ownership stay hidden.
+- One optional superadmin can be configured in **Dashboard → Channels → Telegram → Session Superadmin**. Only the configured numeric Telegram User ID, in a private chat with the configured bot account and agent, receives `🌐 Mode Global Superadmin`. If no superadmin is configured or it is disabled, nobody receives global access. A superadmin speaking in a group/topic still gets the normal local route scope.
+- `/session current` shows the active name, short ID, origin channel/chat/topic, verified owner, and mode (`Personal`, `Superadmin`, or local `Route`).
+- `/session new [name]` creates a separate session and activates it only for the current route/dashboard mapping.
 - `/session rename <new name>` renames the active session.
 - `/session use <number|short-id>` switches without using an inline button.
 
-Session names and the active selection are stored durably, so the selected session remains active after a gateway restart. An omitted name starts with a time-based placeholder and is replaced by the first non-command user message; names are limited to 60 Unicode characters. `/session new` is separate from `/new`, `/clear`, and `/reset` and does not change their behavior.
+Personal-dashboard and superadmin selections use separate durable mappings. Attaching a group/topic session from private chat **does not change the active mapping of the origin group/topic**; subsequent replies stay in the private chat while history continues in the selected session. The mapping survives gateway restarts. The in-flight turn keeps the session selected when that turn began, so a concurrent switch only affects the next turn. `/session new` remains separate from `/new`, `/clear`, and `/reset`.
 
-The session menu is owner-bound and only lists sessions that can be verified against the same routed agent, Telegram channel/account, chat, forum topic, and—when personal ephemeral isolation applies—sender. Inline callbacks use short process-local tokens instead of exposing session keys. Menus expire after 15 minutes and after a gateway restart; run `/session` again to create a fresh menu. The active selection itself remains persisted.
+Session metadata stores the user-facing name/source plus verified origin metadata (owner Telegram user ID when available, channel/bot account, routing account, agent, chat, topic, sender, and route). Older sessions keep their history and receive fallback names. Ownerless legacy sessions are excluded from personal dashboards unless ownership can be proven from their old scope. Global `Legacy/Unknown` rows are hidden by default and require the explicit dashboard opt-in.
 
-On Bot API 10.2 servers, `/session` and structured informational commands such as `/help`, `/show`, `/list`, and `/context` use `sendRichMessage` with native table blocks. Older clients may display a reduced representation, and servers that reject Rich Messages automatically receive a readable text/Markdown fallback. The table and inline keyboard are sent in the same request when native Rich Messages are available.
+The session menu is owner-bound. Inline callbacks use short opaque process-local menu tokens instead of session keys, expire after 15 minutes, and are revalidated against the Telegram user, chat, bot/channel account, routed agent, dashboard mode, and menu location. Expired/malformed/foreign callbacks are rejected without exposing session names or IDs and never enter the LLM or conversation history. `✖️ Tutup` only removes the menu keyboard; it never deletes a session.
+
+On Bot API 10.2 servers, `/session` and structured informational commands such as `/help`, `/show`, `/list`, and `/context` use `sendRichMessage` with native `InputRichMessage`/table blocks. The native table and `reply_markup` are sent in the same request. Session pages contain five sessions and at most five numbered buttons per row. Older clients may display a reduced representation, and servers that reject Rich Messages automatically receive a readable text/Markdown fallback with the same inline controls.
 
 Skill-related commands:
 

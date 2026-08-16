@@ -38,6 +38,7 @@ type Config struct {
 	Isolation IsolationConfig `json:"isolation,omitempty" yaml:"-"`
 	Agents    AgentsConfig    `json:"agents"              yaml:"-"`
 	Session   SessionConfig   `json:"session,omitempty"   yaml:"-"`
+	Dashboard DashboardConfig `json:"dashboard,omitempty" yaml:"-"`
 	Memory    MemoryConfig    `json:"memory,omitempty"    yaml:"-"`
 	Evolution EvolutionConfig `json:"evolution,omitempty" yaml:"-"`
 	Channels  ChannelsConfig  `json:"channel_list"        yaml:"channel_list"`
@@ -547,6 +548,71 @@ type SessionConfig struct {
 	Dimensions    []string            `json:"dimensions,omitempty"`
 	IdentityLinks map[string][]string `json:"identity_links,omitempty"`
 	DmScope       string              `json:"dm_scope,omitempty"`
+}
+
+// DashboardConfig contains launcher-managed authorization for session
+// dashboards. Personal Telegram dashboards require no registration; this
+// configuration only enables the single global superadmin.
+type DashboardConfig struct {
+	Superadmin SessionSuperadminConfig `json:"superadmin,omitempty"`
+}
+
+// SessionSuperadminConfig is intentionally singular: at most one Telegram
+// user can hold global session-catalog privileges at a time. BotAccount binds
+// that privilege to the configured Telegram channel instance (InboundContext
+// Channel), while AgentID keeps separate agent catalogs isolated by default.
+type SessionSuperadminConfig struct {
+	TelegramUserID       string `json:"telegram_user_id,omitempty"`
+	BotAccount           string `json:"bot_account,omitempty"`
+	AgentID              string `json:"agent_id,omitempty"`
+	Enabled              bool   `json:"enabled,omitempty"`
+	IncludeLegacyUnknown bool   `json:"include_legacy_unknown,omitempty"`
+}
+
+func (c SessionSuperadminConfig) normalized() SessionSuperadminConfig {
+	c.TelegramUserID = strings.TrimSpace(c.TelegramUserID)
+	c.BotAccount = strings.TrimSpace(c.BotAccount)
+	c.AgentID = strings.TrimSpace(c.AgentID)
+	return c
+}
+
+// Validate rejects ambiguous or unsafe superadmin configuration. A disabled
+// but partially populated record is permitted so the dashboard can retain a
+// configuration while global mode is temporarily switched off.
+func (c DashboardConfig) Validate() error {
+	superadmin := c.Superadmin.normalized()
+	if superadmin.TelegramUserID != "" {
+		id, err := strconv.ParseInt(superadmin.TelegramUserID, 10, 64)
+		if err != nil || id <= 0 {
+			return errors.New("dashboard.superadmin.telegram_user_id must be a positive numeric Telegram user ID")
+		}
+	}
+	if !superadmin.Enabled {
+		return nil
+	}
+	if superadmin.TelegramUserID == "" {
+		return errors.New("dashboard.superadmin.telegram_user_id is required when superadmin is enabled")
+	}
+	if superadmin.BotAccount == "" {
+		return errors.New("dashboard.superadmin.bot_account is required when superadmin is enabled")
+	}
+	if superadmin.AgentID == "" {
+		return errors.New("dashboard.superadmin.agent_id is required when superadmin is enabled")
+	}
+	return nil
+}
+
+// AllowsTelegramPrivate returns true only for the exact private-dashboard
+// identity configured by the launcher. Callers must separately verify that
+// the inbound message is a Telegram private chat.
+func (c SessionSuperadminConfig) AllowsTelegramPrivate(userID, botAccount, agentID string) bool {
+	c = c.normalized()
+	if !c.Enabled {
+		return false
+	}
+	return c.TelegramUserID == strings.TrimSpace(userID) &&
+		strings.EqualFold(c.BotAccount, strings.TrimSpace(botAccount)) &&
+		strings.EqualFold(c.AgentID, strings.TrimSpace(agentID))
 }
 
 // ApplyDmScope translates the user-facing dm_scope value into the internal

@@ -21,6 +21,7 @@ import { GenericForm } from "@/components/channels/channel-forms/generic-form"
 import { MqttForm } from "@/components/channels/channel-forms/mqtt-form"
 import { SlackForm } from "@/components/channels/channel-forms/slack-form"
 import { TelegramForm } from "@/components/channels/channel-forms/telegram-form"
+import { TelegramSuperadminForm } from "@/components/channels/channel-forms/telegram-superadmin-form"
 import { WecomForm } from "@/components/channels/channel-forms/wecom-form"
 import { WeixinForm } from "@/components/channels/channel-forms/weixin-form"
 import { buildSavePayload } from "@/components/channels/channel-save-payload"
@@ -493,14 +494,17 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
     switch (channel.name) {
       case "telegram":
         return (
-          <TelegramForm
-            config={editConfig}
-            onChange={handleChange}
-            configuredSecrets={configuredSecrets}
-            fieldErrors={fieldErrors}
-            registerArrayFieldFlusher={registerArrayFieldFlusher}
-            arrayFieldResetVersion={arrayFieldResetVersion}
-          />
+          <>
+            <TelegramForm
+              config={editConfig}
+              onChange={handleChange}
+              configuredSecrets={configuredSecrets}
+              fieldErrors={fieldErrors}
+              registerArrayFieldFlusher={registerArrayFieldFlusher}
+              arrayFieldResetVersion={arrayFieldResetVersion}
+            />
+            <TelegramSuperadminForm defaultBotAccount={channel.config_key} />
+          </>
         )
       case "discord":
         return (

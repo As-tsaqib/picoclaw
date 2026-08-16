@@ -401,12 +401,14 @@ func (al *AgentLoop) clearHistoryWithMemoryFlush(
 	// /clear, /reset, and /new can arrive before any turn has persisted
 	// session scope metadata (runAgentLoop records it per turn), so record it
 	// here to let the ContextManager resolve which agent owns the session.
-	ensureSessionMetadata(
-		agent.Sessions,
-		opts.Dispatch.SessionKey,
-		opts.Dispatch.SessionScope,
-		opts.Dispatch.SessionAliases,
-	)
+	if !opts.Dispatch.SessionDashboard {
+		ensureSessionMetadata(
+			agent.Sessions,
+			opts.Dispatch.SessionKey,
+			opts.Dispatch.SessionScope,
+			opts.Dispatch.SessionAliases,
+		)
+	}
 	caller := callerScopeForTurn(agent.ID, cfg, *opts)
 	flushTimeout := 8 * time.Second
 	if configured := time.Duration(

@@ -47,7 +47,8 @@ func (ctx InboundContext) isZero() bool {
 		len(ctx.Raw) == 0 &&
 		!ctx.PrivateResponse &&
 		!ctx.PrivateSession &&
-		ctx.PrivateRouteToken == ""
+		ctx.PrivateRouteToken == "" &&
+		!ctx.SessionDashboard
 }
 
 func normalizeInboundContext(ctx InboundContext) InboundContext {

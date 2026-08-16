@@ -73,15 +73,6 @@ func (b *JSONLBackend) EnsureSessionMetadata(sessionKey string, scope *SessionSc
 		return
 	}
 
-	var rawScope json.RawMessage
-	if scope != nil {
-		data, err := json.Marshal(scope)
-		if err != nil {
-			log.Printf("session: encode session scope: %v", err)
-			return
-		}
-		rawScope = data
-	}
 	// Persist and promote only aliases whose shape proves the trusted route.
 	// Generic legacy aliases omit channel/account dimensions and can collide
 	// across multiple Telegram bot accounts.
@@ -92,16 +83,31 @@ func (b *JSONLBackend) EnsureSessionMetadata(sessionKey string, scope *SessionSc
 		log.Printf("session: read existing session metadata: %v", err)
 		return
 	}
-	if len(existing.Scope) > 0 && scope != nil {
+	mergedScope := CloneScope(scope)
+	if len(existing.Scope) > 0 {
 		var storedScope SessionScope
 		if err := json.Unmarshal(existing.Scope, &storedScope); err != nil {
 			log.Printf("session: reject corrupt existing session scope: %v", err)
 			return
 		}
-		if !ScopeMatches(&storedScope, scope) {
+		if scope != nil && !ScopeMatches(&storedScope, scope) {
 			log.Printf("session: refusing to rebind session metadata across scopes")
 			return
 		}
+		if mergedScope == nil {
+			mergedScope = CloneScope(&storedScope)
+		} else {
+			mergeDurableScopeMetadata(mergedScope, &storedScope)
+		}
+	}
+	var rawScope json.RawMessage
+	if mergedScope != nil {
+		data, marshalErr := json.Marshal(mergedScope)
+		if marshalErr != nil {
+			log.Printf("session: encode session scope: %v", marshalErr)
+			return
+		}
+		rawScope = data
 	}
 	if err := metaStore.UpsertSessionMeta(ctx, sessionKey, rawScope, scopedAliases); err != nil {
 		log.Printf("session: upsert session metadata: %v", err)
@@ -113,6 +119,28 @@ func (b *JSONLBackend) EnsureSessionMetadata(sessionKey string, scope *SessionSc
 			log.Printf("session: promote alias history: %v", err)
 		}
 	}
+}
+
+func mergeDurableScopeMetadata(dst, stored *SessionScope) {
+	if dst == nil || stored == nil {
+		return
+	}
+	preserve := func(target *string, old string) {
+		if strings.TrimSpace(*target) == "" {
+			*target = old
+		}
+	}
+	preserve(&dst.OwnerUserID, stored.OwnerUserID)
+	preserve(&dst.OriginChannel, stored.OriginChannel)
+	preserve(&dst.OriginAccount, stored.OriginAccount)
+	preserve(&dst.OriginAgentID, stored.OriginAgentID)
+	preserve(&dst.OriginChatID, stored.OriginChatID)
+	preserve(&dst.OriginTopicID, stored.OriginTopicID)
+	preserve(&dst.OriginSenderID, stored.OriginSenderID)
+	preserve(&dst.OriginChatType, stored.OriginChatType)
+	preserve(&dst.OriginRoute, stored.OriginRoute)
+	preserve(&dst.Platform, stored.Platform)
+	preserve(&dst.BotAccount, stored.BotAccount)
 }
 
 // GetSessionScope reads structured scope metadata for a session key or alias.

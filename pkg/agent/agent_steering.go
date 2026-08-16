@@ -141,16 +141,17 @@ func (al *AgentLoop) drainQueuedSteeringContinuations(
 	return finalResponse, nil
 }
 
-func (al *AgentLoop) resolveSteeringTarget(msg bus.InboundMessage) (string, string, bool) {
+func (al *AgentLoop) resolveSteeringTarget(msg bus.InboundMessage) (string, string, bool, bool) {
 	if msg.Channel == "system" {
-		return "", "", false
+		return "", "", false, false
 	}
 
 	route, agent, err := al.resolveMessageRoute(msg)
 	if err != nil || agent == nil {
-		return "", "", false
+		return "", "", false, false
 	}
 	allocation := al.allocateRouteSession(route, msg)
+	sessionKey, dashboardAttached := al.resolveTurnSession(agent, allocation, &msg.Context, msg.SessionKey)
 
-	return resolveAllocatedSession(agent, allocation, msg.SessionKey), agent.ID, true
+	return sessionKey, agent.ID, dashboardAttached, true
 }

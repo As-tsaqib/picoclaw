@@ -50,10 +50,75 @@ func (al *AgentLoop) handleInternalCallback(
 	if !ok {
 		return nil, session.ErrSessionCatalogUnavailable
 	}
+
+	routeActive := catalog.ActiveScopedSession(&allocation.Scope, allocation.SessionAliases)
+	mode, query, dashboard := al.telegramSessionDashboard(
+		&inbound,
+		agent.ID,
+		routeActive,
+		&allocation.Scope,
+		allocation.SessionAliases,
+	)
+	reqMode := session.DashboardMode(strings.ToLower(strings.TrimSpace(req.DashboardMode)))
+	if reqMode == "" {
+		reqMode = session.DashboardModeRoute
+	}
+	if !dashboard {
+		mode = session.DashboardModeRoute
+	}
+	if reqMode != mode {
+		return nil, fmt.Errorf("callback dashboard mode validation failed")
+	}
+
+	page := req.Page
+	if dashboard {
+		dashboardCatalog, ok := agent.Sessions.(session.DashboardSessionStore)
+		if !ok {
+			return nil, session.ErrSessionCatalogUnavailable
+		}
+		active := dashboardCatalog.ActiveDashboardSession(query)
+		switch strings.ToLower(strings.TrimSpace(req.Action)) {
+		case "select":
+			if err := dashboardCatalog.SetActiveDashboardSession(query, req.Value); err != nil {
+				return nil, fmt.Errorf("session selection was rejected")
+			}
+			active = req.Value
+		case "page":
+			parsed, err := strconv.Atoi(strings.TrimSpace(req.Value))
+			if err != nil || parsed < 0 {
+				return nil, fmt.Errorf("invalid session page")
+			}
+			page = parsed
+		case "new":
+			record, err := catalog.CreateScopedSession(&allocation.Scope, "")
+			if err != nil {
+				return nil, fmt.Errorf("session could not be created")
+			}
+			if err := dashboardCatalog.SetActiveDashboardSession(query, record.Key); err != nil {
+				return nil, fmt.Errorf("new session could not be activated")
+			}
+			active = record.Key
+			page = 0
+		case "rename":
+			return &bus.InternalCallbackResponse{Text: "Gunakan /session rename <nama baru> untuk mengganti nama session aktif."}, nil
+		case "noop":
+			return &bus.InternalCallbackResponse{Text: fmt.Sprintf("Halaman %d", page+1)}, nil
+		case "close":
+			return &bus.InternalCallbackResponse{Close: true}, nil
+		default:
+			return nil, fmt.Errorf("invalid session callback action")
+		}
+		records, err := dashboardCatalog.ListDashboardSessions(query)
+		if err != nil {
+			return nil, fmt.Errorf("session catalog unavailable")
+		}
+		return &bus.InternalCallbackResponse{Content: buildSessionListFromRecords(
+			records, active, page, &inbound, agent.ID, &allocation.Scope, mode,
+		)}, nil
+	}
+
 	aliases := allocation.SessionAliases
 	active := catalog.ActiveScopedSession(&allocation.Scope, aliases)
-	page := req.Page
-
 	switch strings.ToLower(strings.TrimSpace(req.Action)) {
 	case "select":
 		if err := catalog.SetActiveScopedSession(&allocation.Scope, aliases, req.Value); err != nil {
@@ -105,11 +170,74 @@ func (al *AgentLoop) executeSessionCommand(
 	}
 	scope := opts.Dispatch.SessionScope
 	aliases := append([]string(nil), opts.Dispatch.SessionAliases...)
-	active := catalog.ActiveScopedSession(scope, aliases)
-	if strings.TrimSpace(opts.Dispatch.SessionKey) != "" && catalogSessionInScope(catalog, scope, aliases, opts.Dispatch.SessionKey) {
-		active = opts.Dispatch.SessionKey
+	routeActive := catalog.ActiveScopedSession(scope, aliases)
+	if routeKey := strings.TrimSpace(opts.Dispatch.RouteSessionKey); routeKey != "" &&
+		catalogSessionInScope(catalog, scope, aliases, routeKey) {
+		routeActive = routeKey
+	} else if strings.TrimSpace(opts.Dispatch.SessionKey) != "" &&
+		!opts.Dispatch.SessionDashboard &&
+		catalogSessionInScope(catalog, scope, aliases, opts.Dispatch.SessionKey) {
+		routeActive = opts.Dispatch.SessionKey
 	}
 
+	mode, query, dashboard := al.telegramSessionDashboard(
+		opts.Dispatch.InboundContext,
+		agent.ID,
+		routeActive,
+		scope,
+		aliases,
+	)
+	if dashboard {
+		dashboardCatalog, ok := agent.Sessions.(session.DashboardSessionStore)
+		if !ok {
+			return nil, session.ErrSessionCatalogUnavailable
+		}
+		active := dashboardCatalog.ActiveDashboardSession(query)
+		switch strings.ToLower(strings.TrimSpace(req.Operation)) {
+		case "list":
+			records, err := dashboardCatalog.ListDashboardSessions(query)
+			if err != nil {
+				return nil, err
+			}
+			return buildSessionListFromRecords(records, active, 0, opts.Dispatch.InboundContext, agent.ID, scope, mode), nil
+		case "current":
+			records, err := dashboardCatalog.ListDashboardSessions(query)
+			if err != nil {
+				return nil, err
+			}
+			return buildCurrentSessionFromRecords(records, active, mode), nil
+		case "new":
+			record, err := catalog.CreateScopedSession(scope, req.Argument)
+			if err != nil {
+				return nil, err
+			}
+			if err := dashboardCatalog.SetActiveDashboardSession(query, record.Key); err != nil {
+				return nil, err
+			}
+			return paragraphContent(fmt.Sprintf("Session aktif dashboard: %s (ID %s).", record.Name, record.ShortID)), nil
+		case "rename":
+			if active == "" {
+				return nil, session.ErrSessionNotInScope
+			}
+			if err := dashboardCatalog.RenameDashboardSession(query, active, req.Argument); err != nil {
+				return nil, err
+			}
+			return paragraphContent("Nama session berhasil diubah menjadi: " + session.SanitizeSessionName(req.Argument)), nil
+		case "use":
+			record, err := dashboardCatalog.ResolveDashboardSelector(query, req.Argument)
+			if err != nil {
+				return nil, fmt.Errorf("session tidak ditemukan dalam dashboard aman ini")
+			}
+			if err := dashboardCatalog.SetActiveDashboardSession(query, record.Key); err != nil {
+				return nil, fmt.Errorf("session tidak dapat diaktifkan")
+			}
+			return paragraphContent(fmt.Sprintf("Session dashboard diganti ke %s (ID %s).", record.Name, record.ShortID)), nil
+		default:
+			return nil, fmt.Errorf("subcommand session tidak dikenal")
+		}
+	}
+
+	active := routeActive
 	switch strings.ToLower(strings.TrimSpace(req.Operation)) {
 	case "list":
 		return buildSessionListContent(catalog, scope, aliases, active, 0, opts.Dispatch.InboundContext, agent.ID), nil
@@ -169,6 +297,18 @@ func buildSessionListContent(
 	if err != nil {
 		return paragraphContent("Daftar session belum tersedia.")
 	}
+	return buildSessionListFromRecords(records, active, page, inbound, agentID, scope, session.DashboardModeRoute)
+}
+
+func buildSessionListFromRecords(
+	records []session.SessionRecord,
+	active string,
+	page int,
+	inbound *bus.InboundContext,
+	agentID string,
+	menuScope *session.SessionScope,
+	mode session.DashboardMode,
+) *bus.StructuredContent {
 	if len(records) == 0 {
 		return paragraphContent("Belum ada session dalam scope aman ini.")
 	}
@@ -184,55 +324,110 @@ func buildSessionListContent(
 	if end > len(records) {
 		end = len(records)
 	}
-	rows := make([][]string, 0, end-start)
-	entries := make([]bus.InteractionEntry, 0, end-start+4)
+
+	columns, rows := sessionTableRows(records[start:end], active, start, mode)
+	entries := make([]bus.InteractionEntry, 0, end-start+5)
 	for i := start; i < end; i++ {
-		record := records[i]
-		no := strconv.Itoa(i + 1)
-		if record.Key == active {
-			no = "✅" + no
-		}
-		rows = append(rows, []string{no, record.Name, strconv.Itoa(record.MessageCount), compactSessionTime(record.UpdatedAt)})
-		entries = append(entries, bus.InteractionEntry{Label: strconv.Itoa(i + 1), Action: "select", Value: record.Key})
+		entries = append(entries, bus.InteractionEntry{Label: strconv.Itoa(i + 1), Action: "select", Value: records[i].Key})
 	}
 	if page > 0 {
 		entries = append(entries, bus.InteractionEntry{Label: "◀️", Action: "page", Value: strconv.Itoa(page - 1)})
 	}
-	entries = append(entries, bus.InteractionEntry{Label: fmt.Sprintf("Halaman %d/%d", page+1, pages), Action: "noop", Value: ""})
+	entries = append(entries, bus.InteractionEntry{Label: fmt.Sprintf("Halaman %d/%d", page+1, pages), Action: "noop"})
 	if page+1 < pages {
 		entries = append(entries, bus.InteractionEntry{Label: "▶️", Action: "page", Value: strconv.Itoa(page + 1)})
 	}
 	entries = append(entries,
-		bus.InteractionEntry{Label: "➕ Baru", Action: "new", Value: ""},
-		bus.InteractionEntry{Label: "✏️ Rename", Action: "rename", Value: ""},
-		bus.InteractionEntry{Label: "✖️ Tutup", Action: "close", Value: ""},
+		bus.InteractionEntry{Label: "➕ Baru", Action: "new"},
+		bus.InteractionEntry{Label: "✏️ Rename", Action: "rename"},
+		bus.InteractionEntry{Label: "✖️ Tutup", Action: "close"},
 	)
 
-	fallback := sessionTableFallback(records[start:end], active, start)
 	menuInbound := bus.InboundContext{}
 	if cloned := cloneInboundContext(inbound); cloned != nil {
 		menuInbound = *cloned
 	}
-	menu := &bus.InteractionMenu{
-		Kind:    "session",
-		OwnerID: sessionMenuOwner(inbound),
-		Channel: inboundChannel(inbound),
-		Account: inboundAccount(inbound),
-		ChatID:  inboundChatID(inbound),
-		TopicID: inboundTopicID(inbound),
-		AgentID: agentID,
-		Scope:   session.CanonicalScopeSignature(*scope),
-		Inbound: menuInbound,
-		Page:    page,
-		Pages:   pages,
-		Entries: entries,
-		Current: active,
+	scopeSignature := ""
+	if menuScope != nil {
+		scopeSignature = session.CanonicalScopeSignature(*menuScope)
 	}
+	menu := &bus.InteractionMenu{
+		Kind:          "session",
+		OwnerID:       sessionMenuOwner(inbound),
+		Channel:       inboundChannel(inbound),
+		Account:       inboundAccount(inbound),
+		ChatID:        inboundChatID(inbound),
+		TopicID:       inboundTopicID(inbound),
+		AgentID:       agentID,
+		Scope:         scopeSignature,
+		DashboardMode: string(mode),
+		Inbound:       menuInbound,
+		Page:          page,
+		Pages:         pages,
+		Entries:       entries,
+		Current:       active,
+	}
+	fallback := genericSessionTableFallback(columns, rows)
 	return &bus.StructuredContent{
-		Kind: "session_list", Title: "Session", Tables: []bus.StructuredTable{{
-			Columns: []string{"No", "Nama Session", "Pesan", "Terakhir"}, Rows: rows,
-			Border: true, Striped: true, Header: true,
+		Kind: "session_list", Title: sessionListTitle(mode), Tables: []bus.StructuredTable{{
+			Columns: columns, Rows: rows, Border: true, Striped: true, Header: true,
 		}}, Fallback: fallback, Interaction: menu,
+	}
+}
+
+func sessionTableRows(records []session.SessionRecord, active string, offset int, mode session.DashboardMode) ([]string, [][]string) {
+	switch mode {
+	case session.DashboardModeSuperadmin:
+		columns := []string{"No", "Nama Session", "Channel", "Account/Bot", "Agent", "Chat/Topic", "Owner", "Pesan", "Terakhir"}
+		rows := make([][]string, 0, len(records))
+		for i, record := range records {
+			no := sessionRowNumber(record, active, offset+i+1)
+			channel, account, agentID, chatTopic, owner := sessionRecordOrigin(record)
+			rows = append(rows, []string{no, record.Name, channel, account, agentID, chatTopic, owner, strconv.Itoa(record.MessageCount), compactSessionTime(record.UpdatedAt)})
+		}
+		return columns, rows
+	case session.DashboardModePersonal:
+		columns := []string{"No", "Nama Session", "Asal", "Pesan", "Terakhir"}
+		rows := make([][]string, 0, len(records))
+		for i, record := range records {
+			no := sessionRowNumber(record, active, offset+i+1)
+			channel, _, _, chatTopic, _ := sessionRecordOrigin(record)
+			origin := channel
+			if chatTopic != "-" {
+				origin += " / " + chatTopic
+			}
+			rows = append(rows, []string{no, record.Name, origin, strconv.Itoa(record.MessageCount), compactSessionTime(record.UpdatedAt)})
+		}
+		return columns, rows
+	default:
+		columns := []string{"No", "Nama Session", "Pesan", "Terakhir"}
+		rows := make([][]string, 0, len(records))
+		for i, record := range records {
+			rows = append(rows, []string{
+				sessionRowNumber(record, active, offset+i+1), record.Name,
+				strconv.Itoa(record.MessageCount), compactSessionTime(record.UpdatedAt),
+			})
+		}
+		return columns, rows
+	}
+}
+
+func sessionRowNumber(record session.SessionRecord, active string, n int) string {
+	no := strconv.Itoa(n)
+	if record.Key == active {
+		return "✅" + no
+	}
+	return no
+}
+
+func sessionListTitle(mode session.DashboardMode) string {
+	switch mode {
+	case session.DashboardModePersonal:
+		return "👤 Session Saya"
+	case session.DashboardModeSuperadmin:
+		return "🌐 Mode Global Superadmin"
+	default:
+		return "Session"
 	}
 }
 
@@ -241,16 +436,96 @@ func buildCurrentSessionContent(catalog session.ScopedSessionStore, scope *sessi
 	if err != nil {
 		return paragraphContent("Session aktif belum tersedia.")
 	}
+	return buildCurrentSessionFromRecords(records, active, session.DashboardModeRoute)
+}
+
+func buildCurrentSessionFromRecords(records []session.SessionRecord, active string, mode session.DashboardMode) *bus.StructuredContent {
 	for _, record := range records {
 		if record.Key != active {
 			continue
 		}
-		fallback := fmt.Sprintf("Session aktif: %s\nID: %s\nPesan: %d\nTerakhir: %s", record.Name, record.ShortID, record.MessageCount, compactSessionTime(record.UpdatedAt))
+		channel, _, _, chatTopic, owner := sessionRecordOrigin(record)
+		origin := channel
+		if chatTopic != "-" {
+			origin += " / " + chatTopic
+		}
+		modeText := sessionModeLabel(mode)
+		rows := [][]string{
+			{"Nama", record.Name},
+			{"Short-ID", record.ShortID},
+			{"Asal", origin},
+			{"Owner", owner},
+			{"Mode", modeText},
+			{"Pesan", strconv.Itoa(record.MessageCount)},
+			{"Terakhir", compactSessionTime(record.UpdatedAt)},
+		}
+		fallback := fmt.Sprintf(
+			"Session aktif: %s\nShort-ID: %s\nAsal: %s\nOwner: %s\nMode: %s\nPesan: %d\nTerakhir: %s",
+			record.Name, record.ShortID, origin, owner, modeText, record.MessageCount, compactSessionTime(record.UpdatedAt),
+		)
 		return &bus.StructuredContent{Kind: "session_current", Title: "Session aktif", Tables: []bus.StructuredTable{{
-			Columns: []string{"Properti", "Nilai"}, Rows: [][]string{{"Nama", record.Name}, {"Short-ID", record.ShortID}, {"Pesan", strconv.Itoa(record.MessageCount)}, {"Terakhir", compactSessionTime(record.UpdatedAt)}}, Border: true, Striped: true, Header: true,
+			Columns: []string{"Properti", "Nilai"}, Rows: rows, Border: true, Striped: true, Header: true,
 		}}, Fallback: fallback}
 	}
 	return paragraphContent("Belum ada session aktif dalam scope aman ini.")
+}
+
+func sessionModeLabel(mode session.DashboardMode) string {
+	switch mode {
+	case session.DashboardModePersonal:
+		return "Personal"
+	case session.DashboardModeSuperadmin:
+		return "Superadmin"
+	default:
+		return "Route"
+	}
+}
+
+func sessionRecordOrigin(record session.SessionRecord) (channel, account, agentID, chatTopic, owner string) {
+	if record.LegacyUnknown || record.Scope == nil {
+		return "Legacy/Unknown", "Legacy/Unknown", "Legacy/Unknown", "Legacy/Unknown", "Legacy/Unknown"
+	}
+	scope := record.Scope
+	channel = strings.TrimSpace(scope.OriginChannel)
+	if channel == "" {
+		channel = strings.TrimSpace(scope.Platform)
+	}
+	if channel == "" {
+		channel = strings.TrimSpace(scope.Channel)
+	}
+	if channel == "" {
+		channel = "-"
+	}
+	account = strings.TrimSpace(scope.BotAccount)
+	routingAccount := strings.TrimSpace(scope.Account)
+	if account == "" {
+		account = routingAccount
+	} else if routingAccount != "" && !strings.EqualFold(routingAccount, account) {
+		account += " / " + routingAccount
+	}
+	if account == "" {
+		account = "-"
+	}
+	agentID = strings.TrimSpace(scope.AgentID)
+	if agentID == "" {
+		agentID = "-"
+	}
+	chatTopic = strings.TrimSpace(scope.OriginChatID)
+	if topic := strings.TrimSpace(scope.OriginTopicID); topic != "" {
+		if chatTopic == "" {
+			chatTopic = "topic " + topic
+		} else {
+			chatTopic += " / " + topic
+		}
+	}
+	if chatTopic == "" {
+		chatTopic = "-"
+	}
+	owner = "-"
+	if verified, ok := session.VerifiedTelegramOwner(scope, session.SessionBotAccount(scope)); ok {
+		owner = verified
+	}
+	return channel, account, agentID, chatTopic, owner
 }
 
 func sessionTableFallback(records []session.SessionRecord, active string, offset int) string {
@@ -263,6 +538,34 @@ func sessionTableFallback(records []session.SessionRecord, active string, offset
 		lines = append(lines, fmt.Sprintf("| %s | %s | %d | %s |", escapeTableCell(no), escapeTableCell(record.Name), record.MessageCount, escapeTableCell(compactSessionTime(record.UpdatedAt))))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func genericSessionTableFallback(columns []string, rows [][]string) string {
+	if len(columns) == 0 {
+		return ""
+	}
+	lines := []string{"| " + strings.Join(escapedTableCells(columns), " | ") + " |"}
+	separator := make([]string, len(columns))
+	for i := range separator {
+		separator[i] = "---"
+	}
+	lines = append(lines, "| "+strings.Join(separator, " | ")+" |")
+	for _, row := range rows {
+		cells := append([]string(nil), row...)
+		for len(cells) < len(columns) {
+			cells = append(cells, "")
+		}
+		lines = append(lines, "| "+strings.Join(escapedTableCells(cells[:len(columns)]), " | ")+" |")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func escapedTableCells(values []string) []string {
+	out := make([]string, len(values))
+	for i, value := range values {
+		out[i] = escapeTableCell(value)
+	}
+	return out
 }
 
 func escapeTableCell(value string) string {

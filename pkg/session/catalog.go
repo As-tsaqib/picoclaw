@@ -26,14 +26,15 @@ var (
 )
 
 type SessionRecord struct {
-	Key          string
-	ShortID      string
-	Name         string
-	NameSource   string
-	MessageCount int
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	Scope        *SessionScope
+	Key           string
+	ShortID       string
+	Name          string
+	NameSource    string
+	MessageCount  int
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	Scope         *SessionScope
+	LegacyUnknown bool
 }
 
 type catalogStore interface {

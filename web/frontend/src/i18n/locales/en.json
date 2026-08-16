@@ -496,6 +496,33 @@
           "richTables": "Native rich tables use a private preformatted fallback.",
           "failClosed": "If private delivery fails, PicoClaw never retries the content as a public group message."
         }
+      },
+      "chatbot": {
+        "title": "Telegram Chatbot",
+        "description": "Configure the bot account, token, delivery behavior, and Telegram channel settings."
+      },
+      "superadmin": {
+        "title": "Session Superadmin",
+        "description": "Configure the single Telegram user allowed to open the global session catalog from this bot account and agent. Personal user dashboards work without this setting.",
+        "loading": "Loading superadmin configuration…",
+        "userId": "Telegram User ID",
+        "userIdHint": "Use the numeric from.id value. Telegram usernames are never accepted for authorization.",
+        "botAccount": "Bot account",
+        "botAccountHint": "Telegram channel instance/account this superadmin is allowed to manage.",
+        "agent": "Agent / instance",
+        "agentHint": "Only sessions from this agent are available in global mode.",
+        "enabled": "Enable global superadmin mode",
+        "enabledHint": "When disabled, every private Telegram user—including this user—uses only their personal dashboard.",
+        "includeLegacy": "Include Legacy/Unknown sessions",
+        "includeLegacyHint": "Explicit opt-in for sessions whose historical scope metadata cannot be fully verified. Keep disabled unless migration review requires it.",
+        "save": "Save",
+        "replace": "Replace",
+        "delete": "Delete",
+        "saved": "Superadmin configuration saved. The gateway is reloaded when it is running.",
+        "deleted": "Superadmin configuration removed. Global catalog access is disabled.",
+        "loadError": "Failed to load superadmin configuration.",
+        "saveError": "Failed to save superadmin configuration.",
+        "deleteError": "Failed to delete superadmin configuration."
       }
     },
     "field": {

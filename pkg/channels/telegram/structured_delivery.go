@@ -466,20 +466,21 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 		return nil
 	}
 	response, err := handler(ctx, bus.InternalCallbackRequest{
-		Kind:       menu.menu.Kind,
-		Action:     action,
-		Value:      value,
-		OwnerID:    menu.menu.OwnerID,
-		Channel:    menu.menu.Channel,
-		Account:    menu.menu.Account,
-		ChatID:     menu.menu.ChatID,
-		TopicID:    menu.menu.TopicID,
-		MessageID:  strconv.Itoa(message.MessageID),
-		AgentID:    menu.menu.AgentID,
-		Scope:      menu.menu.Scope,
-		Inbound:    menu.menu.Inbound,
-		Page:       menu.menu.Page,
-		SessionKey: menu.menu.Current,
+		Kind:          menu.menu.Kind,
+		Action:        action,
+		Value:         value,
+		OwnerID:       menu.menu.OwnerID,
+		Channel:       menu.menu.Channel,
+		Account:       menu.menu.Account,
+		ChatID:        menu.menu.ChatID,
+		TopicID:       menu.menu.TopicID,
+		MessageID:     strconv.Itoa(message.MessageID),
+		AgentID:       menu.menu.AgentID,
+		Scope:         menu.menu.Scope,
+		DashboardMode: menu.menu.DashboardMode,
+		Inbound:       menu.menu.Inbound,
+		Page:          menu.menu.Page,
+		SessionKey:    menu.menu.Current,
 	})
 	if err != nil {
 		logger.WarnCF("telegram", "Internal session callback was rejected", map[string]any{"reason": "scope_or_state_validation"})
