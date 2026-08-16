@@ -38,6 +38,7 @@ var gateway = struct {
 	bootConfigSignature string
 	runtimeStatus       string
 	startupDeadline     time.Time
+	keepAlive           bool
 	logs                *LogBuffer
 	pidData             *ppid.PidFileData // pid file data read from picoclaw.pid.json
 	picoToken           string            // cached raw pico token for upstream gateway proxy injection
@@ -104,6 +105,8 @@ var (
 	gatewayRestartGracePeriod     = 5 * time.Second
 	gatewayRestartForceKillWindow = 3 * time.Second
 	gatewayRestartPollInterval    = 100 * time.Millisecond
+	gatewayWatchdogInterval       = 30 * time.Second
+	gatewayWatchdogRestartDelay   = 2 * time.Second
 	gatewayExecCommand            = exec.Command
 )
 
@@ -334,6 +337,7 @@ func (h *Handler) TryAutoStartGateway() {
 		if err != nil {
 			logger.ErrorC("gateway", fmt.Sprintf("Failed to attach to running gateway (PID: %d): %v", pid, err))
 		} else {
+			gateway.keepAlive = true
 			gateway.pidData = pidData
 			refreshPicoTokensLocked(h.configPath)
 			logger.InfoC("gateway", fmt.Sprintf("Attached to running gateway via PID file (PID: %d)", pid))
@@ -364,7 +368,155 @@ func (h *Handler) TryAutoStartGateway() {
 		logger.ErrorC("gateway", fmt.Sprintf("Failed to auto-start gateway: %v", err))
 		return
 	}
+	gateway.keepAlive = true
 	logger.InfoC("gateway", fmt.Sprintf("Gateway auto-started (PID: %d)", pid))
+}
+
+// StartGatewayWatchdog starts a lightweight supervisor for the gateway process.
+// An unexpected exit wakes the supervisor immediately; the periodic check also
+// covers gateways that were attached through an existing PID file and therefore
+// do not have a waiter goroutine owned by the launcher.
+func (h *Handler) StartGatewayWatchdog() {
+	h.gatewayWatchdogMu.Lock()
+	defer h.gatewayWatchdogMu.Unlock()
+
+	if h.gatewayWatchdogStop != nil {
+		return
+	}
+
+	stop := make(chan struct{})
+	wake := make(chan struct{}, 1)
+	done := make(chan struct{})
+	h.gatewayWatchdogStop = stop
+	h.gatewayWatchdogWake = wake
+	h.gatewayWatchdogDone = done
+
+	go h.runGatewayWatchdog(stop, wake, done)
+}
+
+func (h *Handler) stopGatewayWatchdog() {
+	h.gatewayWatchdogMu.Lock()
+	stop := h.gatewayWatchdogStop
+	done := h.gatewayWatchdogDone
+	if stop == nil {
+		h.gatewayWatchdogMu.Unlock()
+		return
+	}
+	h.gatewayWatchdogStop = nil
+	h.gatewayWatchdogWake = nil
+	h.gatewayWatchdogDone = nil
+	close(stop)
+	h.gatewayWatchdogMu.Unlock()
+
+	<-done
+}
+
+func (h *Handler) wakeGatewayWatchdog() {
+	h.gatewayWatchdogMu.Lock()
+	wake := h.gatewayWatchdogWake
+	h.gatewayWatchdogMu.Unlock()
+	if wake == nil {
+		return
+	}
+
+	select {
+	case wake <- struct{}{}:
+	default:
+	}
+}
+
+func (h *Handler) runGatewayWatchdog(stop <-chan struct{}, wake <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+
+	interval := gatewayWatchdogInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			h.gatewayWatchdogCheck()
+		case <-wake:
+			delay := gatewayWatchdogRestartDelay
+			if delay > 0 {
+				timer := time.NewTimer(delay)
+				select {
+				case <-stop:
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+					return
+				case <-timer.C:
+				}
+			}
+			h.gatewayWatchdogCheck()
+		}
+	}
+}
+
+func (h *Handler) gatewayWatchdogCheck() {
+	gateway.mu.Lock()
+	if !gateway.keepAlive || isCmdProcessAliveLocked(gateway.cmd) {
+		gateway.mu.Unlock()
+		return
+	}
+	gateway.mu.Unlock()
+
+	// A gateway may have been started outside this launcher while it was down.
+	// Validate and attach to it instead of spawning a duplicate process.
+	pidData := h.sanitizeGatewayPidData(ppid.ReadPidFileWithCheck(globalConfigDir()), nil)
+
+	gateway.mu.Lock()
+	defer gateway.mu.Unlock()
+
+	if !gateway.keepAlive || isCmdProcessAliveLocked(gateway.cmd) {
+		return
+	}
+
+	gateway.cmd = nil
+	gateway.owned = false
+	gateway.pidData = nil
+	gateway.bootDefaultModel = ""
+	gateway.bootConfigSignature = ""
+
+	ready, reason, err := h.gatewayStartReady()
+	if err != nil {
+		setGatewayRuntimeStatusLocked("error")
+		logger.ErrorC("gateway", fmt.Sprintf("Gateway watchdog could not validate restart conditions: %v", err))
+		return
+	}
+	if !ready {
+		setGatewayRuntimeStatusLocked("stopped")
+		logger.InfoC("gateway", fmt.Sprintf("Gateway watchdog is waiting: %s", reason))
+		return
+	}
+
+	existingPID := 0
+	if pidData != nil {
+		existingPID = pidData.PID
+	}
+	pid, err := h.startGatewayLocked("restarting", existingPID)
+	if err != nil {
+		setGatewayRuntimeStatusLocked("error")
+		logger.ErrorC("gateway", fmt.Sprintf("Gateway watchdog failed to restart gateway: %v", err))
+		return
+	}
+	if pidData != nil {
+		gateway.pidData = pidData
+		refreshPicoTokensLocked(h.configPath)
+		logger.InfoC("gateway", fmt.Sprintf("Gateway watchdog attached to running gateway (PID: %d)", pid))
+		return
+	}
+
+	logger.InfoC("gateway", fmt.Sprintf("Gateway watchdog restarted gateway (PID: %d)", pid))
 }
 
 // gatewayStartReady validates whether current config can start the gateway.
@@ -926,6 +1078,7 @@ func waitForGatewayProcessExit(cmd *exec.Cmd, timeout time.Duration) bool {
 func (h *Handler) StopGateway() {
 	gateway.mu.Lock()
 	defer gateway.mu.Unlock()
+	gateway.keepAlive = false
 
 	// Only stop if we own the process (started it ourselves)
 	if !gateway.owned || gateway.cmd == nil || gateway.cmd.Process == nil {
@@ -1107,12 +1260,21 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 
 		gateway.mu.Lock()
 		if gateway.cmd == cmd {
+			shouldRecover := gateway.keepAlive && gateway.runtimeStatus != "restarting"
 			gateway.cmd = nil
+			gateway.owned = false
+			gateway.pidData = nil
 			gateway.bootDefaultModel = ""
 			gateway.bootConfigSignature = ""
 			if gateway.runtimeStatus != "restarting" {
 				setGatewayRuntimeStatusLocked("stopped")
 			}
+			gateway.mu.Unlock()
+			if shouldRecover {
+				logger.WarnC("gateway", "Gateway stopped unexpectedly; watchdog scheduled a restart")
+				h.wakeGatewayWatchdog()
+			}
+			return
 		}
 		gateway.mu.Unlock()
 	}()
@@ -1211,6 +1373,7 @@ func (h *Handler) handleGatewayStart(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("Failed to attach to gateway: %v", err), http.StatusInternalServerError)
 			return
 		}
+		gateway.keepAlive = true
 		gateway.pidData = pidData
 		gateway.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
@@ -1254,6 +1417,7 @@ func (h *Handler) handleGatewayStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to start gateway: %v", err), http.StatusInternalServerError)
 		return
 	}
+	gateway.keepAlive = true
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -1270,6 +1434,7 @@ func (h *Handler) handleGatewayStart(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleGatewayStop(w http.ResponseWriter, r *http.Request) {
 	gateway.mu.Lock()
 	defer gateway.mu.Unlock()
+	gateway.keepAlive = false
 
 	if gateway.cmd == nil || gateway.cmd.Process == nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -1305,6 +1470,7 @@ func (h *Handler) RestartGateway() (int, error) {
 	}
 
 	gateway.mu.Lock()
+	gateway.keepAlive = true
 	previousCmd := gateway.cmd
 	previousOwned := gateway.owned
 	setGatewayRuntimeStatusLocked("restarting")

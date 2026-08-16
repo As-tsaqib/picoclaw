@@ -118,8 +118,12 @@ When a gateway process is started by the launcher, the launcher:
 
 - captures stdout and stderr into an in-memory ring buffer
 - tracks transient states such as `starting`, `restarting`, and `stopping`
+- restarts the gateway after an unexpected exit, with a short delay to avoid a tight crash loop
+- periodically checks attached gateway processes that do not have a launcher-owned waiter
 - marks restart-required when the default model or enabled tool set changed since boot
 - ensures the Pico channel is configured before startup
+
+The watchdog is disarmed by an explicit **Stop Gateway** action and during launcher shutdown, so an intentional stop is not undone. Starting or restarting the gateway arms it again.
 
 ### Launcher Authentication
 

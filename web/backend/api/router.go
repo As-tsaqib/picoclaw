@@ -27,6 +27,10 @@ type Handler struct {
 	weixinFlows                map[string]*weixinFlow
 	wecomMu                    sync.Mutex
 	wecomFlows                 map[string]*wecomFlow
+	gatewayWatchdogMu          sync.Mutex
+	gatewayWatchdogStop        chan struct{}
+	gatewayWatchdogWake        chan struct{}
+	gatewayWatchdogDone        chan struct{}
 }
 
 // NewHandler creates an instance of the API handler.
@@ -120,5 +124,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 // Shutdown gracefully shuts down the handler, stopping the gateway if it was started by this handler.
 func (h *Handler) Shutdown() {
+	h.stopGatewayWatchdog()
 	h.StopGateway()
 }

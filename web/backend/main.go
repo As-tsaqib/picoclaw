@@ -724,6 +724,7 @@ func main() {
 	// Auto-open browser will be handled by the launcher runtime.
 
 	// Auto-start gateway after backend starts listening.
+	apiHandler.StartGatewayWatchdog()
 	go func() {
 		time.Sleep(1 * time.Second)
 		apiHandler.TryAutoStartGateway()

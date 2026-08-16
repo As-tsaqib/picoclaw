@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -101,6 +102,8 @@ func resetGatewayTestState(t *testing.T) {
 	originalRestartGracePeriod := gatewayRestartGracePeriod
 	originalRestartForceKillWindow := gatewayRestartForceKillWindow
 	originalRestartPollInterval := gatewayRestartPollInterval
+	originalWatchdogInterval := gatewayWatchdogInterval
+	originalWatchdogRestartDelay := gatewayWatchdogRestartDelay
 	t.Setenv("PICOCLAW_HOME", t.TempDir())
 	t.Cleanup(func() {
 		gatewayHealthGet = originalHealthGet
@@ -109,6 +112,8 @@ func resetGatewayTestState(t *testing.T) {
 		gatewayRestartGracePeriod = originalRestartGracePeriod
 		gatewayRestartForceKillWindow = originalRestartForceKillWindow
 		gatewayRestartPollInterval = originalRestartPollInterval
+		gatewayWatchdogInterval = originalWatchdogInterval
+		gatewayWatchdogRestartDelay = originalWatchdogRestartDelay
 
 		gateway.mu.Lock()
 		gateway.cmd = nil
@@ -116,9 +121,22 @@ func resetGatewayTestState(t *testing.T) {
 		gateway.owned = false
 		gateway.bootDefaultModel = ""
 		gateway.bootConfigSignature = ""
+		gateway.keepAlive = false
 		setGatewayRuntimeStatusLocked("stopped")
 		gateway.mu.Unlock()
 	})
+}
+
+func waitForGatewayTestCondition(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for !condition() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for gateway condition")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func TestPicoGatewayProtocol(t *testing.T) {
@@ -338,6 +356,172 @@ func TestStartGatewayLocked_UsesReloadedConfigForBootSignature(t *testing.T) {
 	}
 	if bootSignature != expectedSignature {
 		t.Fatalf("bootConfigSignature = %q, want %q", bootSignature, expectedSignature)
+	}
+}
+
+func TestGatewayWatchdogRestartsUnexpectedExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep command differs on Windows")
+	}
+
+	resetGatewayTestState(t)
+	gatewayWatchdogInterval = 20 * time.Millisecond
+	gatewayWatchdogRestartDelay = 10 * time.Millisecond
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.ModelName = cfg.ModelList[0].ModelName
+	cfg.ModelList[0].SetAPIKey("test-key")
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	h := NewHandler(configPath)
+	h.SetServerOptions(18800, false, false, nil)
+	h.StartGatewayWatchdog()
+	t.Cleanup(h.Shutdown)
+
+	var starts atomic.Int32
+	gatewayExecCommand = func(_ string, _ ...string) *exec.Cmd {
+		starts.Add(1)
+		return exec.Command("sleep", "30")
+	}
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	startRec := httptest.NewRecorder()
+	mux.ServeHTTP(startRec, httptest.NewRequest(http.MethodPost, "/api/gateway/start", nil))
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("start status = %d, want %d: %s", startRec.Code, http.StatusOK, startRec.Body.String())
+	}
+
+	gateway.mu.Lock()
+	crashedCmd := gateway.cmd
+	keepAlive := gateway.keepAlive
+	gateway.mu.Unlock()
+	if crashedCmd == nil || crashedCmd.Process == nil {
+		t.Fatal("gateway process was not started")
+	}
+	if !keepAlive {
+		t.Fatal("gateway watchdog was not armed after start")
+	}
+	if err := crashedCmd.Process.Kill(); err != nil {
+		t.Fatalf("Kill() error = %v", err)
+	}
+
+	waitForGatewayTestCondition(t, 3*time.Second, func() bool {
+		gateway.mu.Lock()
+		defer gateway.mu.Unlock()
+		return starts.Load() >= 2 && gateway.cmd != nil && gateway.cmd != crashedCmd &&
+			isCmdProcessAliveLocked(gateway.cmd)
+	})
+}
+
+func TestGatewayWatchdogRespectsManualStop(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep command differs on Windows")
+	}
+
+	resetGatewayTestState(t)
+	gatewayWatchdogInterval = 20 * time.Millisecond
+	gatewayWatchdogRestartDelay = 10 * time.Millisecond
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.ModelName = cfg.ModelList[0].ModelName
+	cfg.ModelList[0].SetAPIKey("test-key")
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	h := NewHandler(configPath)
+	h.SetServerOptions(18800, false, false, nil)
+	h.StartGatewayWatchdog()
+	t.Cleanup(h.Shutdown)
+
+	var starts atomic.Int32
+	gatewayExecCommand = func(_ string, _ ...string) *exec.Cmd {
+		starts.Add(1)
+		return exec.Command("sleep", "30")
+	}
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	startRec := httptest.NewRecorder()
+	mux.ServeHTTP(startRec, httptest.NewRequest(http.MethodPost, "/api/gateway/start", nil))
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("start status = %d, want %d: %s", startRec.Code, http.StatusOK, startRec.Body.String())
+	}
+
+	stopRec := httptest.NewRecorder()
+	mux.ServeHTTP(stopRec, httptest.NewRequest(http.MethodPost, "/api/gateway/stop", nil))
+	if stopRec.Code != http.StatusOK {
+		t.Fatalf("stop status = %d, want %d: %s", stopRec.Code, http.StatusOK, stopRec.Body.String())
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	gateway.mu.Lock()
+	keepAlive := gateway.keepAlive
+	cmd := gateway.cmd
+	gateway.mu.Unlock()
+	if keepAlive {
+		t.Fatal("manual stop did not disarm gateway watchdog")
+	}
+	if cmd != nil {
+		t.Fatal("gateway process is still tracked after manual stop")
+	}
+	if got := starts.Load(); got != 1 {
+		t.Fatalf("gateway starts = %d, want 1 after manual stop", got)
+	}
+}
+
+func TestGatewayWatchdogDoesNotRestartDuringShutdown(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep command differs on Windows")
+	}
+
+	resetGatewayTestState(t)
+	gatewayWatchdogInterval = 20 * time.Millisecond
+	gatewayWatchdogRestartDelay = 10 * time.Millisecond
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.ModelName = cfg.ModelList[0].ModelName
+	cfg.ModelList[0].SetAPIKey("test-key")
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	h := NewHandler(configPath)
+	h.SetServerOptions(18800, false, false, nil)
+	h.StartGatewayWatchdog()
+
+	var starts atomic.Int32
+	gatewayExecCommand = func(_ string, _ ...string) *exec.Cmd {
+		starts.Add(1)
+		return exec.Command("sleep", "30")
+	}
+
+	gateway.mu.Lock()
+	_, err := h.startGatewayLocked("starting", 0)
+	if err == nil {
+		gateway.keepAlive = true
+	}
+	gateway.mu.Unlock()
+	if err != nil {
+		t.Fatalf("startGatewayLocked() error = %v", err)
+	}
+
+	h.Shutdown()
+	time.Sleep(100 * time.Millisecond)
+	if got := starts.Load(); got != 1 {
+		t.Fatalf("gateway starts = %d, want 1 during shutdown", got)
+	}
+	gateway.mu.Lock()
+	keepAlive := gateway.keepAlive
+	gateway.mu.Unlock()
+	if keepAlive {
+		t.Fatal("shutdown did not disarm gateway watchdog")
 	}
 }
 
