@@ -71,7 +71,11 @@ func (h *Handler) handlePutSessionSuperadmin(w http.ResponseWriter, r *http.Requ
 			"failed to apply session dashboard config to running gateway",
 			map[string]any{"error": err.Error()},
 		)
-		http.Error(w, "Superadmin config was saved but could not be applied to the running gateway", http.StatusInternalServerError)
+		http.Error(
+			w,
+			"Superadmin config was saved but could not be applied to the running gateway",
+			http.StatusInternalServerError,
+		)
 		return
 	}
 	writeSessionSuperadminResponse(w, requested)
@@ -93,7 +97,11 @@ func (h *Handler) handleDeleteSessionSuperadmin(w http.ResponseWriter, _ *http.R
 			"failed to apply session dashboard revocation to running gateway",
 			map[string]any{"error": err.Error()},
 		)
-		http.Error(w, "Superadmin revocation was saved but could not be applied to the running gateway", http.StatusInternalServerError)
+		http.Error(
+			w,
+			"Superadmin revocation was saved but could not be applied to the running gateway",
+			http.StatusInternalServerError,
+		)
 		return
 	}
 	writeSessionSuperadminResponse(w, config.SessionSuperadminConfig{})
