@@ -55,6 +55,19 @@ type Channel interface {
 	ReasoningChannelID() string
 }
 
+// InternalCallbackCapable is implemented by channels that can keep
+// owner-bound interactive menus out of the normal inbound/LLM path.
+type InternalCallbackCapable interface {
+	SetInternalCallbackHandler(handler bus.InternalCallbackHandler)
+}
+
+// StructuredContentCapable marks adapters that consume OutboundMessage's
+// channel-neutral structured payload themselves. Other adapters receive the
+// readable fallback in Content and retain their normal length splitting.
+type StructuredContentCapable interface {
+	SupportsStructuredContent() bool
+}
+
 // BaseChannelOption is a functional option for configuring a BaseChannel.
 type BaseChannelOption func(*BaseChannel)
 

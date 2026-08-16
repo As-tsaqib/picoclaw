@@ -18,7 +18,21 @@ func contextCommand() Definition {
 			if stats == nil {
 				return req.Reply("No active session context.")
 			}
-			return req.Reply(formatContextStats(stats))
+			fallback := formatContextStats(stats)
+			remaining := stats.CompressAtTokens - stats.UsedTokens
+			if remaining < 0 {
+				remaining = 0
+			}
+			rows := [][]string{
+				{"Messages", fmt.Sprintf("%d", stats.MessageCount)},
+				{"Used", fmt.Sprintf("~%d / %d tokens", stats.UsedTokens, stats.TotalTokens)},
+				{"History", fmt.Sprintf("~%d tokens", stats.HistoryTokens)},
+				{"Compress at", fmt.Sprintf("%d tokens", stats.CompressAtTokens)},
+				{"Summarize at", fmt.Sprintf("%d tokens", stats.SummarizeAtTokens)},
+				{"Compression progress", fmt.Sprintf("%d%%", stats.UsedPercent)},
+				{"Remaining", fmt.Sprintf("~%d tokens", remaining)},
+			}
+			return req.replyStructured(tableContent("Context usage", []string{"Metrik", "Nilai"}, rows, fallback))
 		},
 	}
 }

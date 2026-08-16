@@ -18,7 +18,20 @@ func helpCommand() Definition {
 			} else {
 				defs = BuiltinDefinitions()
 			}
-			return req.Reply(formatHelpMessage(defs))
+			fallback := formatHelpMessage(defs)
+			rows := make([][]string, 0, len(defs))
+			for _, def := range defs {
+				usage := def.EffectiveUsage()
+				if usage == "" {
+					usage = "/" + def.Name
+				}
+				description := def.Description
+				if description == "" {
+					description = "No description"
+				}
+				rows = append(rows, []string{usage, description})
+			}
+			return req.replyStructured(tableContent("Perintah", []string{"Command", "Deskripsi"}, rows, fallback))
 		},
 	}
 }

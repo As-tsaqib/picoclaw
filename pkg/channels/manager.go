@@ -102,6 +102,7 @@ type Manager struct {
 	streamActive              sync.Map          // streamSuppressionKey → true (set when streamer.Finalize sent the message)
 	streamAuxiliaryTombstones sync.Map          // streamSuppressionKey → time.Time (drops late auxiliary messages after stream final)
 	channelHashes             map[string]string // channel name → config hash
+	internalCallbackHandler   bus.InternalCallbackHandler
 }
 
 type mediaStoreSetter interface {
@@ -192,6 +193,12 @@ func outboundMessageIsFinal(msg bus.OutboundMessage) bool {
 }
 
 func outboundMessageBypassesPlaceholderEdit(msg bus.OutboundMessage) bool {
+	// Structured payloads (for example Telegram Rich Messages) must reach the
+	// channel's native Send path. Editing a placeholder only has a plain-text
+	// payload and would silently downgrade the response to Markdown/HTML.
+	if msg.Structured != nil {
+		return true
+	}
 	if len(msg.Context.Raw) == 0 {
 		return false
 	}
@@ -419,7 +426,7 @@ func (m *Manager) preSend(ctx context.Context, name string, msg bus.OutboundMess
 
 	// 4. If a stream already finalized this turn, skip only the duplicate final
 	// outbound. Earlier queued visible messages must still be delivered.
-	if isFinalMessage {
+	if isFinalMessage && msg.Structured == nil {
 		if _, loaded := m.streamActive.LoadAndDelete(streamKey); loaded {
 			if v, loaded := m.placeholders.LoadAndDelete(key); loaded {
 				if entry, ok := v.(placeholderEntry); ok && entry.id != "" {
@@ -451,10 +458,12 @@ func (m *Manager) preSend(ctx context.Context, name string, msg bus.OutboundMess
 		}
 	}
 
-	if _, loaded := m.streamActive.Load(streamKey); loaded {
-		return nil, false
+	if msg.Structured == nil {
+		if _, loaded := m.streamActive.Load(streamKey); loaded {
+			return nil, false
+		}
 	}
-	if m.streamActiveForChat(name, chatID) {
+	if msg.Structured == nil && m.streamActiveForChat(name, chatID) {
 		return nil, false
 	}
 
@@ -1529,7 +1538,10 @@ func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) 
 			// Tool feedback must stay a single message, so it skips marker splitting.
 			// Stream-final duplicate responses must also stay intact so preSend can
 			// consume the whole final message before any marker chunk leaks.
-			if m.finalizedStreamActiveForMessage(name, msg) {
+			nativeStructured := channelSupportsStructuredContent(w.ch, msg)
+			if nativeStructured {
+				chunks = []string{msg.Content}
+			} else if m.finalizedStreamActiveForMessage(name, msg) {
 				chunks = []string{msg.Content}
 			} else if m.config != nil && m.config.Agents.Defaults.SplitOnMarker && !outboundMessageIsToolFeedback(msg) {
 				if markerChunks := SplitByMarker(msg.Content); len(markerChunks) > 1 {
@@ -1550,6 +1562,9 @@ func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) 
 			for _, chunk := range chunks {
 				chunkMsg := msg
 				chunkMsg.Content = chunk
+				if msg.Structured != nil && !nativeStructured {
+					chunkMsg.Structured = nil
+				}
 				m.sendWithRetry(ctx, name, w, chunkMsg)
 			}
 		case <-ctx.Done():
@@ -1589,6 +1604,14 @@ func splitOutboundMessageContent(msg bus.OutboundMessage, maxLen int) []string {
 		}
 	}
 	return []string{msg.Content}
+}
+
+func channelSupportsStructuredContent(ch Channel, msg bus.OutboundMessage) bool {
+	if msg.Structured == nil || ch == nil {
+		return false
+	}
+	capable, ok := ch.(StructuredContentCapable)
+	return ok && capable.SupportsStructuredContent()
 }
 
 // sendWithRetry sends a message through the channel with rate limiting and
@@ -2099,9 +2122,25 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 func (m *Manager) RegisterChannel(name string, channel Channel) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if capable, ok := channel.(InternalCallbackCapable); ok {
+		capable.SetInternalCallbackHandler(m.internalCallbackHandler)
+	}
 	m.channels[name] = channel
 	if m.mux != nil {
 		m.registerChannelHTTPHandler(name, channel)
+	}
+}
+
+// SetInternalCallbackHandler installs the trusted agent callback on all
+// capable channels and remembers it for channels registered after reload.
+func (m *Manager) SetInternalCallbackHandler(handler bus.InternalCallbackHandler) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.internalCallbackHandler = handler
+	for _, channel := range m.channels {
+		if capable, ok := channel.(InternalCallbackCapable); ok {
+			capable.SetInternalCallbackHandler(handler)
+		}
 	}
 }
 
@@ -2148,15 +2187,26 @@ func (m *Manager) SendMessage(ctx context.Context, msg bus.OutboundMessage) erro
 	if mlp, ok := w.ch.(MessageLengthProvider); ok {
 		maxLen = mlp.MaxMessageLength()
 	}
-	if chunks := splitOutboundMessageContent(msg, maxLen); len(chunks) > 1 {
+	nativeStructured := channelSupportsStructuredContent(ch, msg)
+	chunks := []string{msg.Content}
+	if !nativeStructured {
+		chunks = splitOutboundMessageContent(msg, maxLen)
+	}
+	if len(chunks) > 1 {
 		for _, chunk := range chunks {
 			chunkMsg := msg
 			chunkMsg.Content = chunk
+			if msg.Structured != nil && !nativeStructured {
+				chunkMsg.Structured = nil
+			}
 			m.sendWithRetry(ctx, channelName, w, chunkMsg)
 		}
 	} else {
 		if len(chunks) == 1 {
 			msg.Content = chunks[0]
+		}
+		if msg.Structured != nil && !nativeStructured {
+			msg.Structured = nil
 		}
 		m.sendWithRetry(ctx, channelName, w, msg)
 	}

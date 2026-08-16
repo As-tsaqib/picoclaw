@@ -32,3 +32,17 @@ type SessionStore interface {
 	// Close releases resources held by the store.
 	Close() error
 }
+
+// ScopedSessionStore is implemented by durable backends that support named
+// multi-session routing. The legacy SessionStore contract remains unchanged so
+// alternative backends continue to work with a graceful command fallback.
+type ScopedSessionStore interface {
+	SessionStore
+	CreateScopedSession(scope *SessionScope, name string) (SessionRecord, error)
+	RenameScopedSession(scope *SessionScope, routeAliases []string, sessionKey, name string) error
+	SetAutomaticSessionName(sessionKey, content string) error
+	ActiveScopedSession(scope *SessionScope, routeAliases []string) string
+	SetActiveScopedSession(scope *SessionScope, routeAliases []string, sessionKey string) error
+	ListScopedSessions(scope *SessionScope, routeAliases []string) ([]SessionRecord, error)
+	ResolveScopedSelector(scope *SessionScope, routeAliases []string, selector string) (SessionRecord, error)
+}

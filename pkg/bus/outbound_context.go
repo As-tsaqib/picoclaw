@@ -41,6 +41,7 @@ func NormalizeOutboundMessage(msg OutboundMessage) OutboundMessage {
 		msg.Context.ReplyToMessageID = msg.ReplyToMessageID
 	}
 	msg.Scope = cloneOutboundScope(msg.Scope)
+	msg.Structured = msg.Structured.Clone()
 	return msg
 }
 

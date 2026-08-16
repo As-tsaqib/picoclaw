@@ -18,14 +18,16 @@ func showCommand() Definition {
 						return req.Reply(unavailableMsg)
 					}
 					name, provider := rt.GetModelInfo()
-					return req.Reply(fmt.Sprintf("Current Model: %s (Provider: %s)", name, provider))
+					fallback := fmt.Sprintf("Current Model: %s (Provider: %s)", name, provider)
+					return req.replyStructured(tableContent("Model", []string{"Properti", "Nilai"}, [][]string{{"Model", name}, {"Provider", provider}}, fallback))
 				},
 			},
 			{
 				Name:        "channel",
 				Description: "Current channel",
 				Handler: func(_ context.Context, req Request, _ *Runtime) error {
-					return req.Reply(fmt.Sprintf("Current Channel: %s", req.Channel))
+					fallback := fmt.Sprintf("Current Channel: %s", req.Channel)
+					return req.replyStructured(tableContent("Channel", []string{"Properti", "Nilai"}, [][]string{{"Channel", req.Channel}}, fallback))
 				},
 			},
 			{

@@ -209,16 +209,17 @@ func TestJSONLBackend_ResolveAliasAndPersistMetadata(t *testing.T) {
 		Account:    "default",
 		Dimensions: []string{"chat"},
 		Values: map[string]string{
-			"chat": "group:c1",
+			"chat": "direct:c1",
 		},
 	}
-	b.EnsureSessionMetadata("canonical", scope, []string{"legacy"})
+	legacy := "agent:main:telegram:default:direct:c1"
+	b.EnsureSessionMetadata("canonical", scope, []string{legacy})
 
-	if got := b.ResolveSessionKey("legacy"); got != "canonical" {
+	if got := b.ResolveSessionKey(legacy); got != "canonical" {
 		t.Fatalf("ResolveSessionKey() = %q, want %q", got, "canonical")
 	}
 
-	b.AddMessage("legacy", "user", "hello through alias")
+	b.AddMessage(legacy, "user", "hello through alias")
 	history := b.GetHistory("canonical")
 	if len(history) != 1 {
 		t.Fatalf("len(history) = %d, want 1", len(history))
@@ -227,7 +228,7 @@ func TestJSONLBackend_ResolveAliasAndPersistMetadata(t *testing.T) {
 		t.Fatalf("history[0].Content = %q, want %q", history[0].Content, "hello through alias")
 	}
 
-	resolvedScope := b.GetSessionScope("legacy")
+	resolvedScope := b.GetSessionScope(legacy)
 	if resolvedScope == nil {
 		t.Fatal("GetSessionScope() returned nil")
 	}

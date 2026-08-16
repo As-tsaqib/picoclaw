@@ -3,6 +3,8 @@ package commands
 import (
 	"context"
 	"fmt"
+
+	"github.com/As-tsaqib/picoclaw/pkg/bus"
 )
 
 type Outcome int
@@ -55,6 +57,11 @@ func (e *Executor) executeDefinition(ctx context.Context, req Request, def Defin
 	if req.Reply == nil {
 		req.Reply = func(string) error { return nil }
 	}
+	if req.ReplyStructured == nil {
+		req.ReplyStructured = func(content bus.StructuredContent) error {
+			return req.Reply(content.FallbackText())
+		}
+	}
 
 	// Simple command — no sub-commands
 	if len(def.SubCommands) == 0 {
@@ -68,6 +75,10 @@ func (e *Executor) executeDefinition(ctx context.Context, req Request, def Defin
 	// Sub-command routing
 	subName := nthToken(req.Text, 1)
 	if subName == "" {
+		if def.Handler != nil {
+			err := def.Handler(ctx, req, e.rt)
+			return ExecuteResult{Outcome: OutcomeHandled, Command: def.Name, Err: err}
+		}
 		err := req.Reply("Usage: " + def.EffectiveUsage())
 		return ExecuteResult{Outcome: OutcomeHandled, Command: def.Name, Err: err}
 	}

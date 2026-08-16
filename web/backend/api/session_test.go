@@ -232,6 +232,19 @@ func TestHandleListSessions_TitleUsesFirstUserMessage(t *testing.T) {
 	}
 }
 
+func TestBuildSessionListItemPrefersStoredSessionName(t *testing.T) {
+	item := buildSessionListItem("named", sessionFile{
+		Key: "session-key", Name: "Watchdog Gateway",
+		Messages: []providers.Message{{Role: "user", Content: "fallback preview"}},
+	}, defaultToolFeedbackMaxArgsLength())
+	if item.Title != "Watchdog Gateway" {
+		t.Fatalf("title = %q, want stored name", item.Title)
+	}
+	if item.Preview != "fallback preview" {
+		t.Fatalf("preview = %q, want first user message", item.Preview)
+	}
+}
+
 func TestHandleGetSession_JSONLStorage(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()

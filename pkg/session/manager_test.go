@@ -112,3 +112,43 @@ func TestLoadSessions_NormalizesMissingCreatedAt(t *testing.T) {
 		t.Fatalf("history[0].CreatedAt = %v, want non-zero timestamp", history[0].CreatedAt)
 	}
 }
+
+func TestSessionManagerNamedCatalogAndActiveMappingPersist(t *testing.T) {
+	dir := t.TempDir()
+	scope := &SessionScope{
+		Version: ScopeVersionV1, AgentID: "main", Channel: "telegram", Account: "bot-a",
+		Dimensions: []string{"chat"}, Values: map[string]string{"chat": "direct:42"},
+	}
+	sm := NewSessionManager(dir)
+	record, err := sm.CreateScopedSession(scope, "Fallback backend")
+	if err != nil {
+		t.Fatalf("CreateScopedSession: %v", err)
+	}
+	if err := sm.SetActiveScopedSession(scope, nil, record.Key); err != nil {
+		t.Fatalf("SetActiveScopedSession: %v", err)
+	}
+
+	reopened := NewSessionManager(dir)
+	if got := reopened.ActiveScopedSession(scope, nil); got != record.Key {
+		t.Fatalf("active session = %q, want %q", got, record.Key)
+	}
+	records, err := reopened.ListScopedSessions(scope, nil)
+	if err != nil {
+		t.Fatalf("ListScopedSessions: %v", err)
+	}
+	found := false
+	for _, got := range records {
+		if got.Key == record.Key {
+			found = true
+			if got.Name != "Fallback backend" {
+				t.Fatalf("name = %q", got.Name)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("named session missing after reopen")
+	}
+	if _, err := os.Stat(filepath.Join(dir, activeSessionsFilename)); err != nil {
+		t.Fatalf("active mapping missing: %v", err)
+	}
+}

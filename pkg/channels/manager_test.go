@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
 
 	"github.com/As-tsaqib/picoclaw/pkg/bus"
@@ -960,6 +962,37 @@ func (m *mockChannelWithLength) MaxMessageLength() int {
 	return m.maxLen
 }
 
+type mockStructuredChannelWithLength struct{ mockChannelWithLength }
+
+func (*mockStructuredChannelWithLength) SupportsStructuredContent() bool { return true }
+
+func TestSendMessageStructuredUsesNativeCapabilityOrLegacyFallback(t *testing.T) {
+	structured := &bus.StructuredContent{Kind: "table", Fallback: "a readable structured fallback that must split"}
+
+	legacy := &mockChannelWithLength{maxLen: 12}
+	legacyManager := newTestManager()
+	legacyManager.channels["legacy"] = legacy
+	legacyManager.workers["legacy"] = &channelWorker{ch: legacy, limiter: rate.NewLimiter(rate.Inf, 1)}
+	require.NoError(t, legacyManager.SendMessage(context.Background(), testOutboundMessage(bus.OutboundMessage{
+		Channel: "legacy", ChatID: "1", Content: structured.Fallback, Structured: structured,
+	})))
+	require.Greater(t, len(legacy.sentMessages), 1)
+	for _, sent := range legacy.sentMessages {
+		assert.Nil(t, sent.Structured)
+		assert.NotEmpty(t, sent.Content)
+	}
+
+	native := &mockStructuredChannelWithLength{mockChannelWithLength: mockChannelWithLength{maxLen: 12}}
+	nativeManager := newTestManager()
+	nativeManager.channels["native"] = native
+	nativeManager.workers["native"] = &channelWorker{ch: native, limiter: rate.NewLimiter(rate.Inf, 1)}
+	require.NoError(t, nativeManager.SendMessage(context.Background(), testOutboundMessage(bus.OutboundMessage{
+		Channel: "native", ChatID: "1", Content: structured.Fallback, Structured: structured,
+	})))
+	require.Len(t, native.sentMessages, 1)
+	require.NotNil(t, native.sentMessages[0].Structured)
+}
+
 func TestSendWithRetry_ExponentialBackoff(t *testing.T) {
 	m := newTestManager()
 
@@ -1414,6 +1447,35 @@ func TestPreSend_ThoughtPlaceholderDeleteAndSkipsEdit(t *testing.T) {
 	}
 	if _, ok := m.placeholders.Load("test:123"); ok {
 		t.Fatal("expected placeholder to be consumed before structured thought send")
+	}
+}
+
+func TestPreSend_StructuredPayloadBypassesPlaceholderEdit(t *testing.T) {
+	m := newTestManager()
+	ch := &mockDeletingMessageEditor{
+		mockMessageEditor: mockMessageEditor{
+			editFn: func(_ context.Context, _, _, _ string) error {
+				t.Fatal("structured response must use the channel native Send path")
+				return nil
+			},
+		},
+	}
+	m.RecordPlaceholder("test", "123", "placeholder-1")
+	m.streamActive.Store("test:123", true)
+
+	msg := testOutboundMessage(bus.OutboundMessage{
+		Channel: "test", ChatID: "123", Content: "fallback",
+		Structured: &bus.StructuredContent{Kind: "table", Fallback: "fallback"},
+		Context: bus.InboundContext{Channel: "test", ChatID: "123", Raw: map[string]string{
+			"outbound_kind": "final",
+		}},
+	})
+	_, handled := m.preSend(context.Background(), "test", msg, ch)
+	if handled {
+		t.Fatal("structured response should fall through to native Send")
+	}
+	if ch.deleteCalls != 1 {
+		t.Fatalf("expected placeholder deletion, got %d delete calls", ch.deleteCalls)
 	}
 }
 

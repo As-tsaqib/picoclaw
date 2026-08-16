@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/As-tsaqib/picoclaw/pkg/bus"
+	"github.com/As-tsaqib/picoclaw/pkg/commands"
 	"github.com/As-tsaqib/picoclaw/pkg/constants"
 	"github.com/As-tsaqib/picoclaw/pkg/logger"
 	"github.com/As-tsaqib/picoclaw/pkg/routing"
@@ -20,14 +21,14 @@ func (al *AgentLoop) buildContinuationTarget(msg bus.InboundMessage) (*continuat
 		return nil, nil
 	}
 
-	route, _, err := al.resolveMessageRoute(msg)
+	route, agent, err := al.resolveMessageRoute(msg)
 	if err != nil {
 		return nil, err
 	}
 	allocation := al.allocateRouteSession(route, msg)
 
 	return &continuationTarget{
-		SessionKey:     resolveScopeKey(allocation.SessionKey, msg.SessionKey),
+		SessionKey:     resolveAllocatedSession(agent, allocation, msg.SessionKey),
 		Channel:        msg.Channel,
 		ChatID:         msg.ChatID,
 		InboundContext: cloneInboundContext(&msg.Context),
@@ -128,6 +129,14 @@ func (al *AgentLoop) prepareInboundMessageForAgent(
 }
 
 func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	return al.processMessageWithStructured(ctx, msg, nil)
+}
+
+func (al *AgentLoop) processMessageWithStructured(
+	ctx context.Context,
+	msg bus.InboundMessage,
+	structuredOut **bus.StructuredContent,
+) (string, error) {
 	msg = al.prepareInboundMessageForAgent(ctx, msg)
 
 	// Add message preview to log (show full content for error messages)
@@ -170,7 +179,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 
 	// Resolve session key from the route allocation, while preserving explicit
 	// agent-scoped keys supplied by the caller.
-	scopeKey := resolveScopeKey(allocation.SessionKey, msg.SessionKey)
+	scopeKey := resolveAllocatedSession(agent, allocation, msg.SessionKey)
 	sessionKey := scopeKey
 	if err := al.bindPrivateInboundRoute(msg, sessionKey); err != nil {
 		// Bind only the route capability issued by the Telegram update. If the
@@ -203,10 +212,14 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			"route_main_session": allocation.MainSessionKey,
 		})
 
+	sessionAliases := []string(nil)
+	if sessionKey == allocation.SessionKey {
+		sessionAliases = buildSessionAliases(sessionKey, append(allocation.SessionAliases, msg.SessionKey)...)
+	}
 	opts := processOptions{
 		Dispatch: DispatchRequest{
 			SessionKey:     sessionKey,
-			SessionAliases: buildSessionAliases(sessionKey, append(allocation.SessionAliases, msg.SessionKey)...),
+			SessionAliases: sessionAliases,
 			InboundContext: cloneInboundContext(&msg.Context),
 			RouteResult:    cloneResolvedRoute(&route),
 			SessionScope:   session.CloneScope(&allocation.Scope),
@@ -226,9 +239,21 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		return "", err
 	}
 
+	if !commands.HasCommandPrefix(msg.Content) {
+		ensureSessionMetadata(agent.Sessions, sessionKey, opts.Dispatch.SessionScope, opts.Dispatch.SessionAliases)
+		if catalog, ok := agent.Sessions.(session.ScopedSessionStore); ok {
+			if nameErr := catalog.SetAutomaticSessionName(sessionKey, msg.Content); nameErr != nil {
+				logger.WarnCF("session", "Failed to assign automatic session name", map[string]any{"error": nameErr.Error()})
+			}
+		}
+	}
+
 	// context-dependent commands check their own Runtime fields and report
 	// "unavailable" when the required capability is nil.
-	if response, handled := al.handleCommand(ctx, msg, agent, &opts); handled {
+	if response, structured, handled := al.handleCommandWithStructured(ctx, msg, agent, &opts); handled {
+		if structuredOut != nil {
+			*structuredOut = structured
+		}
 		return response, nil
 	}
 
@@ -273,6 +298,33 @@ func (al *AgentLoop) allocateRouteSession(route routing.ResolvedRoute, msg bus.I
 		Context:       normalizedInboundContext(msg),
 		SessionPolicy: route.SessionPolicy,
 	})
+}
+
+func resolveAllocatedSession(agent *AgentInstance, allocation session.Allocation, explicit string) string {
+	if session.IsSessionInstanceKey(explicit) {
+		if agent != nil {
+			if catalog, ok := agent.Sessions.(session.ScopedSessionStore); ok &&
+				catalogSessionInScope(catalog, &allocation.Scope, allocation.SessionAliases, strings.TrimSpace(explicit)) {
+				return strings.TrimSpace(explicit)
+			}
+		}
+		// A session-instance key is meaningful only together with matching
+		// durable scope metadata. Ignore an injected or stale key and resolve the
+		// current route normally.
+		explicit = ""
+	}
+	if resolved := resolveScopeKey(allocation.SessionKey, explicit); resolved != allocation.SessionKey ||
+		isExplicitSessionKey(explicit) {
+		return resolved
+	}
+	if agent != nil {
+		if catalog, ok := agent.Sessions.(session.ScopedSessionStore); ok {
+			if active := strings.TrimSpace(catalog.ActiveScopedSession(&allocation.Scope, allocation.SessionAliases)); active != "" {
+				return active
+			}
+		}
+	}
+	return allocation.SessionKey
 }
 
 func (al *AgentLoop) processSystemMessage(

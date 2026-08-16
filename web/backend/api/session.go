@@ -30,6 +30,7 @@ func (h *Handler) registerSessionRoutes(mux *http.ServeMux) {
 // sessionFile mirrors the on-disk session JSON structure from pkg/session.
 type sessionFile struct {
 	Key      string              `json:"key"`
+	Name     string              `json:"name,omitempty"`
 	Messages []providers.Message `json:"messages"`
 	Summary  string              `json:"summary,omitempty"`
 	Created  time.Time           `json:"created"`
@@ -199,6 +200,7 @@ func (h *Handler) readJSONLSession(dir, sessionKey string) (sessionFile, error) 
 
 	return sessionFile{
 		Key:      meta.Key,
+		Name:     meta.Name,
 		Messages: messages,
 		Summary:  meta.Summary,
 		Created:  created,
@@ -430,7 +432,10 @@ func buildSessionListItem(sessionID string, sess sessionFile, toolFeedbackMaxArg
 	if preview == "" {
 		preview = "(empty)"
 	}
-	title := preview
+	title := truncateRunes(sess.Name, maxSessionTitleRunes)
+	if title == "" {
+		title = preview
+	}
 
 	return sessionListItem{
 		ID:           sessionID,

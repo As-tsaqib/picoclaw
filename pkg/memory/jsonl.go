@@ -41,14 +41,17 @@ const (
 // Scope is stored as raw JSON so pkg/memory can stay decoupled from the
 // higher-level session package while still preserving structured scope data.
 type SessionMeta struct {
-	Key       string          `json:"key"`
-	Summary   string          `json:"summary"`
-	Skip      int             `json:"skip"`
-	Count     int             `json:"count"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
-	Scope     json.RawMessage `json:"scope,omitempty"`
-	Aliases   []string        `json:"aliases,omitempty"`
+	Key             string          `json:"key"`
+	Name            string          `json:"name,omitempty"`
+	NameSource      string          `json:"name_source,omitempty"`
+	AutoNamePending bool            `json:"auto_name_pending,omitempty"`
+	Summary         string          `json:"summary"`
+	Skip            int             `json:"skip"`
+	Count           int             `json:"count"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+	Scope           json.RawMessage `json:"scope,omitempty"`
+	Aliases         []string        `json:"aliases,omitempty"`
 }
 
 // JSONLStore implements Store using append-only JSONL files.
@@ -63,9 +66,12 @@ type SessionMeta struct {
 // GetHistory ignores lines before that offset. This keeps all writes
 // append-only, which is both fast and crash-safe.
 type JSONLStore struct {
-	dir   string
-	locks [numLockShards]sync.Mutex
+	dir      string
+	locks    [numLockShards]sync.Mutex
+	activeMu sync.Mutex
 }
+
+const activeSessionsFilename = ".active-sessions.json"
 
 // NewJSONLStore creates a new JSONL-backed store rooted at dir.
 func NewJSONLStore(dir string) (*JSONLStore, error) {
@@ -74,6 +80,149 @@ func NewJSONLStore(dir string) (*JSONLStore, error) {
 		return nil, fmt.Errorf("memory: create directory: %w", err)
 	}
 	return &JSONLStore{dir: dir}, nil
+}
+
+func (s *JSONLStore) activeSessionsPath() string {
+	return filepath.Join(s.dir, activeSessionsFilename)
+}
+
+func (s *JSONLStore) readActiveSessionsLocked() (map[string]string, error) {
+	data, err := os.ReadFile(s.activeSessionsPath())
+	if os.IsNotExist(err) {
+		return make(map[string]string), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("memory: read active sessions: %w", err)
+	}
+	var mapping map[string]string
+	if err := json.Unmarshal(data, &mapping); err != nil {
+		return nil, fmt.Errorf("memory: decode active sessions: %w", err)
+	}
+	if mapping == nil {
+		mapping = make(map[string]string)
+	}
+	return mapping, nil
+}
+
+func (s *JSONLStore) writeActiveSessionsLocked(mapping map[string]string) error {
+	if mapping == nil {
+		mapping = make(map[string]string)
+	}
+	data, err := json.MarshalIndent(mapping, "", "  ")
+	if err != nil {
+		return fmt.Errorf("memory: encode active sessions: %w", err)
+	}
+	// Route signatures contain platform/chat identifiers, so keep this mapping
+	// private just like legacy session snapshots.
+	return fileutil.WriteFileAtomic(s.activeSessionsPath(), data, 0o600)
+}
+
+// GetActiveSession returns the durable active-session mapping for a route
+// signature. An empty result means the deterministic route session is active.
+func (s *JSONLStore) GetActiveSession(_ context.Context, routeSignature string) (string, error) {
+	routeSignature = strings.TrimSpace(routeSignature)
+	if routeSignature == "" {
+		return "", nil
+	}
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	mapping, err := s.readActiveSessionsLocked()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(mapping[routeSignature]), nil
+}
+
+// SetActiveSession atomically updates the route-to-session mapping. The
+// caller is responsible for validating that the target belongs to the route.
+func (s *JSONLStore) SetActiveSession(_ context.Context, routeSignature, sessionKey string) error {
+	routeSignature = strings.TrimSpace(routeSignature)
+	sessionKey = strings.TrimSpace(sessionKey)
+	if routeSignature == "" || sessionKey == "" {
+		return fmt.Errorf("memory: route signature and session key are required")
+	}
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	mapping, err := s.readActiveSessionsLocked()
+	if err != nil {
+		return err
+	}
+	mapping[routeSignature] = sessionKey
+	return s.writeActiveSessionsLocked(mapping)
+}
+
+// ClearActiveSession removes a mapping and restores the deterministic route
+// session as the default on the next turn.
+func (s *JSONLStore) ClearActiveSession(_ context.Context, routeSignature string) error {
+	routeSignature = strings.TrimSpace(routeSignature)
+	if routeSignature == "" {
+		return nil
+	}
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	mapping, err := s.readActiveSessionsLocked()
+	if err != nil {
+		return err
+	}
+	delete(mapping, routeSignature)
+	return s.writeActiveSessionsLocked(mapping)
+}
+
+// SetSessionName stores a durable user-facing session name. Existing metadata
+// fields are preserved for compatibility with older .meta.json files.
+func (s *JSONLStore) SetSessionName(
+	_ context.Context,
+	sessionKey, name, source string,
+	autoNamePending bool,
+) error {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return fmt.Errorf("memory: session key is required")
+	}
+	l := s.sessionLock(sessionKey)
+	l.Lock()
+	defer l.Unlock()
+	meta, err := s.readMeta(sessionKey)
+	if err != nil {
+		return err
+	}
+	meta.Name = strings.TrimSpace(name)
+	meta.NameSource = strings.TrimSpace(source)
+	meta.AutoNamePending = autoNamePending && strings.EqualFold(meta.NameSource, "auto")
+	now := time.Now()
+	if meta.CreatedAt.IsZero() {
+		meta.CreatedAt = now
+	}
+	meta.UpdatedAt = now
+	return s.writeMeta(sessionKey, meta)
+}
+
+// SetSessionNameIfEmpty assigns an automatic name exactly once. It is used
+// when the first visible user message arrives after a session was created.
+func (s *JSONLStore) SetSessionNameIfEmpty(_ context.Context, sessionKey, name string) (bool, error) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" || strings.TrimSpace(name) == "" {
+		return false, nil
+	}
+	l := s.sessionLock(sessionKey)
+	l.Lock()
+	defer l.Unlock()
+	meta, err := s.readMeta(sessionKey)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(meta.Name) != "" && !meta.AutoNamePending {
+		return false, nil
+	}
+	meta.Name = strings.TrimSpace(name)
+	meta.NameSource = "auto"
+	meta.AutoNamePending = false
+	now := time.Now()
+	if meta.CreatedAt.IsZero() {
+		meta.CreatedAt = now
+	}
+	meta.UpdatedAt = now
+	return true, s.writeMeta(sessionKey, meta)
 }
 
 // sessionLock returns a mutex for the given session key.

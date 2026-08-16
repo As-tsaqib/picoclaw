@@ -640,6 +640,9 @@ func (c *TelegramChannel) EditEphemeralMessageReplyMarkup(
 }
 
 func (c *TelegramChannel) handleCallbackQuery(ctx context.Context, query *telego.CallbackQuery) error {
+	if query != nil && isInternalSessionCallback(query.Data) {
+		return c.handleInternalSessionCallback(ctx, query)
+	}
 	plan, err := c.planPrivateCallback(query)
 	if err != nil {
 		c.logPrivateInboundDrop(err.Error())

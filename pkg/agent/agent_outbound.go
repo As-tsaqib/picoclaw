@@ -42,6 +42,7 @@ func (al *AgentLoop) publishResponseOrErrorForInbound(
 	inbound *bus.InboundContext,
 	response string,
 	err error,
+	structured ...*bus.StructuredContent,
 ) {
 	if err != nil {
 		if !al.maybePublishErrorForInbound(ctx, channel, chatID, sessionKey, inbound, err) {
@@ -49,7 +50,7 @@ func (al *AgentLoop) publishResponseOrErrorForInbound(
 		}
 		response = ""
 	}
-	al.publishResponseIfNeededForInbound(ctx, channel, chatID, sessionKey, inbound, response)
+	al.publishResponseIfNeededForInbound(ctx, channel, chatID, sessionKey, inbound, response, structured...)
 }
 
 func (al *AgentLoop) PublishResponseIfNeeded(ctx context.Context, channel, chatID, sessionKey, response string) {
@@ -61,7 +62,15 @@ func (al *AgentLoop) publishResponseIfNeededForInbound(
 	channel, chatID, sessionKey string,
 	inbound *bus.InboundContext,
 	response string,
+	structured ...*bus.StructuredContent,
 ) bool {
+	var rich *bus.StructuredContent
+	if len(structured) > 0 {
+		rich = structured[0]
+	}
+	if response == "" && rich != nil {
+		response = rich.FallbackText()
+	}
 	if response == "" {
 		return false
 	}
@@ -107,6 +116,7 @@ func (al *AgentLoop) publishResponseIfNeededForInbound(
 		Context:    outboundContextFromInbound(inbound, channel, chatID, ""),
 		SessionKey: sessionKey,
 		Content:    response,
+		Structured: rich,
 	}
 	if sessionKey != "" {
 		msg.ContextUsage = computeContextUsage(al.agentForSession(sessionKey), sessionKey)

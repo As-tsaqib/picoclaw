@@ -104,6 +104,32 @@ func TestResolveAgentID_PrefersSessionScope(t *testing.T) {
 	}
 }
 
+func TestLegacyAliasesProveScopeRequiresChannelAndAccount(t *testing.T) {
+	scope := &SessionScope{AgentID: "main", Channel: "telegram", Account: "bot-a"}
+	aliases := []string{
+		"agent:main:main",
+		"agent:main:direct:42",
+		"agent:main:telegram:direct:42",
+		"agent:main:telegram:bot-b:direct:42",
+		"agent:main:telegram:bot-a:direct:42",
+		"agent:other:telegram:bot-a:direct:42",
+	}
+	got := LegacyAliasesProveScope(scope, aliases)
+	if len(got) != 1 || got[0] != "agent:main:telegram:bot-a:direct:42" {
+		t.Fatalf("proven aliases = %v", got)
+	}
+
+	defaultScope := &SessionScope{AgentID: "main", Channel: "telegram", Account: "default"}
+	defaultGot := LegacyAliasesProveScope(defaultScope, []string{
+		"agent:main:telegram:direct:42",
+		"agent:main:telegram:group:-1001",
+		"agent:main:telegram:default:direct:42",
+	})
+	if len(defaultGot) != 1 || defaultGot[0] != "agent:main:telegram:default:direct:42" {
+		t.Fatalf("default-account proven aliases = %v", defaultGot)
+	}
+}
+
 func TestResolveAgentID_FallsBackToLegacyKey(t *testing.T) {
 	if got := ResolveAgentID(nil, "agent:Sales:telegram:direct:user123"); got != "sales" {
 		t.Fatalf("ResolveAgentID() = %q, want sales", got)

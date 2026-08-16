@@ -111,7 +111,8 @@ func memoryStatusHandler(_ context.Context, req Request, rt *Runtime) error {
 	if rt == nil || rt.MemoryStatus == nil {
 		return req.Reply(unavailableMsg)
 	}
-	return req.Reply(rt.MemoryStatus())
+	response := rt.MemoryStatus()
+	return req.replyStructured(keyValueContent("Memory status", response))
 }
 
 func memoryProfileHandler(_ context.Context, req Request, rt *Runtime) error {
@@ -133,7 +134,7 @@ func memoryListHandler(_ context.Context, req Request, rt *Runtime) error {
 	if err != nil {
 		return req.Reply("Failed to list memory: " + err.Error())
 	}
-	return req.Reply(response)
+	return req.replyStructured(informationalLinesContent("Memory entries", response))
 }
 
 func memoryForgetHandler(_ context.Context, req Request, rt *Runtime) error {
@@ -159,7 +160,7 @@ func memoryPendingHandler(_ context.Context, req Request, rt *Runtime) error {
 	if err != nil {
 		return req.Reply("Failed to list pending memory: " + err.Error())
 	}
-	return req.Reply(response)
+	return req.replyStructured(informationalLinesContent("Pending memory", response))
 }
 
 func memoryApproveHandler(_ context.Context, req Request, rt *Runtime) error {

@@ -87,15 +87,16 @@ type ContextUsage struct {
 }
 
 type OutboundMessage struct {
-	Channel          string         `json:"channel"`
-	ChatID           string         `json:"chat_id"`
-	Context          InboundContext `json:"context"`
-	AgentID          string         `json:"agent_id,omitempty"`
-	SessionKey       string         `json:"session_key,omitempty"`
-	Scope            *OutboundScope `json:"scope,omitempty"`
-	Content          string         `json:"content"`
-	ReplyToMessageID string         `json:"reply_to_message_id,omitempty"`
-	ContextUsage     *ContextUsage  `json:"context_usage,omitempty"`
+	Channel          string             `json:"channel"`
+	ChatID           string             `json:"chat_id"`
+	Context          InboundContext     `json:"context"`
+	AgentID          string             `json:"agent_id,omitempty"`
+	SessionKey       string             `json:"session_key,omitempty"`
+	Scope            *OutboundScope     `json:"scope,omitempty"`
+	Content          string             `json:"content"`
+	Structured       *StructuredContent `json:"structured,omitempty"`
+	ReplyToMessageID string             `json:"reply_to_message_id,omitempty"`
+	ContextUsage     *ContextUsage      `json:"context_usage,omitempty"`
 }
 
 // MediaPart describes a single media attachment to send.

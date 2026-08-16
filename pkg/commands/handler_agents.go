@@ -16,6 +16,7 @@ func agentsHandler() Handler {
 		if len(ids) == 0 {
 			return req.Reply("No agents registered")
 		}
-		return req.Reply(fmt.Sprintf("Registered agents: %s", strings.Join(ids, ", ")))
+		fallback := fmt.Sprintf("Registered agents: %s", strings.Join(ids, ", "))
+		return req.replyStructured(numberedListContent("Agents", "Agent", ids, fallback))
 	}
 }

@@ -14,7 +14,8 @@ func (al *AgentLoop) processMessageSync(ctx context.Context, msg bus.InboundMess
 		defer al.channelManager.InvokeTypingStop(msg.Channel, msg.ChatID)
 	}
 
-	response, err := al.processMessage(ctx, msg)
+	var structured *bus.StructuredContent
+	response, err := al.processMessageWithStructured(ctx, msg, &structured)
 	target, targetErr := al.buildContinuationTarget(msg)
 	sessionKey := msg.SessionKey
 	if targetErr == nil && target != nil {
@@ -28,12 +29,14 @@ func (al *AgentLoop) processMessageSync(ctx context.Context, msg bus.InboundMess
 		&msg.Context,
 		response,
 		err,
+		structured,
 	)
 }
 
 func (al *AgentLoop) runTurnWithSteering(ctx context.Context, initialMsg bus.InboundMessage) {
 	// Process the initial message
-	response, err := al.processMessage(ctx, initialMsg)
+	var structured *bus.StructuredContent
+	response, err := al.processMessageWithStructured(ctx, initialMsg, &structured)
 	if err != nil {
 		if !al.maybePublishErrorForInbound(
 			ctx,
@@ -48,6 +51,7 @@ func (al *AgentLoop) runTurnWithSteering(ctx context.Context, initialMsg bus.Inb
 		response = ""
 	}
 	finalResponse := response
+	finalStructured := structured
 
 	// Build continuation target
 	target, targetErr := al.buildContinuationTarget(initialMsg)
@@ -77,10 +81,11 @@ func (al *AgentLoop) runTurnWithSteering(ctx context.Context, initialMsg bus.Inb
 			logFields)
 	} else if continued != "" {
 		finalResponse = continued
+		finalStructured = nil
 	}
 
 	// Publish final response
-	if finalResponse != "" {
+	if finalResponse != "" || finalStructured != nil {
 		al.publishResponseIfNeededForInbound(
 			ctx,
 			target.Channel,
@@ -88,6 +93,7 @@ func (al *AgentLoop) runTurnWithSteering(ctx context.Context, initialMsg bus.Inb
 			target.SessionKey,
 			target.InboundContext,
 			finalResponse,
+			finalStructured,
 		)
 	}
 }
@@ -146,5 +152,5 @@ func (al *AgentLoop) resolveSteeringTarget(msg bus.InboundMessage) (string, stri
 	}
 	allocation := al.allocateRouteSession(route, msg)
 
-	return resolveScopeKey(allocation.SessionKey, msg.SessionKey), agent.ID, true
+	return resolveAllocatedSession(agent, allocation, msg.SessionKey), agent.ID, true
 }

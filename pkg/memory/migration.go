@@ -15,11 +15,25 @@ import (
 
 // jsonSession mirrors pkg/session.Session for migration purposes.
 type jsonSession struct {
-	Key      string              `json:"key"`
-	Messages []providers.Message `json:"messages"`
-	Summary  string              `json:"summary,omitempty"`
-	Created  time.Time           `json:"created"`
-	Updated  time.Time           `json:"updated"`
+	Key             string              `json:"key"`
+	Name            string              `json:"name,omitempty"`
+	NameSource      string              `json:"name_source,omitempty"`
+	AutoNamePending bool                `json:"auto_name_pending,omitempty"`
+	Messages        []providers.Message `json:"messages"`
+	Summary         string              `json:"summary,omitempty"`
+	Created         time.Time           `json:"created"`
+	Updated         time.Time           `json:"updated"`
+	Scope           json.RawMessage     `json:"scope,omitempty"`
+	Aliases         []string            `json:"aliases,omitempty"`
+}
+
+type migrationMetadataStore interface {
+	UpsertSessionMeta(ctx context.Context, sessionKey string, scope json.RawMessage, aliases []string) error
+	SetSessionName(ctx context.Context, sessionKey, name, source string, autoNamePending bool) error
+}
+
+type migrationActiveSessionStore interface {
+	SetActiveSession(ctx context.Context, routeSignature, sessionKey string) error
 }
 
 // MigrateFromJSON reads legacy sessions/*.json files from sessionsDir,
@@ -46,6 +60,34 @@ func MigrateFromJSON(
 		}
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		// The durable route mapping is shared by the JSON and JSONL backends;
+		// it is metadata, not a legacy conversation snapshot.
+		if name == activeSessionsFilename {
+			continue
+		}
+		if name == ".active-sessions-legacy.json" {
+			activeStore, ok := store.(migrationActiveSessionStore)
+			if !ok {
+				continue
+			}
+			data, readErr := os.ReadFile(filepath.Join(sessionsDir, name))
+			if readErr != nil {
+				return migrated, fmt.Errorf("memory: migrate active sessions: %w", readErr)
+			}
+			var mapping map[string]string
+			if decodeErr := json.Unmarshal(data, &mapping); decodeErr != nil {
+				return migrated, fmt.Errorf("memory: decode active sessions: %w", decodeErr)
+			}
+			for routeSignature, sessionKey := range mapping {
+				if setErr := activeStore.SetActiveSession(ctx, routeSignature, sessionKey); setErr != nil {
+					return migrated, fmt.Errorf("memory: migrate active session mapping: %w", setErr)
+				}
+			}
+			if renameErr := os.Rename(filepath.Join(sessionsDir, name), filepath.Join(sessionsDir, name+".migrated")); renameErr != nil {
+				log.Printf("memory: migrate: rename %s: %v", name, renameErr)
+			}
 			continue
 		}
 		// Skip JSONL metadata files. They are part of the new storage format,
@@ -98,6 +140,19 @@ func MigrateFromJSON(
 					"memory: migrate %s: set summary: %w",
 					name, sumErr,
 				)
+			}
+		}
+
+		if metadataStore, ok := store.(migrationMetadataStore); ok {
+			if len(sess.Scope) > 0 || len(sess.Aliases) > 0 {
+				if metaErr := metadataStore.UpsertSessionMeta(ctx, key, sess.Scope, sess.Aliases); metaErr != nil {
+					return migrated, fmt.Errorf("memory: migrate %s: metadata: %w", name, metaErr)
+				}
+			}
+			if strings.TrimSpace(sess.Name) != "" {
+				if nameErr := metadataStore.SetSessionName(ctx, key, sess.Name, sess.NameSource, sess.AutoNamePending); nameErr != nil {
+					return migrated, fmt.Errorf("memory: migrate %s: session name: %w", name, nameErr)
+				}
 			}
 		}
 

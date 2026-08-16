@@ -3,8 +3,21 @@ package commands
 import (
 	"context"
 
+	"github.com/As-tsaqib/picoclaw/pkg/bus"
 	"github.com/As-tsaqib/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/session"
 )
+
+type SessionCommandRequest struct {
+	Operation      string
+	Argument       string
+	SessionKey     string
+	SessionAliases []string
+	Scope          *session.SessionScope
+	Inbound        *bus.InboundContext
+}
+
+type SessionCommandHandler func(context.Context, SessionCommandRequest) (*bus.StructuredContent, error)
 
 type MCPServerInfo struct {
 	Name      string
@@ -78,4 +91,5 @@ type Runtime struct {
 	CheckpointList     func() (string, error)
 	CheckpointResume   func(id string) (string, error)
 	CheckpointForget   func(id string) (string, error)
+	SessionCommand     SessionCommandHandler
 }

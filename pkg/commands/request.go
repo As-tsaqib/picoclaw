@@ -3,16 +3,32 @@ package commands
 import (
 	"context"
 	"strings"
+
+	"github.com/As-tsaqib/picoclaw/pkg/bus"
 )
 
 type Handler func(ctx context.Context, req Request, rt *Runtime) error
 
 type Request struct {
-	Channel  string
-	ChatID   string
-	SenderID string
-	Text     string
-	Reply    func(text string) error
+	Channel         string
+	ChatID          string
+	SenderID        string
+	Text            string
+	Reply           func(text string) error
+	ReplyStructured func(content bus.StructuredContent) error
+}
+
+func (r Request) replyStructured(content bus.StructuredContent) error {
+	if strings.TrimSpace(content.Fallback) == "" {
+		content.Fallback = content.FallbackText()
+	}
+	if r.ReplyStructured != nil {
+		return r.ReplyStructured(content)
+	}
+	if r.Reply != nil {
+		return r.Reply(content.FallbackText())
+	}
+	return nil
 }
 
 const unavailableMsg = "Command unavailable in current context."

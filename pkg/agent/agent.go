@@ -183,6 +183,10 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				al.processMessageSync(ctx, msg)
 				continue
 			}
+			// Freeze the selected session on the inbound message. A callback may
+			// switch the durable active mapping while this turn is running, but
+			// this worker and its queued response remain bound to this key.
+			msg.SessionKey = sessionKey
 			if err := al.bindPrivateInboundRoute(msg, sessionKey); err != nil {
 				logger.WarnCF("agent", "Private route binding rejected; dropping turn", map[string]any{
 					"channel": msg.Channel,

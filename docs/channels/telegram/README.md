@@ -63,7 +63,21 @@ Advanced or manual configurations remain supported. Channel-specific values, inc
 
 ## Built-in Commands
 
-Telegram auto-registers PicoClaw's top-level bot commands at startup, including `/start`, `/help`, `/show`, `/list`, and `/use`.
+Telegram auto-registers PicoClaw's top-level bot commands at startup, including `/start`, `/help`, `/show`, `/list`, `/session`, and `/use`.
+
+Named conversation sessions:
+
+- `/session` or `/session list` opens the current route's session list.
+- `/session current` shows the active session.
+- `/session new [name]` creates a separate session and activates it immediately.
+- `/session rename <new name>` renames the active session.
+- `/session use <number|short-id>` switches without using an inline button.
+
+Session names and the active selection are stored durably, so the selected session remains active after a gateway restart. An omitted name starts with a time-based placeholder and is replaced by the first non-command user message; names are limited to 60 Unicode characters. `/session new` is separate from `/new`, `/clear`, and `/reset` and does not change their behavior.
+
+The session menu is owner-bound and only lists sessions that can be verified against the same routed agent, Telegram channel/account, chat, forum topic, and—when personal ephemeral isolation applies—sender. Inline callbacks use short process-local tokens instead of exposing session keys. Menus expire after 15 minutes and after a gateway restart; run `/session` again to create a fresh menu. The active selection itself remains persisted.
+
+On Bot API 10.2 servers, `/session` and structured informational commands such as `/help`, `/show`, `/list`, and `/context` use `sendRichMessage` with native table blocks. Older clients may display a reduced representation, and servers that reject Rich Messages automatically receive a readable text/Markdown fallback. The table and inline keyboard are sent in the same request when native Rich Messages are available.
 
 Skill-related commands:
 

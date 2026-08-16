@@ -82,14 +82,34 @@ func (b *JSONLBackend) EnsureSessionMetadata(sessionKey string, scope *SessionSc
 		}
 		rawScope = data
 	}
+	// Persist and promote only aliases whose shape proves the trusted route.
+	// Generic legacy aliases omit channel/account dimensions and can collide
+	// across multiple Telegram bot accounts.
+	scopedAliases := metadataAliasesForScope(scope, aliases)
 	ctx := context.Background()
-	if err := metaStore.UpsertSessionMeta(ctx, sessionKey, rawScope, aliases); err != nil {
+	existing, err := metaStore.GetSessionMeta(ctx, sessionKey)
+	if err != nil {
+		log.Printf("session: read existing session metadata: %v", err)
+		return
+	}
+	if len(existing.Scope) > 0 && scope != nil {
+		var storedScope SessionScope
+		if err := json.Unmarshal(existing.Scope, &storedScope); err != nil {
+			log.Printf("session: reject corrupt existing session scope: %v", err)
+			return
+		}
+		if !ScopeMatches(&storedScope, scope) {
+			log.Printf("session: refusing to rebind session metadata across scopes")
+			return
+		}
+	}
+	if err := metaStore.UpsertSessionMeta(ctx, sessionKey, rawScope, scopedAliases); err != nil {
 		log.Printf("session: upsert session metadata: %v", err)
 		return
 	}
 
 	if promotingStore, ok := b.store.(aliasPromotingStore); ok {
-		if _, err := promotingStore.PromoteAliasHistory(ctx, sessionKey, rawScope, aliases); err != nil {
+		if _, err := promotingStore.PromoteAliasHistory(ctx, sessionKey, rawScope, scopedAliases); err != nil {
 			log.Printf("session: promote alias history: %v", err)
 		}
 	}

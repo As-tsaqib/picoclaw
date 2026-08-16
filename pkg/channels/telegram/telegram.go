@@ -72,6 +72,11 @@ type TelegramChannel struct {
 	ephemeralMu       sync.Mutex
 	ephemeralRoutes   map[string]telegramEphemeralTarget
 	ephemeralSessions map[string]string
+
+	internalCallbackMu      sync.RWMutex
+	internalCallbackHandler bus.InternalCallbackHandler
+	sessionMenuMu           sync.Mutex
+	sessionMenus            map[string]telegramSessionMenu
 }
 
 type telegramMediaGroup struct {
@@ -145,6 +150,7 @@ func NewTelegramChannel(
 
 		ephemeralRoutes:   make(map[string]telegramEphemeralTarget),
 		ephemeralSessions: make(map[string]string),
+		sessionMenus:      make(map[string]telegramSessionMenu),
 	}
 	ch.progress = channels.NewToolFeedbackAnimator(ch.EditMessage)
 	return ch, nil
@@ -247,7 +253,13 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]
 	}
 
 	if msg.Content == "" {
-		return nil, nil
+		if msg.Structured == nil {
+			return nil, nil
+		}
+	}
+
+	if msg.Structured != nil {
+		return c.sendStructuredContent(ctx, msg, chatID, threadID, ephemeralTarget)
 	}
 
 	isToolFeedback := outboundMessageIsToolFeedback(msg)

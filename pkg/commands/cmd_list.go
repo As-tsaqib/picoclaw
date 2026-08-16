@@ -22,10 +22,11 @@ func listCommand() Definition {
 					if provider == "" {
 						provider = "configured default"
 					}
-					return req.Reply(fmt.Sprintf(
+					fallback := fmt.Sprintf(
 						"Configured Model: %s\nProvider: %s\n\nTo change models, update config.json",
 						name, provider,
-					))
+					)
+					return req.replyStructured(tableContent("Models", []string{"Properti", "Nilai"}, [][]string{{"Model", name}, {"Provider", provider}}, fallback))
 				},
 			},
 			{
@@ -39,7 +40,8 @@ func listCommand() Definition {
 					if len(enabled) == 0 {
 						return req.Reply("No channels enabled")
 					}
-					return req.Reply(fmt.Sprintf("Enabled Channels:\n- %s", strings.Join(enabled, "\n- ")))
+					fallback := fmt.Sprintf("Enabled Channels:\n- %s", strings.Join(enabled, "\n- "))
+					return req.replyStructured(numberedListContent("Channels", "Channel", enabled, fallback))
 				},
 			},
 			{
@@ -58,10 +60,11 @@ func listCommand() Definition {
 					if len(names) == 0 {
 						return req.Reply("No installed skills")
 					}
-					return req.Reply(fmt.Sprintf(
+					fallback := fmt.Sprintf(
 						"Installed Skills:\n- %s\n\nUse /use <skill> <message> to force one for a single request, or /use <skill> to apply it to your next message.",
 						strings.Join(names, "\n- "),
-					))
+					)
+					return req.replyStructured(numberedListContent("Skills", "Skill", names, fallback))
 				},
 			},
 			{

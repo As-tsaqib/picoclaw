@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -432,5 +433,59 @@ func TestMigrateFromJSON_SkipsMetaJSONFiles(t *testing.T) {
 	}
 	if _, statErr := os.Stat(metaPath + ".migrated"); !os.IsNotExist(statErr) {
 		t.Fatalf("meta file should not be renamed, stat err = %v", statErr)
+	}
+}
+
+func TestMigrateFromJSONPreservesNamedSessionMetadataAndActiveMapping(t *testing.T) {
+	sessionsDir := t.TempDir()
+	store, err := NewJSONLStore(sessionsDir)
+	if err != nil {
+		t.Fatalf("NewJSONLStore: %v", err)
+	}
+	ctx := context.Background()
+	scope := json.RawMessage(`{"version":1,"agent_id":"main","channel":"telegram","account":"bot-a","dimensions":["chat"],"values":{"chat":"direct:42"}}`)
+	writeJSONSession(t, sessionsDir, "named.json", jsonSession{
+		Key: "si_v1_named", Name: "Watchdog Gateway", NameSource: "custom",
+		Messages: []providers.Message{{Role: "user", Content: "hello"}},
+		Scope:    scope, Aliases: []string{"agent:main:telegram:direct:42"},
+	})
+	routeSignature := "v=1|agent=main|channel=telegram|account=bot-a|chat=direct:42"
+	activeData, err := json.Marshal(map[string]string{routeSignature: "si_v1_named"})
+	if err != nil {
+		t.Fatalf("marshal active mapping: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionsDir, activeSessionsFilename), activeData, 0o600); err != nil {
+		t.Fatalf("write active mapping: %v", err)
+	}
+
+	count, err := MigrateFromJSON(ctx, sessionsDir, store)
+	if err != nil {
+		t.Fatalf("MigrateFromJSON: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("migrated count = %d, want 1", count)
+	}
+	meta, err := store.GetSessionMeta(ctx, "si_v1_named")
+	if err != nil {
+		t.Fatalf("GetSessionMeta: %v", err)
+	}
+	if meta.Name != "Watchdog Gateway" || meta.NameSource != "custom" {
+		t.Fatalf("name metadata = %q/%q", meta.Name, meta.NameSource)
+	}
+	var gotScope, wantScope map[string]any
+	if err := json.Unmarshal(meta.Scope, &gotScope); err != nil {
+		t.Fatalf("decode migrated scope: %v", err)
+	}
+	if err := json.Unmarshal(scope, &wantScope); err != nil {
+		t.Fatalf("decode expected scope: %v", err)
+	}
+	if !reflect.DeepEqual(gotScope, wantScope) {
+		t.Fatalf("scope = %s, want %s", meta.Scope, scope)
+	}
+	if got, err := store.GetActiveSession(ctx, routeSignature); err != nil || got != "si_v1_named" {
+		t.Fatalf("active mapping = %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(sessionsDir, activeSessionsFilename)); err != nil {
+		t.Fatalf("active mapping should not be renamed: %v", err)
 	}
 }

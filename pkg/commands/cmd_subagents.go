@@ -33,10 +33,12 @@ func subagentsCommand() Definition {
 				if treeStr == "" {
 					return req.Reply("No active tasks running in this session.")
 				}
-				return req.Reply(fmt.Sprintf("🤖 **Active Subagents Tree**\n```text\n%s\n```", treeStr))
+				fallback := fmt.Sprintf("🤖 **Active Subagents Tree**\n```text\n%s\n```", treeStr)
+				return req.replyStructured(tableContent("Active Subagents", []string{"Agent", "Status/Informasi"}, [][]string{{"Task tree", treeStr}}, fallback))
 			}
 
-			return req.Reply(fmt.Sprintf("🤖 **Active Subagents List**\n```text\n%+v\n```", turnRaw))
+			fallback := fmt.Sprintf("🤖 **Active Subagents List**\n```text\n%+v\n```", turnRaw)
+			return req.replyStructured(tableContent("Active Subagents", []string{"Agent", "Status/Informasi"}, [][]string{{"Active", fmt.Sprintf("%+v", turnRaw)}}, fallback))
 		},
 	}
 }

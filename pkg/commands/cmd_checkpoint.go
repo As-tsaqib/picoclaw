@@ -25,7 +25,7 @@ func checkpointListHandler(_ context.Context, req Request, rt *Runtime) error {
 	if err != nil {
 		return req.Reply("Failed to list checkpoints: " + err.Error())
 	}
-	return req.Reply(response)
+	return req.replyStructured(informationalLinesContent("Checkpoints", response))
 }
 
 func checkpointResumeHandler(_ context.Context, req Request, rt *Runtime) error {

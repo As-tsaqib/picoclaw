@@ -23,24 +23,35 @@ func (al *AgentLoop) handleCommand(
 	agent *AgentInstance,
 	opts *processOptions,
 ) (string, bool) {
+	reply, _, handled := al.handleCommandWithStructured(ctx, msg, agent, opts)
+	return reply, handled
+}
+
+func (al *AgentLoop) handleCommandWithStructured(
+	ctx context.Context,
+	msg bus.InboundMessage,
+	agent *AgentInstance,
+	opts *processOptions,
+) (string, *bus.StructuredContent, bool) {
 	normalizeProcessOptionsInPlace(opts)
 
 	if !commands.HasCommandPrefix(msg.Content) {
-		return "", false
+		return "", nil, false
 	}
 
 	if matched, handled, reply := al.applyExplicitSkillCommand(msg.Content, agent, opts); matched {
-		return reply, handled
+		return reply, nil, handled
 	}
 
 	if al.cmdRegistry == nil {
-		return "", false
+		return "", nil, false
 	}
 
 	rt := al.buildCommandsRuntime(ctx, agent, opts)
 	executor := commands.NewExecutor(al.cmdRegistry, rt)
 
 	var commandReply string
+	var structuredReply *bus.StructuredContent
 	result := executor.Execute(ctx, commands.Request{
 		Channel:  msg.Channel,
 		ChatID:   msg.ChatID,
@@ -50,19 +61,24 @@ func (al *AgentLoop) handleCommand(
 			commandReply = text
 			return nil
 		},
+		ReplyStructured: func(content bus.StructuredContent) error {
+			structuredReply = content.Clone()
+			commandReply = content.FallbackText()
+			return nil
+		},
 	})
 
 	switch result.Outcome {
 	case commands.OutcomeHandled:
 		if result.Err != nil {
-			return mapCommandError(result), true
+			return mapCommandError(result), nil, true
 		}
 		if commandReply != "" {
-			return commandReply, true
+			return commandReply, structuredReply, true
 		}
-		return "", true
+		return "", structuredReply, true
 	default: // OutcomePassthrough — let the message fall through to LLM
-		return "", false
+		return "", nil, false
 	}
 }
 
@@ -359,6 +375,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 		}
 	}
 	configureMemoryCommandRuntime(rt, agent, opts, al)
+	configureSessionCommandRuntime(rt, agent, opts, al)
 	return rt
 }
 
