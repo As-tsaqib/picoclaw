@@ -156,7 +156,12 @@ func TestSessionManagerSupportsPrivateDashboardFallback(t *testing.T) {
 
 	reopened := session.NewSessionManager(dir)
 	t.Cleanup(func() { _ = reopened.Close() })
-	assert.Equal(t, own.Key, reopened.ActiveDashboardSession(query), "dashboard mapping must survive fallback-store restart")
+	assert.Equal(
+		t,
+		own.Key,
+		reopened.ActiveDashboardSession(query),
+		"dashboard mapping must survive fallback-store restart",
+	)
 	records, err = reopened.ListDashboardSessions(query)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
