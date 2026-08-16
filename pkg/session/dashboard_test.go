@@ -154,7 +154,10 @@ func TestSuperadminCatalogRespectsAgentBotAndExplicitLegacyOptIn(t *testing.T) {
 		"Foreign bot",
 	)
 	require.NoError(t, err)
-	backend.AddMessage("agent:main:legacy-without-scope", "user", "legacy")
+	ambiguousLegacy := "agent:main:legacy-without-scope"
+	provenLegacy := "agent:main:telegram:bot-a:direct:99"
+	backend.AddMessage(ambiguousLegacy, "user", "legacy ambiguous")
+	backend.AddMessage(provenLegacy, "user", "legacy proven")
 
 	query := dashboardQuery(session.DashboardModeSuperadmin, "42")
 	records, err := backend.ListDashboardSessions(query)
@@ -166,17 +169,21 @@ func TestSuperadminCatalogRespectsAgentBotAndExplicitLegacyOptIn(t *testing.T) {
 	assert.True(t, seen[allowed.Key])
 	assert.False(t, seen[foreignAgent.Key])
 	assert.False(t, seen[foreignBot.Key])
-	assert.False(t, seen["agent:main:legacy-without-scope"])
+	assert.False(t, seen[ambiguousLegacy])
+	assert.False(t, seen[provenLegacy])
 
 	query.IncludeLegacyUnknown = true
 	records, err = backend.ListDashboardSessions(query)
 	require.NoError(t, err)
+	seen = map[string]bool{}
 	legacyFound := false
 	for _, record := range records {
-		if record.Key == "agent:main:legacy-without-scope" {
+		seen[record.Key] = true
+		if record.Key == provenLegacy {
 			legacyFound = true
 			assert.True(t, record.LegacyUnknown)
 		}
 	}
-	assert.True(t, legacyFound, "legacy/unknown must require an explicit opt-in")
+	assert.True(t, legacyFound, "legacy/unknown must require both opt-in and a scope-proving alias")
+	assert.False(t, seen[ambiguousLegacy], "ambiguous legacy sessions must remain hidden even with opt-in")
 }
