@@ -153,7 +153,13 @@ func MigrateFromJSON(
 				}
 			}
 			if strings.TrimSpace(sess.Name) != "" {
-				if nameErr := metadataStore.SetSessionName(ctx, key, sess.Name, sess.NameSource, sess.AutoNamePending); nameErr != nil {
+				if nameErr := metadataStore.SetSessionName(
+					ctx,
+					key,
+					sess.Name,
+					sess.NameSource,
+					sess.AutoNamePending,
+				); nameErr != nil {
 					return migrated, fmt.Errorf("memory: migrate %s: session name: %w", name, nameErr)
 				}
 			}

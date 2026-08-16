@@ -32,7 +32,14 @@ func showCommand() Definition {
 				Description: "Current channel",
 				Handler: func(_ context.Context, req Request, _ *Runtime) error {
 					fallback := fmt.Sprintf("Current Channel: %s", req.Channel)
-					return req.replyStructured(tableContent("Channel", []string{"Properti", "Nilai"}, [][]string{{"Channel", req.Channel}}, fallback))
+					return req.replyStructured(
+						tableContent(
+							"Channel",
+							[]string{"Properti", "Nilai"},
+							[][]string{{"Channel", req.Channel}},
+							fallback,
+						),
+					)
 				},
 			},
 			{

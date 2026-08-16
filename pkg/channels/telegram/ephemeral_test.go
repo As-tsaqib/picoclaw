@@ -851,5 +851,9 @@ func TestTelegramDashboardAttachmentDoesNotReuseOriginEphemeralCapability(t *tes
 		0,
 	)
 	require.NoError(t, err)
-	assert.Nil(t, resolved, "private dashboard replies must stay in the DM instead of reusing an old group ephemeral route")
+	assert.Nil(
+		t,
+		resolved,
+		"private dashboard replies must stay in the DM instead of reusing an old group ephemeral route",
+	)
 }

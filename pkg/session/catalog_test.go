@@ -124,7 +124,10 @@ func TestVisibleSessionStatsExcludeToolsAndThoughts(t *testing.T) {
 	backend.AddFullMessage(record.Key, providers.Message{
 		Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call-1"}}, CreatedAt: &now,
 	})
-	backend.AddFullMessage(record.Key, providers.Message{Role: "tool", Content: "internal", ToolCallID: "call-1", CreatedAt: &now})
+	backend.AddFullMessage(
+		record.Key,
+		providers.Message{Role: "tool", Content: "internal", ToolCallID: "call-1", CreatedAt: &now},
+	)
 	backend.AddFullMessage(record.Key, providers.Message{Role: "assistant", Content: "visible reply", CreatedAt: &now})
 
 	records, err := backend.ListScopedSessions(scope, nil)

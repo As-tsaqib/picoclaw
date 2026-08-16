@@ -36,7 +36,10 @@ func TestSessionCommandDispatchesAllSupportedForms(t *testing.T) {
 				return &bus.StructuredContent{Kind: "paragraph", Fallback: "ok"}, nil
 			}}
 			var structured bus.StructuredContent
-			result := NewExecutor(NewRegistry([]Definition{sessionCommand()}), rt).Execute(context.Background(), Request{
+			result := NewExecutor(
+				NewRegistry([]Definition{sessionCommand()}),
+				rt,
+			).Execute(context.Background(), Request{
 				Channel: "telegram", Text: tt.text,
 				ReplyStructured: func(content bus.StructuredContent) error {
 					structured = content

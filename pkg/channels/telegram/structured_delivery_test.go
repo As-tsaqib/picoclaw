@@ -29,14 +29,26 @@ func testSessionStructuredContent() *bus.StructuredContent {
 			Border:  true, Striped: true, Header: true,
 		}},
 		Fallback: "| No | Nama Session | Pesan | Terakhir |\n|---|---|---|---|\n| ✅1 | Main | 2 | 15:00 |",
-		Interaction: &bus.InteractionMenu{Kind: "session", OwnerID: "42", Channel: "telegram", ChatID: "12345", AgentID: "main", Scope: "scope-signature", Inbound: inbound, Page: 0, Pages: 1, Current: "si_v1_secret-session-key-that-must-not-leak", Entries: []bus.InteractionEntry{
-			{Label: "1", Action: "select", Value: "si_v1_secret-session-key-that-must-not-leak"},
-			{Label: "2", Action: "select", Value: "si_v1_other-secret"},
-			{Label: "Halaman 1/1", Action: "noop"},
-			{Label: "➕ Baru", Action: "new"},
-			{Label: "✏️ Rename", Action: "rename"},
-			{Label: "✖️ Tutup", Action: "close"},
-		}},
+		Interaction: &bus.InteractionMenu{
+			Kind:    "session",
+			OwnerID: "42",
+			Channel: "telegram",
+			ChatID:  "12345",
+			AgentID: "main",
+			Scope:   "scope-signature",
+			Inbound: inbound,
+			Page:    0,
+			Pages:   1,
+			Current: "si_v1_secret-session-key-that-must-not-leak",
+			Entries: []bus.InteractionEntry{
+				{Label: "1", Action: "select", Value: "si_v1_secret-session-key-that-must-not-leak"},
+				{Label: "2", Action: "select", Value: "si_v1_other-secret"},
+				{Label: "Halaman 1/1", Action: "noop"},
+				{Label: "➕ Baru", Action: "new"},
+				{Label: "✏️ Rename", Action: "rename"},
+				{Label: "✖️ Tutup", Action: "close"},
+			},
+		},
 	}
 }
 
@@ -110,7 +122,10 @@ func TestStructuredSessionFallbackKeepsKeyboard(t *testing.T) {
 		return successResponseWithMessageID(t, 92), nil
 	}}
 	ch := newTestChannel(t, caller)
-	_, err := ch.Send(context.Background(), bus.OutboundMessage{ChatID: "12345", Content: "fallback", Structured: testSessionStructuredContent()})
+	_, err := ch.Send(
+		context.Background(),
+		bus.OutboundMessage{ChatID: "12345", Content: "fallback", Structured: testSessionStructuredContent()},
+	)
 	require.NoError(t, err)
 	require.Len(t, caller.calls, 2)
 	assert.Contains(t, caller.calls[0].URL, "sendRichMessage")
@@ -132,7 +147,10 @@ func TestStructuredInformationalResponseUsesNativeRichTable(t *testing.T) {
 		Columns: []string{"Metrik", "Nilai"}, Rows: [][]string{{"Messages", "12"}, {"Used", "1024"}},
 		Border: true, Striped: true, Header: true,
 	}}, Fallback: "Messages: 12\nUsed: 1024"}
-	_, err := ch.Send(context.Background(), bus.OutboundMessage{ChatID: "12345", Content: content.Fallback, Structured: content})
+	_, err := ch.Send(
+		context.Background(),
+		bus.OutboundMessage{ChatID: "12345", Content: content.Fallback, Structured: content},
+	)
 	require.NoError(t, err)
 	require.Len(t, caller.calls, 1)
 	var payload struct {
@@ -167,13 +185,18 @@ func TestSessionCallbackAnswersBeforeEditingAndNeverPublishesInbound(t *testing.
 	}}
 	ch := newTestChannel(t, caller)
 	var got bus.InternalCallbackRequest
-	ch.SetInternalCallbackHandler(func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
-		got = req
-		updated := testSessionStructuredContent()
-		updated.Interaction.Page = 0
-		return &bus.InternalCallbackResponse{Content: updated}, nil
-	})
-	_, err := ch.Send(context.Background(), bus.OutboundMessage{ChatID: "12345", Content: "fallback", Structured: testSessionStructuredContent()})
+	ch.SetInternalCallbackHandler(
+		func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
+			got = req
+			updated := testSessionStructuredContent()
+			updated.Interaction.Page = 0
+			return &bus.InternalCallbackResponse{Content: updated}, nil
+		},
+	)
+	_, err := ch.Send(
+		context.Background(),
+		bus.OutboundMessage{ChatID: "12345", Content: "fallback", Structured: testSessionStructuredContent()},
+	)
 	require.NoError(t, err)
 	require.Len(t, caller.calls, 1)
 	var sent struct {
@@ -181,7 +204,12 @@ func TestSessionCallbackAnswersBeforeEditingAndNeverPublishesInbound(t *testing.
 	}
 	require.NoError(t, json.Unmarshal(caller.calls[0].Data.BodyRaw, &sent))
 	button := sent.ReplyMarkup.InlineKeyboard[0][0]
-	query := &telego.CallbackQuery{ID: "callback-1", From: telego.User{ID: 42}, Data: button.CallbackData, Message: &telego.Message{MessageID: 91, Chat: telego.Chat{ID: 12345}}}
+	query := &telego.CallbackQuery{
+		ID:      "callback-1",
+		From:    telego.User{ID: 42},
+		Data:    button.CallbackData,
+		Message: &telego.Message{MessageID: 91, Chat: telego.Chat{ID: 12345}},
+	}
 	require.NoError(t, ch.handleCallbackQuery(context.Background(), query))
 	require.Len(t, callOrder, 3)
 	assert.Contains(t, callOrder[1], "answerCallbackQuery")
@@ -200,18 +228,28 @@ func TestSessionCallbackRejectsOtherUserAndExpiredMenu(t *testing.T) {
 	}}
 	ch := newTestChannel(t, caller)
 	called := false
-	ch.SetInternalCallbackHandler(func(context.Context, bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
-		called = true
-		return nil, nil
-	})
-	_, err := ch.Send(context.Background(), bus.OutboundMessage{ChatID: "12345", Content: "fallback", Structured: testSessionStructuredContent()})
+	ch.SetInternalCallbackHandler(
+		func(context.Context, bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
+			called = true
+			return nil, nil
+		},
+	)
+	_, err := ch.Send(
+		context.Background(),
+		bus.OutboundMessage{ChatID: "12345", Content: "fallback", Structured: testSessionStructuredContent()},
+	)
 	require.NoError(t, err)
 	var sent struct {
 		ReplyMarkup telego.InlineKeyboardMarkup `json:"reply_markup"`
 	}
 	require.NoError(t, json.Unmarshal(caller.calls[0].Data.BodyRaw, &sent))
 	data := sent.ReplyMarkup.InlineKeyboard[0][0].CallbackData
-	other := &telego.CallbackQuery{ID: "other", From: telego.User{ID: 99}, Data: data, Message: &telego.Message{MessageID: 91, Chat: telego.Chat{ID: 12345}}}
+	other := &telego.CallbackQuery{
+		ID:      "other",
+		From:    telego.User{ID: 99},
+		Data:    data,
+		Message: &telego.Message{MessageID: 91, Chat: telego.Chat{ID: 12345}},
+	}
 	require.NoError(t, ch.handleCallbackQuery(context.Background(), other))
 	assert.False(t, called)
 
@@ -224,7 +262,12 @@ func TestSessionCallbackRejectsOtherUserAndExpiredMenu(t *testing.T) {
 	menu.createdAt = time.Now().Add(-sessionMenuTTL - time.Second)
 	ch.sessionMenus[token] = menu
 	ch.sessionMenuMu.Unlock()
-	expired := &telego.CallbackQuery{ID: "expired", From: telego.User{ID: 42}, Data: data, Message: &telego.Message{MessageID: 91, Chat: telego.Chat{ID: 12345}}}
+	expired := &telego.CallbackQuery{
+		ID:      "expired",
+		From:    telego.User{ID: 42},
+		Data:    data,
+		Message: &telego.Message{MessageID: 91, Chat: telego.Chat{ID: 12345}},
+	}
 	require.NoError(t, ch.handleCallbackQuery(context.Background(), expired))
 	assert.True(t, len(caller.calls) >= 3)
 }
@@ -335,7 +378,10 @@ func TestSessionCallbackNewRenameClosePaginationAndMalformed(t *testing.T) {
 			content := testSessionStructuredContent()
 			if tt.withPages {
 				content.Interaction.Pages = 2
-				content.Interaction.Entries = append(content.Interaction.Entries, bus.InteractionEntry{Label: "▶️", Action: "page", Value: "1"})
+				content.Interaction.Entries = append(
+					content.Interaction.Entries,
+					bus.InteractionEntry{Label: "▶️", Action: "page", Value: "1"},
+				)
 			}
 			markup, pending, err := ch.structuredReplyMarkup(content, 12345, 0)
 			require.NoError(t, err)
@@ -343,18 +389,25 @@ func TestSessionCallbackNewRenameClosePaginationAndMalformed(t *testing.T) {
 			pending.messageID = 91
 			ch.storeSessionMenu(*pending)
 			var got bus.InternalCallbackRequest
-			ch.SetInternalCallbackHandler(func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
-				got = req
-				if tt.close {
-					return &bus.InternalCallbackResponse{Close: true}, nil
-				}
-				if tt.expect == "rename" {
-					return &bus.InternalCallbackResponse{Text: "rename help"}, nil
-				}
-				return &bus.InternalCallbackResponse{Content: testSessionStructuredContent()}, nil
-			})
+			ch.SetInternalCallbackHandler(
+				func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
+					got = req
+					if tt.close {
+						return &bus.InternalCallbackResponse{Close: true}, nil
+					}
+					if tt.expect == "rename" {
+						return &bus.InternalCallbackResponse{Text: "rename help"}, nil
+					}
+					return &bus.InternalCallbackResponse{Content: testSessionStructuredContent()}, nil
+				},
+			)
 			button := findInlineButton(t, markup, tt.label)
-			query := &telego.CallbackQuery{ID: "callback-" + tt.name, From: telego.User{ID: 42}, Data: button.CallbackData, Message: &telego.Message{MessageID: 91, Chat: telego.Chat{ID: 12345}}}
+			query := &telego.CallbackQuery{
+				ID:      "callback-" + tt.name,
+				From:    telego.User{ID: 42},
+				Data:    button.CallbackData,
+				Message: &telego.Message{MessageID: 91, Chat: telego.Chat{ID: 12345}},
+			}
 			require.NoError(t, ch.handleCallbackQuery(context.Background(), query))
 			assert.Equal(t, tt.expect, got.Action)
 			require.NotEmpty(t, caller.calls)
@@ -395,8 +448,17 @@ func TestSessionCallbackEnvelopeSupportsPrivateGroupSupergroupAndForum(t *testin
 		{name: "forum", chatID: -1003, chatType: telego.ChatTypeSupergroup, threadID: 7},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			menu := telegramSessionMenu{chatID: tt.chatID, threadID: tt.threadID, messageID: 91, menu: bus.InteractionMenu{OwnerID: "42", Channel: "telegram"}}
-			message := &telego.Message{MessageID: 91, MessageThreadID: tt.threadID, Chat: telego.Chat{ID: tt.chatID, Type: tt.chatType, IsForum: tt.threadID != 0}}
+			menu := telegramSessionMenu{
+				chatID:    tt.chatID,
+				threadID:  tt.threadID,
+				messageID: 91,
+				menu:      bus.InteractionMenu{OwnerID: "42", Channel: "telegram"},
+			}
+			message := &telego.Message{
+				MessageID:       91,
+				MessageThreadID: tt.threadID,
+				Chat:            telego.Chat{ID: tt.chatID, Type: tt.chatType, IsForum: tt.threadID != 0},
+			}
 			query := &telego.CallbackQuery{ID: "q", From: telego.User{ID: 42}, Message: message}
 			assert.True(t, ch.sessionCallbackEnvelopeValid(query, message, menu))
 			message.MessageThreadID++
@@ -432,7 +494,13 @@ func TestEphemeralSessionMenuUsesPrivateFallbackAndInternalCallback(t *testing.T
 	content.Interaction.Inbound.PrivateSession = true
 	content.Interaction.Scope = "ephemeral-scope"
 
-	ids, err := ch.sendStructuredContent(context.Background(), bus.OutboundMessage{Content: content.FallbackText(), Structured: content}, chatID, threadID, &target)
+	ids, err := ch.sendStructuredContent(
+		context.Background(),
+		bus.OutboundMessage{Content: content.FallbackText(), Structured: content},
+		chatID,
+		threadID,
+		&target,
+	)
 	require.NoError(t, err)
 	require.Len(t, ids, 1)
 	require.Len(t, caller.calls, 1)
@@ -443,15 +511,22 @@ func TestEphemeralSessionMenuUsesPrivateFallbackAndInternalCallback(t *testing.T
 	}
 	require.NoError(t, json.Unmarshal(caller.calls[0].Data.BodyRaw, &sent))
 
-	ch.SetInternalCallbackHandler(func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
-		assert.Equal(t, "select", req.Action)
-		return &bus.InternalCallbackResponse{Content: content}, nil
-	})
+	ch.SetInternalCallbackHandler(
+		func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
+			assert.Equal(t, "select", req.Action)
+			return &bus.InternalCallbackResponse{Content: content}, nil
+		},
+	)
 	button := sent.ReplyMarkup.InlineKeyboard[0][0]
-	query := &telego.CallbackQuery{ID: "ephemeral-callback", From: telego.User{ID: ownerID}, Data: button.CallbackData, Message: &telego.Message{
-		MessageID: 0, EphemeralMessageID: ephemeralID, MessageThreadID: threadID,
-		Chat: telego.Chat{ID: chatID, Type: telego.ChatTypeSupergroup, IsForum: true},
-	}}
+	query := &telego.CallbackQuery{
+		ID:   "ephemeral-callback",
+		From: telego.User{ID: ownerID},
+		Data: button.CallbackData,
+		Message: &telego.Message{
+			MessageID: 0, EphemeralMessageID: ephemeralID, MessageThreadID: threadID,
+			Chat: telego.Chat{ID: chatID, Type: telego.ChatTypeSupergroup, IsForum: true},
+		},
+	}
 	require.NoError(t, ch.handleCallbackQuery(context.Background(), query))
 	require.Len(t, caller.calls, 3)
 	assert.Contains(t, caller.calls[1].URL, "answerCallbackQuery")
@@ -477,9 +552,11 @@ func TestInternalSessionCallbackNeverPublishesInboundMessage(t *testing.T) {
 	require.NoError(t, err)
 	pending.messageID = 91
 	ch.storeSessionMenu(*pending)
-	ch.SetInternalCallbackHandler(func(context.Context, bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
-		return &bus.InternalCallbackResponse{Content: content}, nil
-	})
+	ch.SetInternalCallbackHandler(
+		func(context.Context, bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
+			return &bus.InternalCallbackResponse{Content: content}, nil
+		},
+	)
 	button := markup.InlineKeyboard[0][0]
 	require.NoError(t, ch.handleCallbackQuery(context.Background(), &telego.CallbackQuery{
 		ID: "internal-only", From: telego.User{ID: 42}, Data: button.CallbackData,
@@ -493,10 +570,16 @@ func TestInternalSessionCallbackNeverPublishesInboundMessage(t *testing.T) {
 }
 
 func TestNativeStructuredLimitsFallBackSafely(t *testing.T) {
-	tooManyColumns := &bus.StructuredContent{Tables: []bus.StructuredTable{{Columns: make([]string, richMessageMaxColumns+1)}}}
+	tooManyColumns := &bus.StructuredContent{
+		Tables: []bus.StructuredTable{{Columns: make([]string, richMessageMaxColumns+1)}},
+	}
 	_, ok := buildNativeRichMessage(tooManyColumns)
 	assert.False(t, ok)
-	tooManyBlocks := &bus.StructuredContent{Tables: []bus.StructuredTable{{Columns: []string{"A"}, Header: true, Rows: make([][]string, richMessageMaxBlocks)}}}
+	tooManyBlocks := &bus.StructuredContent{
+		Tables: []bus.StructuredTable{
+			{Columns: []string{"A"}, Header: true, Rows: make([][]string, richMessageMaxBlocks)},
+		},
+	}
 	_, ok = buildNativeRichMessage(tooManyBlocks)
 	assert.False(t, ok)
 	tooManyBytes := &bus.StructuredContent{Paragraphs: []string{strings.Repeat("x", richMessageMaxBytes+1)}}

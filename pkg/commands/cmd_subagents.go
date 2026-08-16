@@ -43,7 +43,14 @@ func subagentsCommand() Definition {
 			}
 
 			fallback := fmt.Sprintf("🤖 **Active Subagents List**\n```text\n%+v\n```", turnRaw)
-			return req.replyStructured(tableContent("Active Subagents", []string{"Agent", "Status/Informasi"}, [][]string{{"Active", fmt.Sprintf("%+v", turnRaw)}}, fallback))
+			return req.replyStructured(
+				tableContent(
+					"Active Subagents",
+					[]string{"Agent", "Status/Informasi"},
+					[][]string{{"Active", fmt.Sprintf("%+v", turnRaw)}},
+					fallback,
+				),
+			)
 		},
 	}
 }

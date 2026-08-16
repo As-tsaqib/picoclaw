@@ -169,7 +169,12 @@ func TestActiveSessionSelectionIsFrozenPerTurnAndRejectsForeignInstance(t *testi
 	foreignAllocation := al.allocateRouteSession(route, foreignMessage)
 	foreign, err := catalog.CreateScopedSession(&foreignAllocation.Scope, "Foreign")
 	require.NoError(t, err)
-	assert.Equal(t, second.Key, resolveAllocatedSession(agent, allocation, foreign.Key), "foreign instance keys must be ignored")
+	assert.Equal(
+		t,
+		second.Key,
+		resolveAllocatedSession(agent, allocation, foreign.Key),
+		"foreign instance keys must be ignored",
+	)
 }
 
 func TestPersonalDashboardFrozenTargetIgnoresConcurrentMappingChange(t *testing.T) {
@@ -184,7 +189,12 @@ func TestPersonalDashboardFrozenTargetIgnoresConcurrentMappingChange(t *testing.
 	route, _, err := al.resolveMessageRoute(direct)
 	require.NoError(t, err)
 	directAllocation := al.allocateRouteSession(route, direct)
-	ensureSessionMetadata(agent.Sessions, directAllocation.SessionKey, &directAllocation.Scope, directAllocation.SessionAliases)
+	ensureSessionMetadata(
+		agent.Sessions,
+		directAllocation.SessionKey,
+		&directAllocation.Scope,
+		directAllocation.SessionAliases,
+	)
 
 	group := direct
 	group.Context.ChatID = "-10077"
@@ -196,7 +206,13 @@ func TestPersonalDashboardFrozenTargetIgnoresConcurrentMappingChange(t *testing.
 	second, err := catalog.CreateScopedSession(&groupAllocation.Scope, "Second next-turn dashboard session")
 	require.NoError(t, err)
 
-	_, query, ok := al.telegramSessionDashboard(&direct.Context, agent.ID, directAllocation.SessionKey, &directAllocation.Scope, directAllocation.SessionAliases)
+	_, query, ok := al.telegramSessionDashboard(
+		&direct.Context,
+		agent.ID,
+		directAllocation.SessionKey,
+		&directAllocation.Scope,
+		directAllocation.SessionAliases,
+	)
 	require.True(t, ok)
 	require.NoError(t, dashboard.SetActiveDashboardSession(query, first.Key))
 
@@ -276,7 +292,11 @@ func TestPrivateTelegramSessionIsAutomaticPersonalDashboard(t *testing.T) {
 	require.NoError(t, err)
 
 	var structured *bus.StructuredContent
-	response, err := al.processMessageWithStructured(context.Background(), telegramSessionTestMessage("/session"), &structured)
+	response, err := al.processMessageWithStructured(
+		context.Background(),
+		telegramSessionTestMessage("/session"),
+		&structured,
+	)
 	require.NoError(t, err)
 	require.NotNil(t, structured)
 	assert.Contains(t, response, "Mine private")
@@ -311,13 +331,21 @@ func TestConfiguredSuperadminOnlyGetsGlobalModeInPrivateChat(t *testing.T) {
 	require.NoError(t, err)
 
 	var structured *bus.StructuredContent
-	response, err := al.processMessageWithStructured(context.Background(), telegramSessionTestMessage("/session"), &structured)
+	response, err := al.processMessageWithStructured(
+		context.Background(),
+		telegramSessionTestMessage("/session"),
+		&structured,
+	)
 	require.NoError(t, err)
 	require.NotNil(t, structured)
 	assert.Equal(t, "🌐 Mode Global Superadmin", structured.Title)
 	assert.Contains(t, response, "User 99 session")
 	require.Len(t, structured.Tables, 1)
-	assert.Equal(t, []string{"No", "Nama Session", "Channel", "Account/Bot", "Agent", "Chat/Topic", "Owner", "Pesan", "Terakhir"}, structured.Tables[0].Columns)
+	assert.Equal(
+		t,
+		[]string{"No", "Nama Session", "Channel", "Account/Bot", "Agent", "Chat/Topic", "Owner", "Pesan", "Terakhir"},
+		structured.Tables[0].Columns,
+	)
 
 	nonAdmin := telegramSessionTestMessage("/session")
 	nonAdmin.Context.ChatID = "43"
@@ -353,7 +381,12 @@ func TestPersonalDashboardSelectionDoesNotMutateOriginRouteAndRegularTurnUsesAtt
 	route, _, err := al.resolveMessageRoute(direct)
 	require.NoError(t, err)
 	directAllocation := al.allocateRouteSession(route, direct)
-	ensureSessionMetadata(agent.Sessions, directAllocation.SessionKey, &directAllocation.Scope, directAllocation.SessionAliases)
+	ensureSessionMetadata(
+		agent.Sessions,
+		directAllocation.SessionKey,
+		&directAllocation.Scope,
+		directAllocation.SessionAliases,
+	)
 
 	group := direct
 	group.Context.ChatID = "-1001"
@@ -364,18 +397,36 @@ func TestPersonalDashboardSelectionDoesNotMutateOriginRouteAndRegularTurnUsesAtt
 	require.NoError(t, err)
 	otherOrigin, err := catalog.CreateScopedSession(&groupAllocation.Scope, "Origin local active")
 	require.NoError(t, err)
-	require.NoError(t, catalog.SetActiveScopedSession(&groupAllocation.Scope, groupAllocation.SessionAliases, otherOrigin.Key))
+	require.NoError(
+		t,
+		catalog.SetActiveScopedSession(&groupAllocation.Scope, groupAllocation.SessionAliases, otherOrigin.Key),
+	)
 
-	_, query, ok := al.telegramSessionDashboard(&direct.Context, agent.ID, directAllocation.SessionKey, &directAllocation.Scope, directAllocation.SessionAliases)
+	_, query, ok := al.telegramSessionDashboard(
+		&direct.Context,
+		agent.ID,
+		directAllocation.SessionKey,
+		&directAllocation.Scope,
+		directAllocation.SessionAliases,
+	)
 	require.True(t, ok)
 	require.NoError(t, dashboard.SetActiveDashboardSession(query, origin.Key))
-	assert.Equal(t, otherOrigin.Key, catalog.ActiveScopedSession(&groupAllocation.Scope, groupAllocation.SessionAliases))
+	assert.Equal(
+		t,
+		otherOrigin.Key,
+		catalog.ActiveScopedSession(&groupAllocation.Scope, groupAllocation.SessionAliases),
+	)
 
 	turn := telegramSessionTestMessage("continue deployment")
 	response, err := al.processMessage(context.Background(), turn)
 	require.NoError(t, err)
 	assert.Equal(t, "unexpected LLM response", response)
-	assert.Equal(t, otherOrigin.Key, catalog.ActiveScopedSession(&groupAllocation.Scope, groupAllocation.SessionAliases), "origin route mapping must remain unchanged")
+	assert.Equal(
+		t,
+		otherOrigin.Key,
+		catalog.ActiveScopedSession(&groupAllocation.Scope, groupAllocation.SessionAliases),
+		"origin route mapping must remain unchanged",
+	)
 
 	history := agent.Sessions.GetHistory(origin.Key)
 	require.NotEmpty(t, history)
@@ -388,7 +439,12 @@ func TestPersonalDashboardSelectionDoesNotMutateOriginRouteAndRegularTurnUsesAtt
 	assert.True(t, foundUser, "regular private turn must append to dashboard-selected session")
 	storedScope := agent.Sessions.(session.MetadataAwareSessionStore).GetSessionScope(origin.Key)
 	require.NotNil(t, storedScope)
-	assert.Equal(t, "-1001", storedScope.OriginChatID, "dashboard attachment must not rebind origin metadata to private chat")
+	assert.Equal(
+		t,
+		"-1001",
+		storedScope.OriginChatID,
+		"dashboard attachment must not rebind origin metadata to private chat",
+	)
 	assert.Equal(t, "9", storedScope.OriginTopicID)
 }
 
@@ -427,7 +483,12 @@ func TestConcurrentPersonalDashboardSwitchDoesNotMixInFlightHistory(t *testing.T
 	route, _, err := al.resolveMessageRoute(direct)
 	require.NoError(t, err)
 	directAllocation := al.allocateRouteSession(route, direct)
-	ensureSessionMetadata(agent.Sessions, directAllocation.SessionKey, &directAllocation.Scope, directAllocation.SessionAliases)
+	ensureSessionMetadata(
+		agent.Sessions,
+		directAllocation.SessionKey,
+		&directAllocation.Scope,
+		directAllocation.SessionAliases,
+	)
 
 	group := direct
 	group.Context.ChatID = "-1007"
@@ -439,7 +500,13 @@ func TestConcurrentPersonalDashboardSwitchDoesNotMixInFlightHistory(t *testing.T
 	second, err := catalog.CreateScopedSession(&groupAllocation.Scope, "Second attached")
 	require.NoError(t, err)
 
-	_, query, ok := al.telegramSessionDashboard(&direct.Context, agent.ID, directAllocation.SessionKey, &directAllocation.Scope, directAllocation.SessionAliases)
+	_, query, ok := al.telegramSessionDashboard(
+		&direct.Context,
+		agent.ID,
+		directAllocation.SessionKey,
+		&directAllocation.Scope,
+		directAllocation.SessionAliases,
+	)
 	require.True(t, ok)
 	require.NoError(t, dashboard.SetActiveDashboardSession(query, first.Key))
 
@@ -474,7 +541,12 @@ func TestConcurrentPersonalDashboardSwitchDoesNotMixInFlightHistory(t *testing.T
 	assert.Contains(t, firstJoined, "frozen response")
 	assert.NotContains(t, secondJoined, "frozen user turn")
 	assert.NotContains(t, secondJoined, "frozen response")
-	assert.Equal(t, second.Key, dashboard.ActiveDashboardSession(query), "next turn should use the newly selected dashboard mapping")
+	assert.Equal(
+		t,
+		second.Key,
+		dashboard.ActiveDashboardSession(query),
+		"next turn should use the newly selected dashboard mapping",
+	)
 }
 
 func TestDashboardCallbackModeIsBoundToCurrentAuthorization(t *testing.T) {
@@ -530,7 +602,12 @@ func TestSessionCurrentShowsDashboardModeOriginOwnerAndShortID(t *testing.T) {
 	route, _, err := al.resolveMessageRoute(direct)
 	require.NoError(t, err)
 	directAllocation := al.allocateRouteSession(route, direct)
-	ensureSessionMetadata(agent.Sessions, directAllocation.SessionKey, &directAllocation.Scope, directAllocation.SessionAliases)
+	ensureSessionMetadata(
+		agent.Sessions,
+		directAllocation.SessionKey,
+		&directAllocation.Scope,
+		directAllocation.SessionAliases,
+	)
 
 	group := direct
 	group.Context.ChatID = "-100500"
@@ -539,12 +616,22 @@ func TestSessionCurrentShowsDashboardModeOriginOwnerAndShortID(t *testing.T) {
 	groupAllocation := al.allocateRouteSession(route, group)
 	record, err := catalog.CreateScopedSession(&groupAllocation.Scope, "Current target")
 	require.NoError(t, err)
-	_, query, ok := al.telegramSessionDashboard(&direct.Context, agent.ID, directAllocation.SessionKey, &directAllocation.Scope, directAllocation.SessionAliases)
+	_, query, ok := al.telegramSessionDashboard(
+		&direct.Context,
+		agent.ID,
+		directAllocation.SessionKey,
+		&directAllocation.Scope,
+		directAllocation.SessionAliases,
+	)
 	require.True(t, ok)
 	require.NoError(t, dashboard.SetActiveDashboardSession(query, record.Key))
 
 	var structured *bus.StructuredContent
-	response, err := al.processMessageWithStructured(context.Background(), telegramSessionTestMessage("/session current"), &structured)
+	response, err := al.processMessageWithStructured(
+		context.Background(),
+		telegramSessionTestMessage("/session current"),
+		&structured,
+	)
 	require.NoError(t, err)
 	require.NotNil(t, structured)
 	assert.Contains(t, response, "Current target")

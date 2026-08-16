@@ -318,7 +318,12 @@ func resolveAllocatedSession(agent *AgentInstance, allocation session.Allocation
 	if session.IsSessionInstanceKey(explicit) {
 		if agent != nil {
 			if catalog, ok := agent.Sessions.(session.ScopedSessionStore); ok &&
-				catalogSessionInScope(catalog, &allocation.Scope, allocation.SessionAliases, strings.TrimSpace(explicit)) {
+				catalogSessionInScope(
+					catalog,
+					&allocation.Scope,
+					allocation.SessionAliases,
+					strings.TrimSpace(explicit),
+				) {
 				return strings.TrimSpace(explicit)
 			}
 		}
@@ -333,7 +338,9 @@ func resolveAllocatedSession(agent *AgentInstance, allocation session.Allocation
 	}
 	if agent != nil {
 		if catalog, ok := agent.Sessions.(session.ScopedSessionStore); ok {
-			if active := strings.TrimSpace(catalog.ActiveScopedSession(&allocation.Scope, allocation.SessionAliases)); active != "" {
+			if active := strings.TrimSpace(
+				catalog.ActiveScopedSession(&allocation.Scope, allocation.SessionAliases),
+			); active != "" {
 				return active
 			}
 		}

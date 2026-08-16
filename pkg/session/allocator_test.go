@@ -342,7 +342,9 @@ func TestTelegramOriginMetadataUsesNumericOwnershipFailClosed(t *testing.T) {
 	username := base
 	username.SenderID = "@alice"
 	untrusted := AllocateRouteSession(AllocationInput{
-		AgentID: "main", Context: username, SessionPolicy: routing.SessionPolicy{Dimensions: []string{"chat", "sender"}},
+		AgentID:       "main",
+		Context:       username,
+		SessionPolicy: routing.SessionPolicy{Dimensions: []string{"chat", "sender"}},
 	})
 	assert.Empty(t, untrusted.Scope.OwnerUserID, "username must never be accepted as owner authorization")
 }

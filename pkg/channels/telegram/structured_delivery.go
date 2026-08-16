@@ -322,20 +322,30 @@ func (c *TelegramChannel) structuredReplyMarkup(
 		if parseErr != nil {
 			continue
 		}
-		button := telego.InlineKeyboardButton{Text: entry.Label, CallbackData: callback("p" + strconv.Itoa(page)), Style: telego.ButtonStylePrimary}
+		button := telego.InlineKeyboardButton{
+			Text:         entry.Label,
+			CallbackData: callback("p" + strconv.Itoa(page)),
+			Style:        telego.ButtonStylePrimary,
+		}
 		if page < menu.Page {
 			prev = button
 		} else if page > menu.Page {
 			next = button
 		}
 	}
-	pageButton := telego.InlineKeyboardButton{Text: fmt.Sprintf("Halaman %d/%d", menu.Page+1, menu.Pages), CallbackData: callback("o")}
+	pageButton := telego.InlineKeyboardButton{
+		Text:         fmt.Sprintf("Halaman %d/%d", menu.Page+1, menu.Pages),
+		CallbackData: callback("o"),
+	}
 	keyboard = append(keyboard, []telego.InlineKeyboardButton{prev, pageButton, next})
 	keyboard = append(keyboard, []telego.InlineKeyboardButton{
 		{Text: "➕ Baru", CallbackData: callback("n"), Style: telego.ButtonStylePrimary},
 		{Text: "✏️ Rename", CallbackData: callback("r"), Style: telego.ButtonStylePrimary},
 	})
-	keyboard = append(keyboard, []telego.InlineKeyboardButton{{Text: "✖️ Tutup", CallbackData: callback("x"), Style: telego.ButtonStyleDanger}})
+	keyboard = append(
+		keyboard,
+		[]telego.InlineKeyboardButton{{Text: "✖️ Tutup", CallbackData: callback("x"), Style: telego.ButtonStyleDanger}},
+	)
 	for _, row := range keyboard {
 		for _, button := range row {
 			if len([]byte(button.CallbackData)) == 0 || len([]byte(button.CallbackData)) > 64 {
@@ -613,7 +623,11 @@ func (c *TelegramChannel) editStructuredSessionMenu(
 			Text:               fallback,
 			ReplyMarkup:        markup,
 		}
-		if err := c.bot.EditEphemeralMessageText(ctx, params); err != nil && !strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
+		if err := c.bot.EditEphemeralMessageText(
+			ctx,
+			params,
+		); err != nil &&
+			!strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
 			return err
 		}
 		return nil

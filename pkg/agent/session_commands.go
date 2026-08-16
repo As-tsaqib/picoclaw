@@ -144,7 +144,9 @@ func (al *AgentLoop) handleInternalCallback(
 		active = record.Key
 		page = 0
 	case "rename":
-		return &bus.InternalCallbackResponse{Text: "Gunakan /session rename <nama baru> untuk mengganti nama session aktif."}, nil
+		return &bus.InternalCallbackResponse{
+			Text: "Gunakan /session rename <nama baru> untuk mengganti nama session aktif.",
+		}, nil
 	case "noop":
 		return &bus.InternalCallbackResponse{Text: fmt.Sprintf("Halaman %d", page+1)}, nil
 	case "close":
@@ -201,7 +203,15 @@ func (al *AgentLoop) executeSessionCommand(
 			if err != nil {
 				return nil, err
 			}
-			return buildSessionListFromRecords(records, active, 0, opts.Dispatch.InboundContext, agent.ID, scope, mode), nil
+			return buildSessionListFromRecords(
+				records,
+				active,
+				0,
+				opts.Dispatch.InboundContext,
+				agent.ID,
+				scope,
+				mode,
+			), nil
 		case "current":
 			records, err := dashboardCatalog.ListDashboardSessions(query)
 			if err != nil {
@@ -216,7 +226,9 @@ func (al *AgentLoop) executeSessionCommand(
 			if err := dashboardCatalog.SetActiveDashboardSession(query, record.Key); err != nil {
 				return nil, err
 			}
-			return paragraphContent(fmt.Sprintf("Session aktif dashboard: %s (ID %s).", record.Name, record.ShortID)), nil
+			return paragraphContent(
+				fmt.Sprintf("Session aktif dashboard: %s (ID %s).", record.Name, record.ShortID),
+			), nil
 		case "rename":
 			if active == "" {
 				return nil, session.ErrSessionNotInScope
@@ -224,7 +236,9 @@ func (al *AgentLoop) executeSessionCommand(
 			if err := dashboardCatalog.RenameDashboardSession(query, active, req.Argument); err != nil {
 				return nil, err
 			}
-			return paragraphContent("Nama session berhasil diubah menjadi: " + session.SanitizeSessionName(req.Argument)), nil
+			return paragraphContent(
+				"Nama session berhasil diubah menjadi: " + session.SanitizeSessionName(req.Argument),
+			), nil
 		case "use":
 			record, err := dashboardCatalog.ResolveDashboardSelector(query, req.Argument)
 			if err != nil {
@@ -233,7 +247,9 @@ func (al *AgentLoop) executeSessionCommand(
 			if err := dashboardCatalog.SetActiveDashboardSession(query, record.Key); err != nil {
 				return nil, fmt.Errorf("session tidak dapat diaktifkan")
 			}
-			return paragraphContent(fmt.Sprintf("Session dashboard diganti ke %s (ID %s).", record.Name, record.ShortID)), nil
+			return paragraphContent(
+				fmt.Sprintf("Session dashboard diganti ke %s (ID %s).", record.Name, record.ShortID),
+			), nil
 		default:
 			return nil, fmt.Errorf("subcommand session tidak dikenal")
 		}
@@ -258,7 +274,9 @@ func (al *AgentLoop) executeSessionCommand(
 		if err := catalog.RenameScopedSession(scope, aliases, active, req.Argument); err != nil {
 			return nil, err
 		}
-		return paragraphContent("Nama session berhasil diubah menjadi: " + session.SanitizeSessionName(req.Argument)), nil
+		return paragraphContent(
+			"Nama session berhasil diubah menjadi: " + session.SanitizeSessionName(req.Argument),
+		), nil
 	case "use":
 		record, err := catalog.ResolveScopedSelector(scope, aliases, req.Argument)
 		if err != nil {
@@ -273,7 +291,12 @@ func (al *AgentLoop) executeSessionCommand(
 	}
 }
 
-func catalogSessionInScope(catalog session.ScopedSessionStore, scope *session.SessionScope, aliases []string, key string) bool {
+func catalogSessionInScope(
+	catalog session.ScopedSessionStore,
+	scope *session.SessionScope,
+	aliases []string,
+	key string,
+) bool {
 	records, err := catalog.ListScopedSessions(scope, aliases)
 	if err != nil {
 		return false
@@ -330,7 +353,10 @@ func buildSessionListFromRecords(
 	columns, rows := sessionTableRows(records[start:end], active, start, mode)
 	entries := make([]bus.InteractionEntry, 0, end-start+5)
 	for i := start; i < end; i++ {
-		entries = append(entries, bus.InteractionEntry{Label: strconv.Itoa(i + 1), Action: "select", Value: records[i].Key})
+		entries = append(
+			entries,
+			bus.InteractionEntry{Label: strconv.Itoa(i + 1), Action: "select", Value: records[i].Key},
+		)
 	}
 	if page > 0 {
 		entries = append(entries, bus.InteractionEntry{Label: "◀️", Action: "page", Value: strconv.Itoa(page - 1)})
@@ -377,15 +403,43 @@ func buildSessionListFromRecords(
 	}
 }
 
-func sessionTableRows(records []session.SessionRecord, active string, offset int, mode session.DashboardMode) ([]string, [][]string) {
+func sessionTableRows(
+	records []session.SessionRecord,
+	active string,
+	offset int,
+	mode session.DashboardMode,
+) ([]string, [][]string) {
 	switch mode {
 	case session.DashboardModeSuperadmin:
-		columns := []string{"No", "Nama Session", "Channel", "Account/Bot", "Agent", "Chat/Topic", "Owner", "Pesan", "Terakhir"}
+		columns := []string{
+			"No",
+			"Nama Session",
+			"Channel",
+			"Account/Bot",
+			"Agent",
+			"Chat/Topic",
+			"Owner",
+			"Pesan",
+			"Terakhir",
+		}
 		rows := make([][]string, 0, len(records))
 		for i, record := range records {
 			no := sessionRowNumber(record, active, offset+i+1)
 			channel, account, agentID, chatTopic, owner := sessionRecordOrigin(record)
-			rows = append(rows, []string{no, record.Name, channel, account, agentID, chatTopic, owner, strconv.Itoa(record.MessageCount), compactSessionTime(record.UpdatedAt)})
+			rows = append(
+				rows,
+				[]string{
+					no,
+					record.Name,
+					channel,
+					account,
+					agentID,
+					chatTopic,
+					owner,
+					strconv.Itoa(record.MessageCount),
+					compactSessionTime(record.UpdatedAt),
+				},
+			)
 		}
 		return columns, rows
 	case session.DashboardModePersonal:
@@ -398,7 +452,16 @@ func sessionTableRows(records []session.SessionRecord, active string, offset int
 			if chatTopic != "-" {
 				origin += " / " + chatTopic
 			}
-			rows = append(rows, []string{no, record.Name, origin, strconv.Itoa(record.MessageCount), compactSessionTime(record.UpdatedAt)})
+			rows = append(
+				rows,
+				[]string{
+					no,
+					record.Name,
+					origin,
+					strconv.Itoa(record.MessageCount),
+					compactSessionTime(record.UpdatedAt),
+				},
+			)
 		}
 		return columns, rows
 	default:
@@ -433,7 +496,12 @@ func sessionListTitle(mode session.DashboardMode) string {
 	}
 }
 
-func buildCurrentSessionContent(catalog session.ScopedSessionStore, scope *session.SessionScope, aliases []string, active string) *bus.StructuredContent {
+func buildCurrentSessionContent(
+	catalog session.ScopedSessionStore,
+	scope *session.SessionScope,
+	aliases []string,
+	active string,
+) *bus.StructuredContent {
 	records, err := catalog.ListScopedSessions(scope, aliases)
 	if err != nil {
 		return paragraphContent("Session aktif belum tersedia.")
@@ -441,7 +509,11 @@ func buildCurrentSessionContent(catalog session.ScopedSessionStore, scope *sessi
 	return buildCurrentSessionFromRecords(records, active, session.DashboardModeRoute)
 }
 
-func buildCurrentSessionFromRecords(records []session.SessionRecord, active string, mode session.DashboardMode) *bus.StructuredContent {
+func buildCurrentSessionFromRecords(
+	records []session.SessionRecord,
+	active string,
+	mode session.DashboardMode,
+) *bus.StructuredContent {
 	for _, record := range records {
 		if record.Key != active {
 			continue
@@ -463,7 +535,13 @@ func buildCurrentSessionFromRecords(records []session.SessionRecord, active stri
 		}
 		fallback := fmt.Sprintf(
 			"Session aktif: %s\nShort-ID: %s\nAsal: %s\nOwner: %s\nMode: %s\nPesan: %d\nTerakhir: %s",
-			record.Name, record.ShortID, origin, owner, modeText, record.MessageCount, compactSessionTime(record.UpdatedAt),
+			record.Name,
+			record.ShortID,
+			origin,
+			owner,
+			modeText,
+			record.MessageCount,
+			compactSessionTime(record.UpdatedAt),
 		)
 		return &bus.StructuredContent{Kind: "session_current", Title: "Session aktif", Tables: []bus.StructuredTable{{
 			Columns: []string{"Properti", "Nilai"}, Rows: rows, Border: true, Striped: true, Header: true,

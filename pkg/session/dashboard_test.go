@@ -80,7 +80,10 @@ func TestPersonalDashboardOnlyListsVerifiedOwnerSessions(t *testing.T) {
 		"Other bot",
 	)
 	require.NoError(t, err)
-	otherAgent, err := backend.CreateScopedSession(dashboardScope("other", "bot-a", "telegram", "42", "", "42", true), "Other agent")
+	otherAgent, err := backend.CreateScopedSession(
+		dashboardScope("other", "bot-a", "telegram", "42", "", "42", true),
+		"Other agent",
+	)
 	require.NoError(t, err)
 
 	sharedScope := dashboardScope("main", "bot-a", "telegram", "-1002", "", "", false)
@@ -117,7 +120,12 @@ func TestDashboardMappingsAreSeparateAndPersist(t *testing.T) {
 	superadmin := dashboardQuery(session.DashboardModeSuperadmin, "42")
 	require.NoError(t, backend.SetActiveDashboardSession(personal, other.Key))
 	require.NoError(t, backend.SetActiveDashboardSession(superadmin, other.Key))
-	assert.Equal(t, origin.Key, backend.ActiveScopedSession(originScope, nil), "personal/superadmin selection must not mutate origin route mapping")
+	assert.Equal(
+		t,
+		origin.Key,
+		backend.ActiveScopedSession(originScope, nil),
+		"personal/superadmin selection must not mutate origin route mapping",
+	)
 	require.NoError(t, backend.Close())
 
 	reopened, _ := newCatalogBackend(t, dir)
@@ -131,11 +139,20 @@ func TestSuperadminCatalogRespectsAgentBotAndExplicitLegacyOptIn(t *testing.T) {
 	backend, _ := newCatalogBackend(t, t.TempDir())
 	t.Cleanup(func() { _ = backend.Close() })
 
-	allowed, err := backend.CreateScopedSession(dashboardScope("main", "bot-a", "telegram", "99", "", "99", true), "Allowed")
+	allowed, err := backend.CreateScopedSession(
+		dashboardScope("main", "bot-a", "telegram", "99", "", "99", true),
+		"Allowed",
+	)
 	require.NoError(t, err)
-	foreignAgent, err := backend.CreateScopedSession(dashboardScope("other", "bot-a", "telegram", "99", "", "99", true), "Foreign agent")
+	foreignAgent, err := backend.CreateScopedSession(
+		dashboardScope("other", "bot-a", "telegram", "99", "", "99", true),
+		"Foreign agent",
+	)
 	require.NoError(t, err)
-	foreignBot, err := backend.CreateScopedSession(dashboardScope("main", "bot-a", "telegram-secondary", "99", "", "99", true), "Foreign bot")
+	foreignBot, err := backend.CreateScopedSession(
+		dashboardScope("main", "bot-a", "telegram-secondary", "99", "", "99", true),
+		"Foreign bot",
+	)
 	require.NoError(t, err)
 	backend.AddMessage("agent:main:legacy-without-scope", "user", "legacy")
 
