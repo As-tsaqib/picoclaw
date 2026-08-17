@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"net/http"
 
 	oauthprovider "github.com/As-tsaqib/picoclaw/pkg/providers/oauth"
 )
@@ -13,4 +14,23 @@ func FetchAntigravityModelsContext(
 	accessToken, projectID string,
 ) ([]AntigravityModelInfo, error) {
 	return oauthprovider.FetchAntigravityModelsContext(ctx, accessToken, projectID)
+}
+
+// FetchAntigravityModelsWithClientContext is used by configured model
+// discovery so proxy and transport policy stay consistent with other sources.
+func FetchAntigravityModelsWithClientContext(
+	ctx context.Context,
+	client *http.Client,
+	accessToken, projectID string,
+	customHeaders map[string]string,
+	userAgent string,
+) ([]AntigravityModelInfo, error) {
+	return oauthprovider.FetchAntigravityModelsWithClientContext(
+		ctx,
+		client,
+		accessToken,
+		projectID,
+		customHeaders,
+		userAgent,
+	)
 }

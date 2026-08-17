@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/As-tsaqib/picoclaw/pkg/auth"
 	"github.com/As-tsaqib/picoclaw/pkg/config"
@@ -34,20 +35,20 @@ func Fetch(ctx context.Context, mc *config.ModelConfig) ([]Model, error) {
 	if !providers.IsModelProviderFetchable(provider) {
 		return nil, fmt.Errorf("%w: %s", ErrUnsupported, provider)
 	}
-	if provider == "antigravity" {
-		return fetchAntigravity(ctx)
-	}
 	apiBase := strings.TrimRight(strings.TrimSpace(mc.APIBase), "/")
-	if apiBase == "" {
+	if apiBase == "" && provider != "antigravity" {
 		apiBase = strings.TrimRight(providers.DefaultAPIBaseForProtocol(provider), "/")
 	}
-	if apiBase == "" {
+	if apiBase == "" && provider != "antigravity" {
 		return nil, fmt.Errorf("no API base for provider %q", provider)
 	}
 
 	client, err := discoveryHTTPClient(mc)
 	if err != nil {
 		return nil, err
+	}
+	if provider == "antigravity" {
+		return fetchAntigravity(ctx, client, mc)
 	}
 
 	var models []Model
@@ -91,7 +92,7 @@ func discoveryHTTPClient(mc *config.ModelConfig) (*http.Client, error) {
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
-	return &http.Client{Transport: transport}, nil
+	return &http.Client{Transport: transport, Timeout: 15 * time.Second}, nil
 }
 
 func newDiscoveryRequest(
@@ -270,7 +271,7 @@ func fetchNearAI(
 	return out, nil
 }
 
-func fetchAntigravity(ctx context.Context) ([]Model, error) {
+func fetchAntigravity(ctx context.Context, client *http.Client, mc *config.ModelConfig) ([]Model, error) {
 	cred, err := auth.GetCredential("google-antigravity")
 	if err != nil {
 		return nil, fmt.Errorf("loading antigravity credentials: %w", err)
@@ -299,7 +300,14 @@ func fetchAntigravity(ctx context.Context) ([]Model, error) {
 	if strings.TrimSpace(cred.ProjectID) == "" {
 		return nil, fmt.Errorf("antigravity project ID is unavailable")
 	}
-	items, err := providers.FetchAntigravityModelsContext(ctx, cred.AccessToken, cred.ProjectID)
+	items, err := providers.FetchAntigravityModelsWithClientContext(
+		ctx,
+		client,
+		cred.AccessToken,
+		cred.ProjectID,
+		mc.CustomHeaders,
+		mc.UserAgent,
+	)
 	if err != nil {
 		return nil, err
 	}

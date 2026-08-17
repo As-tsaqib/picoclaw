@@ -60,10 +60,17 @@ func TestFetchNearAICatalog(t *testing.T) {
 }
 
 func TestFetchOpenAICompatibleHonorsContextCancellation(t *testing.T) {
+	releaseHandler := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
+		select {
+		case <-r.Context().Done():
+		case <-releaseHandler:
+		}
 	}))
-	defer server.Close()
+	t.Cleanup(func() {
+		close(releaseHandler)
+		server.Close()
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
 	defer cancel()

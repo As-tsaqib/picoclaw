@@ -113,7 +113,10 @@ func TestSwitchModelDelegatesToModelCommandWhenAvailable(t *testing.T) {
 	var reply string
 	rt := &Runtime{ModelCommand: func(_ context.Context, req ModelCommandRequest) (*bus.StructuredContent, error) {
 		got = req
-		return &bus.StructuredContent{Kind: "model_changed", Fallback: "changed"}, nil
+		return &bus.StructuredContent{
+			Kind:     "model_changed",
+			Fallback: "Switched model from old to gpt-next",
+		}, nil
 	}}
 	err := modelHandler(context.Background(), Request{
 		Text: "/switch model to gpt-next",
@@ -127,6 +130,6 @@ func TestSwitchModelDelegatesToModelCommandWhenAvailable(t *testing.T) {
 		},
 	}, rt)
 	require.NoError(t, err)
-	assert.Equal(t, ModelCommandRequest{Operation: "use", Argument: "gpt-next"}, got)
-	assert.Contains(t, reply, "deprecated")
+	assert.Equal(t, ModelCommandRequest{Operation: "use", Argument: "gpt-next", LegacySwitch: true}, got)
+	assert.Equal(t, "Switched model from old to gpt-next", reply)
 }

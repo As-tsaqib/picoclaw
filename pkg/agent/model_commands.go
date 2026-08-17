@@ -78,6 +78,16 @@ func configureModelCommandRuntime(rt *commands.Runtime, agent *AgentInstance, op
 			Inbound:    cloneInboundContext(opts.Dispatch.InboundContext),
 		}, req)
 	}
+	rt.GetModelInfo = func() (string, string) {
+		cfg := al.GetConfig()
+		store, _ := agent.Sessions.(session.ModelOverrideStore)
+		info := effectiveSessionModel(agent, store, cfg, strings.TrimSpace(opts.Dispatch.SessionKey))
+		name := strings.TrimSpace(info.Alias)
+		if name == "" {
+			name = strings.TrimSpace(info.Model)
+		}
+		return name, info.Provider
+	}
 }
 
 func (al *AgentLoop) executeModelCommand(
@@ -105,12 +115,30 @@ func (al *AgentLoop) executeModelCommand(
 	case "list":
 		return al.buildConfiguredModels(mcx, store, cfg, 0), nil
 	case "use":
+		current := effectiveSessionModel(mcx.Agent, store, cfg, mcx.SessionKey)
 		selection, err := al.resolveModelSelection(ctx, cfg, req.Argument)
 		if err != nil {
 			return nil, err
 		}
-		if err := validateAndPersistModelSelection(mcx, store, cfg, selection); err != nil {
+		if err := validateAndPersistModelSelectionWithFactory(
+			mcx,
+			store,
+			cfg,
+			selection,
+			al.providerFactory,
+		); err != nil {
 			return nil, err
+		}
+		if req.LegacySwitch {
+			oldModel := strings.TrimSpace(current.Alias)
+			if oldModel == "" {
+				oldModel = strings.TrimSpace(current.Model)
+			}
+			return modelParagraph(fmt.Sprintf(
+				"Switched model from %s to %s",
+				oldModel,
+				strings.TrimSpace(req.Argument),
+			)), nil
 		}
 		return buildModelChangedContent(selection), nil
 	case "default":
@@ -174,7 +202,13 @@ func (al *AgentLoop) handleInternalModelCallback(
 		if err := json.Unmarshal([]byte(req.Value), &selection); err != nil {
 			return nil, fmt.Errorf("invalid model selection")
 		}
-		if err := validateAndPersistModelSelection(mcx, store, cfg, selection); err != nil {
+		if err := validateAndPersistModelSelectionWithFactory(
+			mcx,
+			store,
+			cfg,
+			selection,
+			al.providerFactory,
+		); err != nil {
 			content := al.buildModelDashboard(mcx, store, cfg)
 			content.Title = "⚠️ Gagal Mengaktifkan Model"
 			message := sanitizeModelCell(err.Error())
@@ -188,6 +222,8 @@ func (al *AgentLoop) handleInternalModelCallback(
 		return &bus.InternalCallbackResponse{Content: content}, nil
 	case "dashboard", "back":
 		return &bus.InternalCallbackResponse{Content: al.buildModelDashboard(mcx, store, cfg)}, nil
+	case "search":
+		return &bus.InternalCallbackResponse{Content: buildModelSearchPrompt(mcx)}, nil
 	case "configured":
 		return &bus.InternalCallbackResponse{Content: al.buildConfiguredModels(mcx, store, cfg, state.Page)}, nil
 	case "available", "provider", "page", "refresh":
@@ -266,16 +302,20 @@ func (al *AgentLoop) buildModelDashboard(
 			}),
 		},
 		{Label: "📋 Configured", Action: "configured", Value: mustModelState(modelMenuState{View: "configured"})},
+		{Label: "🔎 Search", Action: "search"},
 		{Label: "🧠 Detail", Action: "detail"},
 		{Label: "♻️ Default", Action: "default"},
 		{Label: "✖️ Tutup", Action: "close"},
 	}
+	fallback := modelDashboardFallback(rows) +
+		"\n\nCommands: /model current · /model list · /model use <alias-or-model> · " +
+		"/model default · /model search <kata>"
 	return modelStructuredContent(
 		"model_dashboard",
 		"Model",
 		[]string{"Properti", "Nilai"},
 		rows,
-		modelDashboardFallback(rows),
+		fallback,
 		modelMenu(mcx, 0, 1, entries),
 	)
 }
@@ -322,7 +362,11 @@ func (al *AgentLoop) buildAvailableModels(
 ) *bus.StructuredContent {
 	sources := discoverySources(cfg)
 	if len(sources) == 0 {
-		return modelParagraph("Tidak ada provider terkonfigurasi yang mendukung live model discovery.")
+		return modelInteractiveMessage(
+			mcx,
+			"Available Models",
+			"Tidak ada provider terkonfigurasi yang mendukung live model discovery.",
+		)
 	}
 	provider := providers.NormalizeProvider(strings.TrimSpace(requestedProvider))
 	source := chooseDiscoverySource(sources, provider, requestedConfigRef)
@@ -515,6 +559,15 @@ func configuredSelections(cfg *config.Config) []modelSelection {
 		if strings.TrimSpace(model) == "" {
 			continue
 		}
+		// ExtractProtocol intentionally preserves Model verbatim when Provider is
+		// explicit. The selection layer stores the canonical provider-local model
+		// ID, so strip a repeated matching provider prefix while preserving nested
+		// IDs such as "deepseek/deepseek-v3.2" for OpenRouter.
+		if parsedProvider, parsedModel := providers.SplitModelProviderAndID(model, provider); parsedModel != "" &&
+			providers.NormalizeProvider(parsedProvider) == providers.NormalizeProvider(provider) &&
+			!strings.EqualFold(strings.TrimSpace(parsedModel), strings.TrimSpace(model)) {
+			model = parsedModel
+		}
 		out = append(out, modelSelection{
 			Provider: providers.NormalizeProvider(provider), Model: model,
 			Alias: strings.TrimSpace(mc.ModelName), ConfigRef: stableModelConfigRef(mc), Source: "configured",
@@ -640,6 +693,22 @@ func validateAndPersistModelSelection(
 	cfg *config.Config,
 	selection modelSelection,
 ) error {
+	return validateAndPersistModelSelectionWithFactory(
+		mcx,
+		store,
+		cfg,
+		selection,
+		providers.CreateProviderFromConfig,
+	)
+}
+
+func validateAndPersistModelSelectionWithFactory(
+	mcx modelCommandContext,
+	store session.ModelOverrideStore,
+	cfg *config.Config,
+	selection modelSelection,
+	factory func(*config.ModelConfig) (providers.LLMProvider, string, error),
+) error {
 	selection.Provider = providers.NormalizeProvider(strings.TrimSpace(selection.Provider))
 	selection.Model = strings.TrimSpace(selection.Model)
 	selection.ConfigRef = strings.TrimSpace(selection.ConfigRef)
@@ -660,13 +729,15 @@ func validateAndPersistModelSelection(
 	clone := *source
 	clone.Model = selection.Model
 	clone.Provider = selection.Provider
-	provider, _, err := providers.CreateProviderFromConfig(&clone)
+	if factory == nil {
+		factory = providers.CreateProviderFromConfig
+	}
+	provider, _, err := factory(&clone)
 	if err != nil {
+		closeProviderIfStateful(provider)
 		return fmt.Errorf("failed to initialize model %q: %w", selection.Model, err)
 	}
-	if stateful, ok := provider.(providers.StatefulProvider); ok {
-		stateful.Close()
-	}
+	closeProviderIfStateful(provider)
 	return store.SetModelOverride(mcx.SessionKey, session.ModelOverride{
 		Provider: selection.Provider, Model: selection.Model, Alias: selection.Alias,
 		ConfigRef: selection.ConfigRef, Source: selection.Source,
@@ -702,7 +773,7 @@ func buildModelListContent(
 	providersForFilter []modelSelection,
 ) *bus.StructuredContent {
 	if len(models) == 0 {
-		return modelParagraph("Tidak ada model yang tersedia untuk tampilan ini.")
+		return modelInteractiveMessage(mcx, title, "Tidak ada model yang tersedia untuk tampilan ini.")
 	}
 	pages := (len(models) + modelsPerPage - 1) / modelsPerPage
 	if page < 0 {
@@ -897,6 +968,28 @@ func modelStructuredContent(
 
 func modelParagraph(text string) *bus.StructuredContent {
 	return &bus.StructuredContent{Kind: "model_message", Paragraphs: []string{text}, Fallback: text}
+}
+
+func modelInteractiveMessage(mcx modelCommandContext, title, text string) *bus.StructuredContent {
+	entries := []bus.InteractionEntry{
+		{Label: "◀️ Kembali", Action: "back"},
+		{Label: "✖️ Tutup", Action: "close"},
+	}
+	return &bus.StructuredContent{
+		Kind:        "model_message",
+		Title:       title,
+		Paragraphs:  []string{text},
+		Fallback:    text,
+		Interaction: modelMenu(mcx, 0, 1, entries),
+	}
+}
+
+func buildModelSearchPrompt(mcx modelCommandContext) *bus.StructuredContent {
+	return modelInteractiveMessage(
+		mcx,
+		"Search Models",
+		"Ketik /model search <kata> untuk mencari configured dan cached available models.",
+	)
 }
 
 func mustModelState(state modelMenuState) string {

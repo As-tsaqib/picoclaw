@@ -9,11 +9,11 @@ import (
 func switchCommand() Definition {
 	return Definition{
 		Name:        "switch",
-		Description: "Deprecated compatibility command; use /model",
+		Description: "Switch model",
 		SubCommands: []SubCommand{
 			{
 				Name:        "model",
-				Description: "Deprecated: switch the current session model",
+				Description: "Switch to a different model",
 				ArgsUsage:   "to <name>",
 				Handler: func(ctx context.Context, req Request, rt *Runtime) error {
 					value := nthToken(req.Text, 3)
@@ -23,7 +23,11 @@ func switchCommand() Definition {
 					if rt != nil && rt.ModelCommand != nil {
 						content, err := rt.ModelCommand(
 							ctx,
-							ModelCommandRequest{Operation: "use", Argument: value},
+							ModelCommandRequest{
+								Operation:    "use",
+								Argument:     value,
+								LegacySwitch: true,
+							},
 						)
 						if err != nil {
 							if strings.Contains(err.Error(), "tidak ditemukan") {
@@ -33,14 +37,6 @@ func switchCommand() Definition {
 						}
 						if content == nil {
 							return req.Reply(unavailableMsg)
-						}
-						content = content.Clone()
-						content.Paragraphs = append(
-							content.Paragraphs,
-							"Tip: /switch model sudah deprecated. Gunakan /model untuk pengelolaan model.",
-						)
-						if content.Fallback != "" {
-							content.Fallback += "\n\nTip: /switch model sudah deprecated. Gunakan /model."
 						}
 						return req.replyStructured(*content)
 					}

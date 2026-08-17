@@ -20,6 +20,7 @@ import (
 const (
 	sessionCallbackPrefix = "pcsm:"
 	sessionMenuTTL        = 15 * time.Minute
+	modelMenuTTL          = 5 * time.Minute
 	richMessageMaxBytes   = 32768
 	richMessageMaxBlocks  = 500
 	richMessageMaxColumns = 20
@@ -469,7 +470,11 @@ func (c *TelegramChannel) deleteSessionMenu(token string) {
 
 func (c *TelegramChannel) pruneSessionMenusLocked(now time.Time) {
 	for token, menu := range c.sessionMenus {
-		if now.Sub(menu.createdAt) > sessionMenuTTL {
+		menuTTL := sessionMenuTTL
+		if strings.EqualFold(strings.TrimSpace(menu.menu.Kind), "model") {
+			menuTTL = modelMenuTTL
+		}
+		if now.Sub(menu.createdAt) > menuTTL {
 			delete(c.sessionMenus, token)
 		}
 	}
@@ -622,6 +627,9 @@ func (c *TelegramChannel) sessionCallbackEnvelopeValid(
 		return false
 	}
 	if menu.ephemeralID > 0 && message.EphemeralMessageID != menu.ephemeralID {
+		return false
+	}
+	if menu.receiverUserID > 0 && query.From.ID != menu.receiverUserID {
 		return false
 	}
 	return true

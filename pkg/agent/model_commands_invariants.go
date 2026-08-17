@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -69,6 +70,7 @@ func stableModelConfigRef(mc *config.ModelConfig) string {
 		digest := sha256.Sum256([]byte(key))
 		material.APIKeys = append(material.APIKeys, fmt.Sprintf("%x", digest[:]))
 	}
+	sort.Strings(material.APIKeys)
 	encoded, err := json.Marshal(material)
 	if err != nil {
 		// ModelConfig's persisted fields are JSON-compatible by contract. Keep a
@@ -277,22 +279,76 @@ func resolveDiscoveredModelSelection(
 	cfg *config.Config,
 	raw string,
 ) (modelSelection, bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	discoveryCtx, cancel := context.WithTimeout(ctx, modelDiscoveryTimeout)
+	defer cancel()
+
+	sources := discoverySources(cfg)
+	type discoveryResult struct {
+		models []discoveredModel
+	}
+	jobs := make(chan modelSelection, len(sources))
+	results := make(chan discoveryResult, len(sources))
+	for _, source := range sources {
+		jobs <- source
+	}
+	close(jobs)
+	workers := len(sources)
+	if workers > 4 {
+		workers = 4
+	}
+	for range workers {
+		go func() {
+			for {
+				select {
+				case <-discoveryCtx.Done():
+					return
+				case source, ok := <-jobs:
+					if !ok {
+						return
+					}
+					models, err := fetchDiscoveredModels(discoveryCtx, cfg, source, false)
+					if err != nil {
+						models = nil
+					}
+					results <- discoveryResult{models: models}
+				}
+			}
+		}()
+	}
+
 	items := make([]modelSelection, 0)
-	for _, source := range discoverySources(cfg) {
-		models, err := fetchDiscoveredModels(ctx, cfg, source, false)
-		if err != nil {
-			continue
-		}
-		for _, item := range models {
-			items = append(items, modelSelection{
-				Provider:  item.Provider,
-				Model:     item.Model,
-				ConfigRef: item.ConfigRef,
-				Source:    "discovered",
-			})
+	remaining := len(sources)
+collect:
+	for remaining > 0 {
+		select {
+		case result := <-results:
+			remaining--
+			for _, item := range result.models {
+				items = append(items, modelSelection{
+					Provider:  item.Provider,
+					Model:     item.Model,
+					ConfigRef: item.ConfigRef,
+					Source:    "discovered",
+				})
+			}
+		case <-discoveryCtx.Done():
+			break collect
 		}
 	}
-	return uniqueModelMatch(raw, items, false)
+	selection, ok, err := uniqueModelMatch(raw, items, false)
+	if err != nil || ok {
+		return selection, ok, err
+	}
+	if err := ctx.Err(); err != nil {
+		return modelSelection{}, false, err
+	}
+	if err := discoveryCtx.Err(); err != nil {
+		return modelSelection{}, false, err
+	}
+	return modelSelection{}, false, nil
 }
 
 func validateModelSelectionMembership(cfg *config.Config, selection modelSelection) error {

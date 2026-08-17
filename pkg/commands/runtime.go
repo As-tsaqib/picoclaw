@@ -20,8 +20,9 @@ type SessionCommandRequest struct {
 type SessionCommandHandler func(context.Context, SessionCommandRequest) (*bus.StructuredContent, error)
 
 type ModelCommandRequest struct {
-	Operation string
-	Argument  string
+	Operation    string
+	Argument     string
+	LegacySwitch bool
 }
 
 type ModelCommandHandler func(context.Context, ModelCommandRequest) (*bus.StructuredContent, error)

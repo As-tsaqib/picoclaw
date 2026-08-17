@@ -102,6 +102,18 @@ func TestStableModelConfigRefSeparatesSameAliasAcrossProviders(t *testing.T) {
 	assert.NotEqual(t, stableModelConfigRef(a), stableModelConfigRef(b))
 }
 
+func TestStableModelConfigRefDoesNotDependOnCredentialSliceOrder(t *testing.T) {
+	a := &config.ModelConfig{
+		ModelName: "shared", Provider: "openai", Model: "openai/model", Enabled: true,
+	}
+	b := &config.ModelConfig{
+		ModelName: "shared", Provider: "openai", Model: "openai/model", Enabled: true,
+	}
+	a.APIKeys = config.SimpleSecureStrings("key-a", "key-b")
+	b.APIKeys = config.SimpleSecureStrings("key-b", "key-a")
+	assert.Equal(t, stableModelConfigRef(a), stableModelConfigRef(b))
+}
+
 func TestStableModelConfigRefPersistsAndResolvesAfterRestart(t *testing.T) {
 	dir := t.TempDir()
 	a := &config.ModelConfig{

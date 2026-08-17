@@ -50,6 +50,30 @@ func TestModelListUsesPageLocalNumericSelectors(t *testing.T) {
 	assert.Equal(t, 2, content.Interaction.Pages)
 }
 
+func TestModelDashboardIncludesNativeSearchAndInformativeFallback(t *testing.T) {
+	al := &AgentLoop{}
+	store := session.NewSessionManager("")
+	cfg := &config.Config{}
+	cfg.Agents.Defaults.Provider = "openai"
+	content := al.buildModelDashboard(
+		modelCommandContext{
+			Agent:      &AgentInstance{ID: "main", Model: "default-model"},
+			SessionKey: "session-a",
+		},
+		store,
+		cfg,
+	)
+
+	require.NotNil(t, content.Interaction)
+	actions := make([]string, 0, len(content.Interaction.Entries))
+	for _, entry := range content.Interaction.Entries {
+		actions = append(actions, entry.Action)
+	}
+	assert.Contains(t, actions, "search")
+	assert.Contains(t, content.Fallback, "/model use <alias-or-model>")
+	assert.Contains(t, content.Fallback, "/model search <kata>")
+}
+
 func TestInternalModelCallbackRejectsCrossScopeCapabilities(t *testing.T) {
 	al, cfg, _, _, cleanup := newTestAgentLoop(t)
 	defer cleanup()

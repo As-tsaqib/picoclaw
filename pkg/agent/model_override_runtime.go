@@ -53,6 +53,7 @@ func (al *AgentLoop) applySessionModelOverride(ctx context.Context, ts *turnStat
 	}
 	provider, _, err := factory(&modelCfg)
 	if err != nil {
+		closeProviderIfStateful(provider)
 		return fmt.Errorf("initialize session model %q: %w", override.Model, err)
 	}
 

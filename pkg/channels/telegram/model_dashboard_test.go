@@ -3,6 +3,7 @@ package telegram
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,4 +43,26 @@ func TestModelInteractionKeyboardUsesNumericSelectorsWithoutModelLeak(t *testing
 	require.True(t, ok)
 	assert.Equal(t, "select", action)
 	assert.Contains(t, value, longModel)
+}
+
+func TestModelMenuExpiresBeforeSessionMenu(t *testing.T) {
+	now := time.Now()
+	ch := &TelegramChannel{sessionMenus: map[string]telegramSessionMenu{
+		"model-token": {
+			token:     "model-token",
+			menu:      bus.InteractionMenu{Kind: "model"},
+			createdAt: now.Add(-modelMenuTTL - time.Second),
+		},
+		"session-token": {
+			token:     "session-token",
+			menu:      bus.InteractionMenu{Kind: "session"},
+			createdAt: now.Add(-modelMenuTTL - time.Second),
+		},
+	}}
+
+	ch.pruneSessionMenusLocked(now)
+	_, modelPresent := ch.sessionMenus["model-token"]
+	_, sessionPresent := ch.sessionMenus["session-token"]
+	assert.False(t, modelPresent)
+	assert.True(t, sessionPresent)
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,31 @@ func FetchAntigravityModelsContext(
 	ctx context.Context,
 	accessToken, projectID string,
 ) ([]AntigravityModelInfo, error) {
+	return FetchAntigravityModelsWithClientContext(
+		ctx,
+		&http.Client{Timeout: 15 * time.Second},
+		accessToken,
+		projectID,
+		nil,
+		"",
+	)
+}
+
+// FetchAntigravityModelsWithClientContext applies the configured discovery
+// transport and headers while keeping provider authentication authoritative.
+func FetchAntigravityModelsWithClientContext(
+	ctx context.Context,
+	client *http.Client,
+	accessToken, projectID string,
+	customHeaders map[string]string,
+	userAgent string,
+) ([]AntigravityModelInfo, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
 	reqBody, _ := json.Marshal(map[string]any{
 		"project": projectID,
 	})
@@ -30,28 +56,32 @@ func FetchAntigravityModelsContext(
 	if err != nil {
 		return nil, err
 	}
+	for key, value := range customHeaders {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			req.Header.Set(key, value)
+		}
+	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", antigravityUserAgent)
+	if strings.TrimSpace(userAgent) == "" {
+		userAgent = antigravityUserAgent
+	}
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("X-Goog-Api-Client", antigravityXGoogClient)
 
-	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return nil, fmt.Errorf("reading fetchAvailableModels response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf(
-			"fetchAvailableModels failed (HTTP %d): %s",
-			resp.StatusCode,
-			truncateString(string(body), 200),
-		)
+		return nil, fmt.Errorf("fetchAvailableModels failed (HTTP %d)", resp.StatusCode)
 	}
 
 	var result struct {
