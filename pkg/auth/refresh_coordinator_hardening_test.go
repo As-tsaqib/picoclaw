@@ -115,6 +115,7 @@ func TestUpdateCredentialIfCurrentPreservesConcurrentMetadata(t *testing.T) {
 	original := antigravityTestCredential("access-stable", "refresh-stable")
 	original.AccountID = "account-a"
 	original.Email = "old@example.com"
+	original.ProjectID = ""
 	if err := SetCredential("google-antigravity", original); err != nil {
 		t.Fatal(err)
 	}
@@ -153,6 +154,7 @@ func TestUpdateCredentialIfCurrentRejectsIdentityChangeWithSameTokens(t *testing
 	setTestAuthHome(t)
 	original := antigravityTestCredential("access-stable", "refresh-stable")
 	original.AccountID = "account-a"
+	original.ProjectID = ""
 	if err := SetCredential("google-antigravity", original); err != nil {
 		t.Fatal(err)
 	}
