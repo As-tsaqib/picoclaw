@@ -278,7 +278,10 @@ func TestAntigravityChatSecond401Stops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = provider.Chat(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil, "gemini-test", nil)
+	_, err = provider.Chat(
+		context.Background(), []Message{{Role: "user", Content: "hello"}},
+		nil, "gemini-test", nil,
+	)
 	if err == nil {
 		t.Fatal("expected second 401 to fail")
 	}
@@ -309,7 +312,10 @@ func TestAntigravityChatRefreshFailureStops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = provider.Chat(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil, "gemini-test", nil)
+	_, err = provider.Chat(
+		context.Background(), []Message{{Role: "user", Content: "hello"}},
+		nil, "gemini-test", nil,
+	)
 	if err == nil {
 		t.Fatal("expected refresh failure")
 	}
@@ -371,7 +377,10 @@ func TestAntigravityChatConcurrent401SharesRefresh(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := provider.Chat(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil, "gemini-test", nil)
+			_, err := provider.Chat(
+				context.Background(), []Message{{Role: "user", Content: "hello"}},
+				nil, "gemini-test", nil,
+			)
 			errs <- err
 		}()
 	}
@@ -393,13 +402,16 @@ func TestAntigravityChatConcurrent401SharesRefresh(t *testing.T) {
 
 func TestAntigravityChatCancellationStopsRefresh(t *testing.T) {
 	refreshStarted := make(chan struct{})
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	releaseRefresh := make(chan struct{})
+	var releaseRefreshOnce sync.Once
+	defer releaseRefreshOnce.Do(func() { close(releaseRefresh) })
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		select {
 		case <-refreshStarted:
 		default:
 			close(refreshStarted)
 		}
-		<-r.Context().Done()
+		<-releaseRefresh
 	}))
 	defer tokenServer.Close()
 	overrideAntigravityOAuthForTest(t, tokenServer.URL)
@@ -419,7 +431,9 @@ func TestAntigravityChatCancellationStopsRefresh(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := provider.Chat(ctx, []Message{{Role: "user", Content: "hello"}}, nil, "gemini-test", nil)
+		_, err := provider.Chat(
+			ctx, []Message{{Role: "user", Content: "hello"}}, nil, "gemini-test", nil,
+		)
 		done <- err
 	}()
 	<-refreshStarted
@@ -432,6 +446,7 @@ func TestAntigravityChatCancellationStopsRefresh(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Chat did not stop after cancellation")
 	}
+	releaseRefreshOnce.Do(func() { close(releaseRefresh) })
 }
 
 func TestAntigravityChatDoesNotRefreshNon401OrLeakBody(t *testing.T) {
@@ -456,7 +471,10 @@ func TestAntigravityChatDoesNotRefreshNon401OrLeakBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = provider.Chat(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil, "gemini-test", nil)
+	_, err = provider.Chat(
+		context.Background(), []Message{{Role: "user", Content: "hello"}},
+		nil, "gemini-test", nil,
+	)
 	if err == nil {
 		t.Fatal("expected forbidden error")
 	}

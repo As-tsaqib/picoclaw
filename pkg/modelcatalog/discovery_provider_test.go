@@ -281,13 +281,16 @@ func TestFetchAntigravityConcurrent401SharesRefresh(t *testing.T) {
 
 func TestFetchAntigravityCancellationDuringRefresh(t *testing.T) {
 	refreshStarted := make(chan struct{})
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	releaseRefresh := make(chan struct{})
+	var releaseRefreshOnce sync.Once
+	defer releaseRefreshOnce.Do(func() { close(releaseRefresh) })
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		select {
 		case <-refreshStarted:
 		default:
 			close(refreshStarted)
 		}
-		<-r.Context().Done()
+		<-releaseRefresh
 	}))
 	defer tokenServer.Close()
 	overrideCatalogAntigravityOAuth(t, tokenServer.URL)
@@ -318,4 +321,5 @@ func TestFetchAntigravityCancellationDuringRefresh(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Fetch did not stop after cancellation")
 	}
+	releaseRefreshOnce.Do(func() { close(releaseRefresh) })
 }

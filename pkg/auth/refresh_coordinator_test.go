@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,12 @@ import (
 	"testing"
 	"time"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func antigravityTestCredential(access, refresh string) *AuthCredential {
 	return &AuthCredential{
@@ -265,25 +272,38 @@ func TestEnsureFreshCredentialContextCancellationStopsRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	requestStarted := make(chan struct{})
 	requestCanceled := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		close(requestStarted)
 		<-r.Context().Done()
 		close(requestCanceled)
-	}))
-	defer server.Close()
+		return nil, r.Context().Err()
+	})}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
-	defer cancel()
-	_, err := EnsureFreshCredentialContext(
-		ctx, "google-antigravity", original, oauthTestConfig(server.URL), nil, 5*time.Minute,
-	)
-	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-		t.Fatalf("error = %v, want cancellation", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := EnsureFreshCredentialContext(
+			ctx, "google-antigravity", original,
+			oauthTestConfig("https://oauth.example.invalid/token"), client, 5*time.Minute,
+		)
+		done <- err
+	}()
+	<-requestStarted
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh caller did not stop after cancellation")
 	}
 	select {
 	case <-requestCanceled:
 	case <-time.After(2 * time.Second):
-		t.Fatal("refresh HTTP request was not canceled")
+		t.Fatal("refresh HTTP request context was not canceled")
 	}
 }
 
@@ -297,6 +317,19 @@ func TestCredentialRefreshKeyDoesNotContainPlaintextToken(t *testing.T) {
 	}
 }
 
+func TestCredentialRefreshKeyIgnoresMetadataWithinTokenGeneration(t *testing.T) {
+	cred := antigravityTestCredential("access-secret-value", "refresh-secret-value")
+	key := credentialRefreshKey("google-antigravity", cred)
+	changed := *cred
+	changed.Provider = "antigravity"
+	changed.AccountID = "different-account-metadata"
+	changed.Email = "different@example.com"
+	changed.ProjectID = "different-project"
+	if got := credentialRefreshKey("google-antigravity", &changed); got != key {
+		t.Fatalf("metadata split one token generation: got %q, want %q", got, key)
+	}
+}
+
 func TestEnsureFreshCredentialContextCanceledFlightDoesNotPoisonNextCaller(t *testing.T) {
 	setTestAuthHome(t)
 	original := antigravityTestCredential("access-old", "refresh-old")
@@ -305,41 +338,52 @@ func TestEnsureFreshCredentialContextCanceledFlightDoesNotPoisonNextCaller(t *te
 	}
 
 	var requests atomic.Int32
+	firstStarted := make(chan struct{})
 	firstCanceled := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch requests.Add(1) {
 		case 1:
+			close(firstStarted)
 			<-r.Context().Done()
 			close(firstCanceled)
+			return nil, r.Context().Err()
 		case 2:
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"access_token":  "access-new",
-				"refresh_token": "refresh-new",
-				"expires_in":    3600,
-			})
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(
+					`{"access_token":"access-new","refresh_token":"refresh-new","expires_in":3600}`,
+				)),
+				Request: r,
+			}, nil
 		default:
-			http.Error(w, "unexpected refresh", http.StatusInternalServerError)
+			return nil, errors.New("unexpected refresh request")
 		}
-	}))
-	defer server.Close()
+	})}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
-	_, err := EnsureFreshCredentialContext(
-		ctx, "google-antigravity", original, oauthTestConfig(server.URL), nil, 5*time.Minute,
-	)
+	ctx, cancel := context.WithCancel(context.Background())
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := EnsureFreshCredentialContext(
+			ctx, "google-antigravity", original,
+			oauthTestConfig("https://oauth.example.invalid/token"), client, 5*time.Minute,
+		)
+		firstDone <- err
+	}()
+	<-firstStarted
 	cancel()
-	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-		t.Fatalf("first error = %v, want cancellation", err)
+	if err := <-firstDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("first error = %v, want context.Canceled", err)
 	}
 	select {
 	case <-firstCanceled:
 	case <-time.After(2 * time.Second):
-		t.Fatal("first refresh HTTP request was not canceled")
+		t.Fatal("first refresh HTTP request context was not canceled")
 	}
 
 	got, err := EnsureFreshCredentialContext(
 		context.Background(), "google-antigravity", original,
-		oauthTestConfig(server.URL), nil, 5*time.Minute,
+		oauthTestConfig("https://oauth.example.invalid/token"), client, 5*time.Minute,
 	)
 	if err != nil {
 		t.Fatalf("second refresh error = %v", err)

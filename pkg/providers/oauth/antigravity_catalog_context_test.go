@@ -142,10 +142,12 @@ func TestFetchAntigravityModelsAtBaseURLUnauthorizedIsTypedAndSanitized(t *testi
 }
 
 func TestFetchAntigravityModelsAtBaseURLHonorsTimeout(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		<-release
 	}))
 	defer server.Close()
+	defer close(release)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()

@@ -235,15 +235,7 @@ func credentialRefreshKey(provider string, cred *AuthCredential) string {
 	if cred == nil {
 		return canonicalProvider(provider) + ":none"
 	}
-	refreshDigest := sha256.Sum256([]byte(cred.RefreshToken))
-	material := strings.Join([]string{
-		canonicalProvider(provider),
-		strings.TrimSpace(cred.Provider),
-		strings.TrimSpace(cred.AccountID),
-		strings.TrimSpace(cred.Email),
-		strings.TrimSpace(cred.ProjectID),
-		fmt.Sprintf("%x", refreshDigest[:]),
-	}, "\x00")
+	material := strings.Join([]string{cred.AccessToken, cred.RefreshToken}, "\x00")
 	sum := sha256.Sum256([]byte(material))
 	return canonicalProvider(provider) + ":" + fmt.Sprintf("%x", sum[:])
 }
