@@ -226,7 +226,13 @@ func TestAntigravityChatUnexpected401RefreshesAndRetriesOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAntigravityProviderWithConfig: %v", err)
 	}
-	resp, err := provider.Chat(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil, "gemini-test", nil)
+	resp, err := provider.Chat(
+		context.Background(),
+		[]Message{{Role: "user", Content: "hello"}},
+		nil,
+		"gemini-test",
+		nil,
+	)
 	if err != nil {
 		t.Fatalf("Chat: %v", err)
 	}

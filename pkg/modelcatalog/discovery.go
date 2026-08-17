@@ -274,15 +274,15 @@ func fetchNearAI(
 }
 
 func fetchAntigravity(ctx context.Context, client *http.Client, mc *config.ModelConfig) ([]Model, error) {
-	cred, err := auth.GetCredential("google-antigravity")
-	if err != nil {
-		return nil, fmt.Errorf("loading antigravity credentials: %w", err)
+	cred, loadErr := auth.GetCredential("google-antigravity")
+	if loadErr != nil {
+		return nil, fmt.Errorf("loading antigravity credentials: %w", loadErr)
 	}
 	if cred == nil {
 		return nil, fmt.Errorf("not logged in to antigravity")
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
 	}
 
 	oauthCfg := antigravityOAuthConfig()
@@ -297,8 +297,8 @@ func fetchAntigravity(ctx context.Context, client *http.Client, mc *config.Model
 	if refreshErr == nil {
 		cred = refreshed
 	} else {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
 		}
 		// A near-expiry refresh is opportunistic: keep using a still-valid token
 		// and let an actual 401 trigger bounded recovery. An already-expired

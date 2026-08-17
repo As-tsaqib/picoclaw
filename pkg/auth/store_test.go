@@ -510,7 +510,6 @@ func TestSetCredentialConcurrentProvidersPreservesAllEntries(t *testing.T) {
 	providers := []string{"provider-a", "provider-b", "provider-c", "provider-d"}
 	var wg sync.WaitGroup
 	for _, provider := range providers {
-		provider := provider
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
