@@ -254,20 +254,20 @@ func credentialIdentityConflicts(expected, current *AuthCredential) bool {
 
 	expectedAccount := strings.TrimSpace(expected.AccountID)
 	currentAccount := strings.TrimSpace(current.AccountID)
-	if expectedAccount != "" && currentAccount != "" && expectedAccount != currentAccount {
-		return true
+	if expectedAccount != "" && currentAccount != "" {
+		return expectedAccount != currentAccount
 	}
 
 	expectedEmail := strings.TrimSpace(expected.Email)
 	currentEmail := strings.TrimSpace(current.Email)
-	if expectedEmail != "" && currentEmail != "" && !strings.EqualFold(expectedEmail, currentEmail) {
-		return true
+	if expectedEmail != "" && currentEmail != "" {
+		return !strings.EqualFold(expectedEmail, currentEmail)
 	}
 
 	expectedProject := strings.TrimSpace(expected.ProjectID)
 	currentProject := strings.TrimSpace(current.ProjectID)
-	if expectedProject != "" && currentProject != "" && expectedProject != currentProject {
-		return true
+	if expectedProject != "" && currentProject != "" {
+		return expectedProject != currentProject
 	}
 	return false
 }
