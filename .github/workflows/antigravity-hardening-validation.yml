@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - fix/antigravity-hardening
-    paths:
-      - .github/workflows/antigravity-hardening-validation.yml
 
 permissions:
   contents: read
@@ -27,7 +25,7 @@ jobs:
         env:
           GOTOOLCHAIN: local
         run: >-
-          go test -tags=goolm,stdjson
+          go test -count=1 -tags=goolm,stdjson
           ./pkg/session/...
           ./pkg/modelcatalog/...
           ./pkg/auth/...
@@ -60,4 +58,4 @@ jobs:
       - name: Run race test
         env:
           GOTOOLCHAIN: local
-        run: go test -race -tags=goolm,stdjson ${{ matrix.package }}
+        run: go test -count=1 -race -tags=goolm,stdjson ${{ matrix.package }}

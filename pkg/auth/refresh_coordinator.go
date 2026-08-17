@@ -42,8 +42,8 @@ func EnsureFreshCredentialContext(
 
 // RefreshCredentialAfterUnauthorizedContext refreshes the credential observed
 // by a request that received HTTP 401. If another caller already advanced the
-// stored token generation, that newer credential is reused instead of issuing a
-// second refresh request.
+// stored token generation for the same identity, that newer credential is
+// reused instead of issuing a second refresh request.
 func RefreshCredentialAfterUnauthorizedContext(
 	ctx context.Context,
 	provider string,
@@ -81,7 +81,11 @@ func coordinatedCredentialRefresh(
 		return nil, fmt.Errorf("no credentials for %s", canonicalProvider(provider))
 	}
 
-	if force && tokenGenerationChanged(observed, current) {
+	generationChanged := tokenGenerationChanged(observed, current)
+	if generationChanged && credentialIdentityConflicts(observed, current) {
+		return nil, fmt.Errorf("credential identity changed during refresh coordination")
+	}
+	if force && generationChanged {
 		return current, nil
 	}
 	if !force && !credentialNeedsRefreshWithin(current, refreshBefore) {
@@ -174,6 +178,9 @@ func refreshCredentialGeneration(
 		return nil, fmt.Errorf("no credentials for %s", canonicalProvider(provider))
 	}
 	if tokenGenerationChanged(expected, current) {
+		if credentialIdentityConflicts(expected, current) {
+			return nil, fmt.Errorf("credential identity changed while refresh was in flight")
+		}
 		return current, nil
 	}
 	if !force && !credentialNeedsRefreshWithin(current, refreshBefore) {
@@ -190,6 +197,9 @@ func refreshCredentialGeneration(
 	}
 	if !replaced {
 		if persisted != nil {
+			if credentialIdentityConflicts(current, persisted) {
+				return nil, fmt.Errorf("credential identity changed while refresh was in flight")
+			}
 			return persisted, nil
 		}
 		return nil, fmt.Errorf("credential changed while refresh was in flight")
@@ -229,6 +239,25 @@ func tokenGenerationChanged(expected, current *AuthCredential) bool {
 		return expected != current
 	}
 	return expected.AccessToken != current.AccessToken || expected.RefreshToken != current.RefreshToken
+}
+
+func credentialIdentityConflicts(expected, current *AuthCredential) bool {
+	if expected == nil || current == nil {
+		return expected != current
+	}
+	if expectedProvider, currentProvider := canonicalProvider(expected.Provider), canonicalProvider(current.Provider); expectedProvider != "" && currentProvider != "" && expectedProvider != currentProvider {
+		return true
+	}
+	if expectedAccount, currentAccount := strings.TrimSpace(expected.AccountID), strings.TrimSpace(current.AccountID); expectedAccount != "" && currentAccount != "" && expectedAccount != currentAccount {
+		return true
+	}
+	if expectedEmail, currentEmail := strings.TrimSpace(expected.Email), strings.TrimSpace(current.Email); expectedEmail != "" && currentEmail != "" && !strings.EqualFold(expectedEmail, currentEmail) {
+		return true
+	}
+	if expectedProject, currentProject := strings.TrimSpace(expected.ProjectID), strings.TrimSpace(current.ProjectID); expectedProject != "" && currentProject != "" && expectedProject != currentProject {
+		return true
+	}
+	return false
 }
 
 func credentialRefreshKey(provider string, cred *AuthCredential) string {

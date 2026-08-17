@@ -258,12 +258,37 @@ func UpdateCredentialIfCurrent(
 	provider string,
 	expected, replacement *AuthCredential,
 ) (*AuthCredential, bool, error) {
-	return replaceCredentialIfCurrent(provider, expected, replacement)
+	authStoreMu.Lock()
+	defer authStoreMu.Unlock()
+
+	store, err := loadStoreUnlocked()
+	if err != nil {
+		return nil, false, err
+	}
+	canonical := canonicalProvider(provider)
+	current := store.Credentials[canonical]
+	if current == nil {
+		return nil, false, nil
+	}
+	if !credentialTokenGenerationMatches(expected, current) {
+		return cloneCredential(current), false, nil
+	}
+
+	normalized := normalizedCredential(provider, replacement)
+	if normalized == nil {
+		return nil, false, nil
+	}
+	store.Credentials[canonical] = normalized
+	if err := saveStoreUnlocked(store); err != nil {
+		return nil, false, err
+	}
+	return cloneCredential(normalized), true, nil
 }
 
-// replaceCredentialIfCurrent atomically replaces provider's credential only when
-// the stored token generation still matches expected. The authoritative stored
-// credential is returned when another refresh won the race first.
+// replaceCredentialIfCurrent atomically applies a refreshed token generation
+// only when the stored tokens still match expected. Metadata is preserved from
+// the authoritative current store so an in-flight refresh cannot roll back a
+// concurrent account/project metadata update.
 func replaceCredentialIfCurrent(
 	provider string,
 	expected, replacement *AuthCredential,
@@ -280,18 +305,45 @@ func replaceCredentialIfCurrent(
 	if current == nil {
 		return nil, false, nil
 	}
-	if expected == nil ||
-		current.AccessToken != expected.AccessToken ||
-		current.RefreshToken != expected.RefreshToken {
+	if !credentialTokenGenerationMatches(expected, current) {
 		return cloneCredential(current), false, nil
 	}
 
 	normalized := normalizedCredential(provider, replacement)
-	store.Credentials[canonical] = normalized
+	if normalized == nil {
+		return nil, false, nil
+	}
+	updated := cloneCredential(current)
+	updated.AccessToken = normalized.AccessToken
+	updated.RefreshToken = normalized.RefreshToken
+	updated.ExpiresAt = normalized.ExpiresAt
+	if updated.Provider == "" {
+		updated.Provider = normalized.Provider
+	}
+	if updated.AuthMethod == "" {
+		updated.AuthMethod = normalized.AuthMethod
+	}
+	if updated.AccountID == "" {
+		updated.AccountID = normalized.AccountID
+	}
+	if updated.Email == "" {
+		updated.Email = normalized.Email
+	}
+	if updated.ProjectID == "" {
+		updated.ProjectID = normalized.ProjectID
+	}
+	store.Credentials[canonical] = updated
 	if err := saveStoreUnlocked(store); err != nil {
 		return nil, false, err
 	}
-	return cloneCredential(normalized), true, nil
+	return cloneCredential(updated), true, nil
+}
+
+func credentialTokenGenerationMatches(expected, current *AuthCredential) bool {
+	if expected == nil || current == nil {
+		return expected == current
+	}
+	return current.AccessToken == expected.AccessToken && current.RefreshToken == expected.RefreshToken
 }
 
 func DeleteCredential(provider string) error {
