@@ -59,7 +59,11 @@ func TestModelConfigSelectableRepresentativeCredentialModes(t *testing.T) {
 			&config.ModelConfig{Provider: "anthropic", Model: "anthropic/x", AuthMethod: "oauth"},
 			true,
 		},
-		{"token anthropic", &config.ModelConfig{Provider: "anthropic", Model: "anthropic/x", AuthMethod: "token"}, true},
+		{
+			"token anthropic",
+			&config.ModelConfig{Provider: "anthropic", Model: "anthropic/x", AuthMethod: "token"},
+			true,
+		},
 		{"antigravity oauth", &config.ModelConfig{Provider: "antigravity", Model: "antigravity/x"}, true},
 		{"bedrock external credentials", &config.ModelConfig{Provider: "bedrock", Model: "bedrock/x"}, true},
 		{"claude cli", &config.ModelConfig{Provider: "claude-cli", Model: "claude-cli/x"}, true},
