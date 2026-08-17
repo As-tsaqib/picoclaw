@@ -1,0 +1,453 @@
+name: Apply Antigravity race fix
+
+on:
+  push:
+    branches:
+      - fix/antigravity-hardening
+    paths:
+      - '.github/workflows/apply-antigravity-race-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply deterministic cancellation fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, got {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          def replace_all(path, old, new, minimum=1):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count < minimum:
+                  raise SystemExit(f"{path}: expected at least {minimum} matches, got {count}")
+              p.write_text(text.replace(old, new))
+
+          replace_once(
+              "pkg/auth/refresh_coordinator.go",
+              '''func credentialRefreshKey(provider string, cred *AuthCredential) string {
+          \tif cred == nil {
+          \t\treturn canonicalProvider(provider) + ":none"
+          \t}
+          \trefreshDigest := sha256.Sum256([]byte(cred.RefreshToken))
+          \tmaterial := strings.Join([]string{
+          \t\tcanonicalProvider(provider),
+          \t\tstrings.TrimSpace(cred.Provider),
+          \t\tstrings.TrimSpace(cred.AccountID),
+          \t\tstrings.TrimSpace(cred.Email),
+          \t\tstrings.TrimSpace(cred.ProjectID),
+          \t\tfmt.Sprintf("%x", refreshDigest[:]),
+          \t}, "\\x00")
+          \tsum := sha256.Sum256([]byte(material))
+          \treturn canonicalProvider(provider) + ":" + fmt.Sprintf("%x", sum[:])
+          }
+          ''',
+              '''func credentialRefreshKey(provider string, cred *AuthCredential) string {
+          \tif cred == nil {
+          \t\treturn canonicalProvider(provider) + ":none"
+          \t}
+          \tmaterial := strings.Join([]string{cred.AccessToken, cred.RefreshToken}, "\\x00")
+          \tsum := sha256.Sum256([]byte(material))
+          \treturn canonicalProvider(provider) + ":" + fmt.Sprintf("%x", sum[:])
+          }
+          ''',
+          )
+
+          replace_once(
+              "pkg/auth/refresh_coordinator_test.go",
+              '''\t"errors"
+          \t"net/http"
+          ''',
+              '''\t"errors"
+          \t"io"
+          \t"net/http"
+          ''',
+          )
+          replace_once(
+              "pkg/auth/refresh_coordinator_test.go",
+              '''func antigravityTestCredential(access, refresh string) *AuthCredential {
+          ''',
+              '''type roundTripFunc func(*http.Request) (*http.Response, error)
+
+          func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+          \treturn f(req)
+          }
+
+          func antigravityTestCredential(access, refresh string) *AuthCredential {
+          ''',
+          )
+          replace_once(
+              "pkg/auth/refresh_coordinator_test.go",
+              '''func TestEnsureFreshCredentialContextCancellationStopsRefresh(t *testing.T) {
+          \tsetTestAuthHome(t)
+          \toriginal := antigravityTestCredential("access-old", "refresh-old")
+          \tif err := SetCredential("google-antigravity", original); err != nil {
+          \t\tt.Fatal(err)
+          \t}
+
+          \trequestCanceled := make(chan struct{})
+          \tserver := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+          \t\t<-r.Context().Done()
+          \t\tclose(requestCanceled)
+          \t}))
+          \tdefer server.Close()
+
+          \tctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+          \tdefer cancel()
+          \t_, err := EnsureFreshCredentialContext(
+          \t\tctx, "google-antigravity", original, oauthTestConfig(server.URL), nil, 5*time.Minute,
+          \t)
+          \tif !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+          \t\tt.Fatalf("error = %v, want cancellation", err)
+          \t}
+          \tselect {
+          \tcase <-requestCanceled:
+          \tcase <-time.After(2 * time.Second):
+          \t\tt.Fatal("refresh HTTP request was not canceled")
+          \t}
+          }
+          ''',
+              '''func TestEnsureFreshCredentialContextCancellationStopsRefresh(t *testing.T) {
+          \tsetTestAuthHome(t)
+          \toriginal := antigravityTestCredential("access-old", "refresh-old")
+          \tif err := SetCredential("google-antigravity", original); err != nil {
+          \t\tt.Fatal(err)
+          \t}
+
+          \trequestStarted := make(chan struct{})
+          \trequestCanceled := make(chan struct{})
+          \tclient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+          \t\tclose(requestStarted)
+          \t\t<-r.Context().Done()
+          \t\tclose(requestCanceled)
+          \t\treturn nil, r.Context().Err()
+          \t})}
+
+          \tctx, cancel := context.WithCancel(context.Background())
+          \tdone := make(chan error, 1)
+          \tgo func() {
+          \t\t_, err := EnsureFreshCredentialContext(
+          \t\t\tctx, "google-antigravity", original,
+          \t\t\toauthTestConfig("https://oauth.example.invalid/token"), client, 5*time.Minute,
+          \t\t)
+          \t\tdone <- err
+          \t}()
+          \t<-requestStarted
+          \tcancel()
+          \tselect {
+          \tcase err := <-done:
+          \t\tif !errors.Is(err, context.Canceled) {
+          \t\t\tt.Fatalf("error = %v, want context.Canceled", err)
+          \t\t}
+          \tcase <-time.After(2 * time.Second):
+          \t\tt.Fatal("refresh caller did not stop after cancellation")
+          \t}
+          \tselect {
+          \tcase <-requestCanceled:
+          \tcase <-time.After(2 * time.Second):
+          \t\tt.Fatal("refresh HTTP request context was not canceled")
+          \t}
+          }
+          ''',
+          )
+          replace_once(
+              "pkg/auth/refresh_coordinator_test.go",
+              '''func TestCredentialRefreshKeyDoesNotContainPlaintextToken(t *testing.T) {
+          \tcred := antigravityTestCredential("access-secret-value", "refresh-secret-value")
+          \tkey := credentialRefreshKey("google-antigravity", cred)
+          \tfor _, secret := range []string{cred.AccessToken, cred.RefreshToken} {
+          \t\tif strings.Contains(key, secret) {
+          \t\t\tt.Fatalf("refresh key contains plaintext secret %q: %q", secret, key)
+          \t\t}
+          \t}
+          }
+          ''',
+              '''func TestCredentialRefreshKeyDoesNotContainPlaintextToken(t *testing.T) {
+          \tcred := antigravityTestCredential("access-secret-value", "refresh-secret-value")
+          \tkey := credentialRefreshKey("google-antigravity", cred)
+          \tfor _, secret := range []string{cred.AccessToken, cred.RefreshToken} {
+          \t\tif strings.Contains(key, secret) {
+          \t\t\tt.Fatalf("refresh key contains plaintext secret %q: %q", secret, key)
+          \t\t}
+          \t}
+          }
+
+          func TestCredentialRefreshKeyIgnoresMetadataWithinTokenGeneration(t *testing.T) {
+          \tcred := antigravityTestCredential("access-secret-value", "refresh-secret-value")
+          \tkey := credentialRefreshKey("google-antigravity", cred)
+          \tchanged := *cred
+          \tchanged.Provider = "antigravity"
+          \tchanged.AccountID = "different-account-metadata"
+          \tchanged.Email = "different@example.com"
+          \tchanged.ProjectID = "different-project"
+          \tif got := credentialRefreshKey("google-antigravity", &changed); got != key {
+          \t\tt.Fatalf("metadata split one token generation: got %q, want %q", got, key)
+          \t}
+          }
+          ''',
+          )
+          replace_once(
+              "pkg/auth/refresh_coordinator_test.go",
+              '''func TestEnsureFreshCredentialContextCanceledFlightDoesNotPoisonNextCaller(t *testing.T) {
+          \tsetTestAuthHome(t)
+          \toriginal := antigravityTestCredential("access-old", "refresh-old")
+          \tif err := SetCredential("google-antigravity", original); err != nil {
+          \t\tt.Fatal(err)
+          \t}
+
+          \tvar requests atomic.Int32
+          \tfirstCanceled := make(chan struct{})
+          \tserver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          \t\tswitch requests.Add(1) {
+          \t\tcase 1:
+          \t\t\t<-r.Context().Done()
+          \t\t\tclose(firstCanceled)
+          \t\tcase 2:
+          \t\t\t_ = json.NewEncoder(w).Encode(map[string]any{
+          \t\t\t\t"access_token":  "access-new",
+          \t\t\t\t"refresh_token": "refresh-new",
+          \t\t\t\t"expires_in":    3600,
+          \t\t\t})
+          \t\tdefault:
+          \t\t\thttp.Error(w, "unexpected refresh", http.StatusInternalServerError)
+          \t\t}
+          \t}))
+          \tdefer server.Close()
+
+          \tctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+          \t_, err := EnsureFreshCredentialContext(
+          \t\tctx, "google-antigravity", original, oauthTestConfig(server.URL), nil, 5*time.Minute,
+          \t)
+          \tcancel()
+          \tif !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+          \t\tt.Fatalf("first error = %v, want cancellation", err)
+          \t}
+          \tselect {
+          \tcase <-firstCanceled:
+          \tcase <-time.After(2 * time.Second):
+          \t\tt.Fatal("first refresh HTTP request was not canceled")
+          \t}
+
+          \tgot, err := EnsureFreshCredentialContext(
+          \t\tcontext.Background(), "google-antigravity", original,
+          \t\toauthTestConfig(server.URL), nil, 5*time.Minute,
+          \t)
+          \tif err != nil {
+          \t\tt.Fatalf("second refresh error = %v", err)
+          \t}
+          \tif got.AccessToken != "access-new" || got.RefreshToken != "refresh-new" {
+          \t\tt.Fatalf("second credential = %#v", got)
+          \t}
+          \tif gotRequests := requests.Load(); gotRequests != 2 {
+          \t\tt.Fatalf("refresh requests = %d, want 2", gotRequests)
+          \t}
+          }
+          ''',
+              '''func TestEnsureFreshCredentialContextCanceledFlightDoesNotPoisonNextCaller(t *testing.T) {
+          \tsetTestAuthHome(t)
+          \toriginal := antigravityTestCredential("access-old", "refresh-old")
+          \tif err := SetCredential("google-antigravity", original); err != nil {
+          \t\tt.Fatal(err)
+          \t}
+
+          \tvar requests atomic.Int32
+          \tfirstStarted := make(chan struct{})
+          \tfirstCanceled := make(chan struct{})
+          \tclient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+          \t\tswitch requests.Add(1) {
+          \t\tcase 1:
+          \t\t\tclose(firstStarted)
+          \t\t\t<-r.Context().Done()
+          \t\t\tclose(firstCanceled)
+          \t\t\treturn nil, r.Context().Err()
+          \t\tcase 2:
+          \t\t\treturn &http.Response{
+          \t\t\t\tStatusCode: http.StatusOK,
+          \t\t\t\tHeader:     make(http.Header),
+          \t\t\t\tBody: io.NopCloser(strings.NewReader(
+          \t\t\t\t\t`{"access_token":"access-new","refresh_token":"refresh-new","expires_in":3600}`,
+          \t\t\t\t)),
+          \t\t\t\tRequest: r,
+          \t\t\t}, nil
+          \t\tdefault:
+          \t\t\treturn nil, errors.New("unexpected refresh request")
+          \t\t}
+          \t})}
+
+          \tctx, cancel := context.WithCancel(context.Background())
+          \tfirstDone := make(chan error, 1)
+          \tgo func() {
+          \t\t_, err := EnsureFreshCredentialContext(
+          \t\t\tctx, "google-antigravity", original,
+          \t\t\toauthTestConfig("https://oauth.example.invalid/token"), client, 5*time.Minute,
+          \t\t)
+          \t\tfirstDone <- err
+          \t}()
+          \t<-firstStarted
+          \tcancel()
+          \tif err := <-firstDone; !errors.Is(err, context.Canceled) {
+          \t\tt.Fatalf("first error = %v, want context.Canceled", err)
+          \t}
+          \tselect {
+          \tcase <-firstCanceled:
+          \tcase <-time.After(2 * time.Second):
+          \t\tt.Fatal("first refresh HTTP request context was not canceled")
+          \t}
+
+          \tgot, err := EnsureFreshCredentialContext(
+          \t\tcontext.Background(), "google-antigravity", original,
+          \t\toauthTestConfig("https://oauth.example.invalid/token"), client, 5*time.Minute,
+          \t)
+          \tif err != nil {
+          \t\tt.Fatalf("second refresh error = %v", err)
+          \t}
+          \tif got.AccessToken != "access-new" || got.RefreshToken != "refresh-new" {
+          \t\tt.Fatalf("second credential = %#v", got)
+          \t}
+          \tif gotRequests := requests.Load(); gotRequests != 2 {
+          \t\tt.Fatalf("refresh requests = %d, want 2", gotRequests)
+          \t}
+          }
+          ''',
+          )
+
+          replace_once(
+              "pkg/providers/oauth/antigravity_catalog_context_test.go",
+              '''func TestFetchAntigravityModelsAtBaseURLHonorsTimeout(t *testing.T) {
+          \tserver := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+          \t\t<-r.Context().Done()
+          \t}))
+          \tdefer server.Close()
+
+          \tctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+          ''',
+              '''func TestFetchAntigravityModelsAtBaseURLHonorsTimeout(t *testing.T) {
+          \trelease := make(chan struct{})
+          \tserver := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+          \t\t<-release
+          \t}))
+          \tdefer server.Close()
+          \tdefer close(release)
+
+          \tctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+          ''',
+          )
+
+          for path, func_name, call_name in [
+              ("pkg/modelcatalog/discovery_provider_test.go", "TestFetchAntigravityCancellationDuringRefresh", "Fetch"),
+              ("pkg/providers/oauth/antigravity_provider_test.go", "TestAntigravityChatCancellationStopsRefresh", "Chat"),
+          ]:
+              p = Path(path)
+              text = p.read_text()
+              start = text.index(f"func {func_name}(t *testing.T) {{")
+              next_func = text.find("\nfunc ", start + 1)
+              end = len(text) if next_func == -1 else next_func + 1
+              block = text[start:end]
+              old = '''refreshStarted := make(chan struct{})
+          \ttokenServer := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+          \t\tselect {
+          \t\tcase <-refreshStarted:
+          \t\tdefault:
+          \t\t\tclose(refreshStarted)
+          \t\t}
+          \t\t<-r.Context().Done()
+          \t}))
+          \tdefer tokenServer.Close()'''
+              new = '''refreshStarted := make(chan struct{})
+          \treleaseRefresh := make(chan struct{})
+          \tvar releaseRefreshOnce sync.Once
+          \tdefer releaseRefreshOnce.Do(func() { close(releaseRefresh) })
+          \ttokenServer := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+          \t\tselect {
+          \t\tcase <-refreshStarted:
+          \t\tdefault:
+          \t\t\tclose(refreshStarted)
+          \t\t}
+          \t\t<-releaseRefresh
+          \t}))
+          \tdefer tokenServer.Close()'''
+              if block.count(old) != 1:
+                  raise SystemExit(f"{path}: cancellation server pattern mismatch")
+              block = block.replace(old, new, 1)
+              marker = f'''\tcase <-time.After(2 * time.Second):
+          \t\tt.Fatal("{call_name} did not stop after cancellation")
+          \t}}
+          }}'''
+              replacement = f'''\tcase <-time.After(2 * time.Second):
+          \t\tt.Fatal("{call_name} did not stop after cancellation")
+          \t}}
+          \treleaseRefreshOnce.Do(func() {{ close(releaseRefresh) }})
+          }}'''
+              if marker not in block:
+                  raise SystemExit(f"{path}: cancellation completion marker mismatch")
+              block = block.replace(marker, replacement, 1)
+              p.write_text(text[:start] + block + text[end:])
+
+          replace_all(
+              "pkg/providers/oauth/antigravity_provider_test.go",
+              '''\t\t\t_, err := provider.Chat(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil, "gemini-test", nil)
+          ''',
+              '''\t\t\t_, err := provider.Chat(
+          \t\t\t\tcontext.Background(), []Message{{Role: "user", Content: "hello"}},
+          \t\t\t\tnil, "gemini-test", nil,
+          \t\t\t)
+          ''',
+          )
+          replace_all(
+              "pkg/providers/oauth/antigravity_provider_test.go",
+              '''\t_, err = provider.Chat(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil, "gemini-test", nil)
+          ''',
+              '''\t_, err = provider.Chat(
+          \t\tcontext.Background(), []Message{{Role: "user", Content: "hello"}},
+          \t\tnil, "gemini-test", nil,
+          \t)
+          ''',
+          )
+          replace_all(
+              "pkg/providers/oauth/antigravity_provider_test.go",
+              '''\t\t_, err := provider.Chat(ctx, []Message{{Role: "user", Content: "hello"}}, nil, "gemini-test", nil)
+          ''',
+              '''\t\t_, err := provider.Chat(
+          \t\t\tctx, []Message{{Role: "user", Content: "hello"}}, nil, "gemini-test", nil,
+          \t\t)
+          ''',
+          )
+          PY
+
+          gofmt -w \
+            pkg/auth/refresh_coordinator.go \
+            pkg/auth/refresh_coordinator_test.go \
+            pkg/providers/oauth/antigravity_catalog_context_test.go \
+            pkg/modelcatalog/discovery_provider_test.go \
+            pkg/providers/oauth/antigravity_provider_test.go
+          git diff --check
+
+      - name: Commit source fix and remove staging workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/apply-antigravity-race-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix: stabilize antigravity refresh coordination'
+          git push origin HEAD:fix/antigravity-hardening
