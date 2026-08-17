@@ -251,9 +251,10 @@ func SetCredential(provider string, cred *AuthCredential) error {
 	return saveStoreUnlocked(store)
 }
 
-// UpdateCredentialIfCurrent atomically replaces a credential only if the
-// stored access/refresh token generation still matches expected. It is used for
-// metadata updates that must not overwrite a concurrently rotated OAuth token.
+// UpdateCredentialIfCurrent atomically applies metadata changes only if the
+// stored access/refresh token generation and credential identity still match
+// expected. It performs a three-way merge so an in-flight metadata lookup cannot
+// roll back unrelated metadata that another caller updated concurrently.
 func UpdateCredentialIfCurrent(
 	provider string,
 	expected, replacement *AuthCredential,
@@ -270,19 +271,35 @@ func UpdateCredentialIfCurrent(
 	if current == nil {
 		return nil, false, nil
 	}
-	if !credentialTokenGenerationMatches(expected, current) {
+	if !credentialTokenGenerationMatches(expected, current) || credentialIdentityConflicts(expected, current) {
 		return cloneCredential(current), false, nil
 	}
 
-	normalized := normalizedCredential(provider, replacement)
-	if normalized == nil {
-		return nil, false, nil
+	normalizedExpected := normalizedCredential(provider, expected)
+	normalizedReplacement := normalizedCredential(provider, replacement)
+	if normalizedExpected == nil || normalizedReplacement == nil {
+		return cloneCredential(current), false, nil
 	}
-	store.Credentials[canonical] = normalized
+
+	updated := cloneCredential(current)
+	mergeCredentialMetadataField(&updated.Provider, normalizedExpected.Provider, normalizedReplacement.Provider)
+	mergeCredentialMetadataField(&updated.AuthMethod, normalizedExpected.AuthMethod, normalizedReplacement.AuthMethod)
+	mergeCredentialMetadataField(&updated.AccountID, normalizedExpected.AccountID, normalizedReplacement.AccountID)
+	mergeCredentialMetadataField(&updated.Email, normalizedExpected.Email, normalizedReplacement.Email)
+	mergeCredentialMetadataField(&updated.ProjectID, normalizedExpected.ProjectID, normalizedReplacement.ProjectID)
+
+	store.Credentials[canonical] = updated
 	if err := saveStoreUnlocked(store); err != nil {
 		return nil, false, err
 	}
-	return cloneCredential(normalized), true, nil
+	return cloneCredential(updated), true, nil
+}
+
+func mergeCredentialMetadataField(current *string, expected, replacement string) {
+	if current == nil || replacement == expected || *current != expected {
+		return
+	}
+	*current = replacement
 }
 
 // replaceCredentialIfCurrent atomically applies a refreshed token generation
