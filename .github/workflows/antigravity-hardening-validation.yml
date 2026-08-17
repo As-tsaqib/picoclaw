@@ -9,218 +9,53 @@ permissions:
   contents: read
 
 jobs:
-  apply-project-id-recovery:
-    if: "${{ github.event.head_commit.message == 'ci: stage antigravity project recovery' }}"
+  targeted-tests:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 30
     steps:
-      - name: Checkout working branch
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: fix/antigravity-hardening
-      - name: Apply project identity 401 recovery
-        shell: bash
-        run: |
-          python3 <<'PY'
-          from pathlib import Path
+          persist-credentials: false
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.2.0
+        with:
+          go-version-file: go.mod
+      - name: Run targeted tests
+        env:
+          GOTOOLCHAIN: local
+        run: >-
+          go test -count=1 -tags=goolm,stdjson
+          ./pkg/session/...
+          ./pkg/modelcatalog/...
+          ./pkg/auth/...
+          ./pkg/providers/...
+          ./pkg/agent/...
+          ./pkg/channels/telegram/...
 
-          path = Path("pkg/providers/oauth/antigravity_provider.go")
-          text = path.read_text()
-          old = '''\t\tprojectID, err := FetchAntigravityProjectIDWithClientContext(
-          \t\t\tctx,
-          \t\t\tp.authHTTPClient(),
-          \t\t\tp.apiBaseURL(),
-          \t\t\tcred.AccessToken,
-          \t\t\tp.customHeaders,
-          \t\t\tp.userAgent,
-          \t\t)
-          '''
-          new = '''\t\tprojectID, recoveredCred, err := p.fetchProjectIDWithRecovery(ctx, cred)
-          \t\tif recoveredCred != nil {
-          \t\t\tcred = recoveredCred
-          \t\t}
-          '''
-          if old not in text:
-              raise SystemExit("project ID discovery call site did not match expected source")
-          path.write_text(text.replace(old, new, 1))
-          PY
-
-          cat > pkg/providers/oauth/antigravity_project_recovery.go <<'EOF'
-          package oauthprovider
-
-          import (
-          	"context"
-          	"errors"
-          	"fmt"
-          	"net/http"
-
-          	"github.com/As-tsaqib/picoclaw/pkg/auth"
-          )
-
-          // fetchProjectIDWithRecovery resolves the Antigravity project identity
-          // and performs at most one generation-aware OAuth refresh/retry after
-          // an unexpected HTTP 401. Other statuses never trigger a refresh.
-          func (p *AntigravityProvider) fetchProjectIDWithRecovery(
-          	ctx context.Context,
-          	cred *auth.AuthCredential,
-          ) (string, *auth.AuthCredential, error) {
-          	projectID, err := FetchAntigravityProjectIDWithClientContext(
-          		ctx,
-          		p.authHTTPClient(),
-          		p.apiBaseURL(),
-          		cred.AccessToken,
-          		p.customHeaders,
-          		p.userAgent,
-          	)
-          	if err == nil || !isAntigravityUnauthorized(err) {
-          		return projectID, cred, err
-          	}
-
-          	recovered, refreshErr := auth.RefreshCredentialAfterUnauthorizedContext(
-          		ctx,
-          		"google-antigravity",
-          		cred,
-          		antigravityOAuthConfig(),
-          		p.authHTTPClient(),
-          	)
-          	if refreshErr != nil {
-          		if ctxErr := ctx.Err(); ctxErr != nil {
-          			return "", cred, ctxErr
-          		}
-          		return "", cred, fmt.Errorf("antigravity project auth recovery: %w", refreshErr)
-          	}
-
-          	projectID, err = FetchAntigravityProjectIDWithClientContext(
-          		ctx,
-          		p.authHTTPClient(),
-          		p.apiBaseURL(),
-          		recovered.AccessToken,
-          		p.customHeaders,
-          		p.userAgent,
-          	)
-          	return projectID, recovered, err
-          }
-
-          func isAntigravityUnauthorized(err error) bool {
-          	var httpErr *AntigravityHTTPError
-          	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized
-          }
-          EOF
-
-          cat > pkg/providers/oauth/antigravity_project_recovery_test.go <<'EOF'
-          package oauthprovider
-
-          import (
-          	"context"
-          	"io"
-          	"net/http"
-          	"net/http/httptest"
-          	"sync/atomic"
-          	"testing"
-          	"time"
-
-          	"github.com/As-tsaqib/picoclaw/pkg/auth"
-          )
-
-          func TestAntigravityProjectDiscovery401RefreshesAndRetriesOnce(t *testing.T) {
-          	var refreshCalls atomic.Int32
-          	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-          		refreshCalls.Add(1)
-          		if err := r.ParseForm(); err != nil {
-          			t.Fatalf("ParseForm: %v", err)
-          		}
-          		if got := r.Form.Get("refresh_token"); got != "refresh-old" {
-          			t.Fatalf("refresh_token = %q", got)
-          		}
-          		_, _ = io.WriteString(w, `{"access_token":"access-new","refresh_token":"refresh-rotated","expires_in":3600}`)
-          	}))
-          	defer tokenServer.Close()
-          	overrideAntigravityOAuthForTest(t, tokenServer.URL)
-          	installAntigravityTestCredential(t, &auth.AuthCredential{
-          		AccessToken: "access-old", RefreshToken: "refresh-old", ExpiresAt: time.Now().Add(time.Hour),
-          		Provider: "google-antigravity", AuthMethod: "oauth",
-          	})
-
-          	var projectCalls atomic.Int32
-          	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-          		projectCalls.Add(1)
-          		switch r.Header.Get("Authorization") {
-          		case "Bearer access-old":
-          			w.WriteHeader(http.StatusUnauthorized)
-          		case "Bearer access-new":
-          			w.Header().Set("Content-Type", "application/json")
-          			_, _ = io.WriteString(w, `{"cloudaicompanionProject":"project-new"}`)
-          		default:
-          			t.Fatalf("unexpected Authorization: %q", r.Header.Get("Authorization"))
-          		}
-          	}))
-          	defer apiServer.Close()
-
-          	provider, err := NewAntigravityProviderWithConfig(apiServer.URL, "", "", 5, nil)
-          	if err != nil {
-          		t.Fatal(err)
-          	}
-          	cred, err := provider.credential(context.Background())
-          	if err != nil {
-          		t.Fatalf("credential: %v", err)
-          	}
-          	if cred.ProjectID != "project-new" || cred.AccessToken != "access-new" || cred.RefreshToken != "refresh-rotated" {
-          		t.Fatalf("credential = %#v", cred)
-          	}
-          	if refreshCalls.Load() != 1 || projectCalls.Load() != 2 {
-          		t.Fatalf("refresh=%d project=%d, want refresh=1 project=2", refreshCalls.Load(), projectCalls.Load())
-          	}
-          	stored, err := auth.GetCredential("google-antigravity")
-          	if err != nil {
-          		t.Fatal(err)
-          	}
-          	if stored.ProjectID != "project-new" || stored.RefreshToken != "refresh-rotated" {
-          		t.Fatalf("stored credential = %#v", stored)
-          	}
-          }
-
-          func TestAntigravityProjectDiscoverySecond401Stops(t *testing.T) {
-          	var refreshCalls atomic.Int32
-          	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-          		refreshCalls.Add(1)
-          		_, _ = io.WriteString(w, `{"access_token":"access-new","refresh_token":"refresh-new","expires_in":3600}`)
-          	}))
-          	defer tokenServer.Close()
-          	overrideAntigravityOAuthForTest(t, tokenServer.URL)
-          	installAntigravityTestCredential(t, &auth.AuthCredential{
-          		AccessToken: "access-old", RefreshToken: "refresh-old", ExpiresAt: time.Now().Add(time.Hour),
-          		Provider: "google-antigravity", AuthMethod: "oauth",
-          	})
-
-          	var projectCalls atomic.Int32
-          	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-          		projectCalls.Add(1)
-          		w.WriteHeader(http.StatusUnauthorized)
-          	}))
-          	defer apiServer.Close()
-          	provider, err := NewAntigravityProviderWithConfig(apiServer.URL, "", "", 5, nil)
-          	if err != nil {
-          		t.Fatal(err)
-          	}
-          	_, err = provider.credential(context.Background())
-          	if err == nil {
-          		t.Fatal("expected second 401 to stop project discovery")
-          	}
-          	if refreshCalls.Load() != 1 || projectCalls.Load() != 2 {
-          		t.Fatalf("refresh=%d project=%d, want refresh=1 project=2", refreshCalls.Load(), projectCalls.Load())
-          	}
-          }
-          EOF
-
-          gofmt -w pkg/providers/oauth/antigravity_provider.go \
-            pkg/providers/oauth/antigravity_project_recovery.go \
-            pkg/providers/oauth/antigravity_project_recovery_test.go
-
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add pkg/providers/oauth/antigravity_provider.go \
-            pkg/providers/oauth/antigravity_project_recovery.go \
-            pkg/providers/oauth/antigravity_project_recovery_test.go
-          git commit -m "fix: recover antigravity project identity after 401"
-          git push origin HEAD:fix/antigravity-hardening
+  race-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - ./pkg/session/...
+          - ./pkg/modelcatalog/...
+          - ./pkg/auth/...
+          - ./pkg/providers/...
+          - ./pkg/agent/...
+          - ./pkg/channels/telegram/...
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.2.0
+        with:
+          go-version-file: go.mod
+      - name: Run race test
+        env:
+          GOTOOLCHAIN: local
+        run: go test -count=1 -race -tags=goolm,stdjson ${{ matrix.package }}
