@@ -62,9 +62,10 @@ func MigrateFromJSON(
 		if !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		// The durable route mapping is shared by the JSON and JSONL backends;
-		// it is metadata, not a legacy conversation snapshot.
-		if name == activeSessionsFilename {
+		// Durable route/model mappings are shared by the JSON and JSONL
+		// backends. They are metadata sidecars, not legacy conversation
+		// snapshots, and must never be renamed or imported as sessions.
+		if name == activeSessionsFilename || name == modelOverridesFilename {
 			continue
 		}
 		if name == ".active-sessions-legacy.json" {
@@ -85,7 +86,10 @@ func MigrateFromJSON(
 					return migrated, fmt.Errorf("memory: migrate active session mapping: %w", setErr)
 				}
 			}
-			if renameErr := os.Rename(filepath.Join(sessionsDir, name), filepath.Join(sessionsDir, name+".migrated")); renameErr != nil {
+			if renameErr := os.Rename(
+				filepath.Join(sessionsDir, name),
+				filepath.Join(sessionsDir, name+".migrated"),
+			); renameErr != nil {
 				log.Printf("memory: migrate: rename %s: %v", name, renameErr)
 			}
 			continue
@@ -150,7 +154,13 @@ func MigrateFromJSON(
 				}
 			}
 			if strings.TrimSpace(sess.Name) != "" {
-				if nameErr := metadataStore.SetSessionName(ctx, key, sess.Name, sess.NameSource, sess.AutoNamePending); nameErr != nil {
+				if nameErr := metadataStore.SetSessionName(
+					ctx,
+					key,
+					sess.Name,
+					sess.NameSource,
+					sess.AutoNamePending,
+				); nameErr != nil {
 					return migrated, fmt.Errorf("memory: migrate %s: session name: %w", name, nameErr)
 				}
 			}

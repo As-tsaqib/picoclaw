@@ -243,7 +243,11 @@ func (al *AgentLoop) processMessageWithStructured(
 		ensureSessionMetadata(agent.Sessions, sessionKey, opts.Dispatch.SessionScope, opts.Dispatch.SessionAliases)
 		if catalog, ok := agent.Sessions.(session.ScopedSessionStore); ok {
 			if nameErr := catalog.SetAutomaticSessionName(sessionKey, msg.Content); nameErr != nil {
-				logger.WarnCF("session", "Failed to assign automatic session name", map[string]any{"error": nameErr.Error()})
+				logger.WarnCF(
+					"session",
+					"Failed to assign automatic session name",
+					map[string]any{"error": nameErr.Error()},
+				)
 			}
 		}
 	}
@@ -304,7 +308,12 @@ func resolveAllocatedSession(agent *AgentInstance, allocation session.Allocation
 	if session.IsSessionInstanceKey(explicit) {
 		if agent != nil {
 			if catalog, ok := agent.Sessions.(session.ScopedSessionStore); ok &&
-				catalogSessionInScope(catalog, &allocation.Scope, allocation.SessionAliases, strings.TrimSpace(explicit)) {
+				catalogSessionInScope(
+					catalog,
+					&allocation.Scope,
+					allocation.SessionAliases,
+					strings.TrimSpace(explicit),
+				) {
 				return strings.TrimSpace(explicit)
 			}
 		}
@@ -319,7 +328,9 @@ func resolveAllocatedSession(agent *AgentInstance, allocation session.Allocation
 	}
 	if agent != nil {
 		if catalog, ok := agent.Sessions.(session.ScopedSessionStore); ok {
-			if active := strings.TrimSpace(catalog.ActiveScopedSession(&allocation.Scope, allocation.SessionAliases)); active != "" {
+			if active := strings.TrimSpace(
+				catalog.ActiveScopedSession(&allocation.Scope, allocation.SessionAliases),
+			); active != "" {
 				return active
 			}
 		}

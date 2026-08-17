@@ -245,7 +245,10 @@ func structuredKeyboardMarkup(rows [][]bus.StructuredButton) *telego.InlineKeybo
 				continue
 			}
 			style := normalizeButtonStyle(button.Style)
-			buttons = append(buttons, telego.InlineKeyboardButton{Text: button.Text, CallbackData: button.CallbackData, Style: style})
+			buttons = append(
+				buttons,
+				telego.InlineKeyboardButton{Text: button.Text, CallbackData: button.CallbackData, Style: style},
+			)
 		}
 		if len(buttons) > 0 {
 			keyboard = append(keyboard, buttons)
@@ -279,17 +282,41 @@ func (c *TelegramChannel) structuredReplyMarkup(
 	}
 	menu := *content.Interaction
 	menu.Entries = append([]bus.InteractionEntry(nil), content.Interaction.Entries...)
-	if !strings.EqualFold(menu.Kind, "session") || menu.OwnerID == "" || menu.Scope == "" || menu.AgentID == "" {
-		return nil, nil, fmt.Errorf("session menu metadata is incomplete")
+	kind := strings.ToLower(strings.TrimSpace(menu.Kind))
+	if (kind != "session" && kind != "model") || menu.OwnerID == "" || menu.Scope == "" || menu.AgentID == "" {
+		return nil, nil, fmt.Errorf("interactive menu metadata is incomplete")
 	}
 	if menu.Channel != "" && menu.Channel != c.Name() {
-		return nil, nil, fmt.Errorf("session menu channel mismatch")
+		return nil, nil, fmt.Errorf("interactive menu channel mismatch")
 	}
 	token, err := newSessionMenuToken()
 	if err != nil {
 		return nil, nil, err
 	}
 	callback := func(code string) string { return sessionCallbackPrefix + token + ":" + code }
+	var keyboard [][]telego.InlineKeyboardButton
+	if kind == "model" {
+		keyboard = modelInteractionKeyboard(menu, callback)
+	} else {
+		keyboard = sessionInteractionKeyboard(menu, callback)
+	}
+	for _, row := range keyboard {
+		for _, button := range row {
+			if len([]byte(button.CallbackData)) == 0 || len([]byte(button.CallbackData)) > 64 {
+				return nil, nil, fmt.Errorf("callback_data exceeds Telegram limit")
+			}
+		}
+	}
+	pending := &telegramSessionMenu{
+		token: token, menu: menu, chatID: chatID, threadID: threadID, createdAt: time.Now(),
+	}
+	return &telego.InlineKeyboardMarkup{InlineKeyboard: keyboard}, pending, nil
+}
+
+func sessionInteractionKeyboard(
+	menu bus.InteractionMenu,
+	callback func(string) string,
+) [][]telego.InlineKeyboardButton {
 	keyboard := make([][]telego.InlineKeyboardButton, 0, 4)
 	selectRow := make([]telego.InlineKeyboardButton, 0, 5)
 	for idx, entry := range menu.Entries {
@@ -320,31 +347,78 @@ func (c *TelegramChannel) structuredReplyMarkup(
 		if parseErr != nil {
 			continue
 		}
-		button := telego.InlineKeyboardButton{Text: entry.Label, CallbackData: callback("p" + strconv.Itoa(page)), Style: telego.ButtonStylePrimary}
+		button := telego.InlineKeyboardButton{
+			Text:         entry.Label,
+			CallbackData: callback("p" + strconv.Itoa(page)),
+			Style:        telego.ButtonStylePrimary,
+		}
 		if page < menu.Page {
 			prev = button
 		} else if page > menu.Page {
 			next = button
 		}
 	}
-	pageButton := telego.InlineKeyboardButton{Text: fmt.Sprintf("Halaman %d/%d", menu.Page+1, menu.Pages), CallbackData: callback("o")}
+	pageButton := telego.InlineKeyboardButton{
+		Text:         fmt.Sprintf("Halaman %d/%d", menu.Page+1, menu.Pages),
+		CallbackData: callback("o"),
+	}
 	keyboard = append(keyboard, []telego.InlineKeyboardButton{prev, pageButton, next})
 	keyboard = append(keyboard, []telego.InlineKeyboardButton{
 		{Text: "➕ Baru", CallbackData: callback("n"), Style: telego.ButtonStylePrimary},
 		{Text: "✏️ Rename", CallbackData: callback("r"), Style: telego.ButtonStylePrimary},
 	})
-	keyboard = append(keyboard, []telego.InlineKeyboardButton{{Text: "✖️ Tutup", CallbackData: callback("x"), Style: telego.ButtonStyleDanger}})
-	for _, row := range keyboard {
-		for _, button := range row {
-			if len([]byte(button.CallbackData)) == 0 || len([]byte(button.CallbackData)) > 64 {
-				return nil, nil, fmt.Errorf("callback_data exceeds Telegram limit")
+	keyboard = append(
+		keyboard,
+		[]telego.InlineKeyboardButton{{Text: "✖️ Tutup", CallbackData: callback("x"), Style: telego.ButtonStyleDanger}},
+	)
+	return keyboard
+}
+
+func modelInteractionKeyboard(menu bus.InteractionMenu, callback func(string) string) [][]telego.InlineKeyboardButton {
+	keyboard := make([][]telego.InlineKeyboardButton, 0, 8)
+	appendGrouped := func(indices []int, size int, style string) {
+		for len(indices) > 0 {
+			n := size
+			if len(indices) < n {
+				n = len(indices)
 			}
+			row := make([]telego.InlineKeyboardButton, 0, n)
+			for _, idx := range indices[:n] {
+				entry := menu.Entries[idx]
+				row = append(row, telego.InlineKeyboardButton{
+					Text: entry.Label, CallbackData: callback("m" + strconv.Itoa(idx)), Style: style,
+				})
+			}
+			keyboard = append(keyboard, row)
+			indices = indices[n:]
 		}
 	}
-	pending := &telegramSessionMenu{
-		token: token, menu: menu, chatID: chatID, threadID: threadID, createdAt: time.Now(),
+
+	selects := make([]int, 0, 5)
+	navigation := make([]int, 0, 3)
+	providerFilters := make([]int, 0, 6)
+	actions := make([]int, 0, 8)
+	closeEntries := make([]int, 0, 1)
+	for idx, entry := range menu.Entries {
+		switch entry.Action {
+		case "select":
+			selects = append(selects, idx)
+		case "page", "noop":
+			navigation = append(navigation, idx)
+		case "provider":
+			providerFilters = append(providerFilters, idx)
+		case "close":
+			closeEntries = append(closeEntries, idx)
+		default:
+			actions = append(actions, idx)
+		}
 	}
-	return &telego.InlineKeyboardMarkup{InlineKeyboard: keyboard}, pending, nil
+	appendGrouped(selects, 5, "")
+	appendGrouped(navigation, 3, telego.ButtonStylePrimary)
+	appendGrouped(providerFilters, 3, telego.ButtonStylePrimary)
+	appendGrouped(actions, 2, telego.ButtonStylePrimary)
+	appendGrouped(closeEntries, 1, telego.ButtonStyleDanger)
+	return keyboard
 }
 
 func newSessionMenuToken() (string, error) {
@@ -429,14 +503,14 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 	}
 	token, code, parsed := parseInternalSessionCallback(query.Data)
 	if !parsed {
-		return c.answerSessionCallback(ctx, query.ID, "Menu session tidak valid. Jalankan /session lagi.", true)
+		return c.answerSessionCallback(ctx, query.ID, "Menu tidak valid. Jalankan command lagi.", true)
 	}
 	menu, found := c.takeSessionMenu(token)
 	if !found {
-		return c.answerSessionCallback(ctx, query.ID, "Menu session sudah kedaluwarsa. Jalankan /session lagi.", true)
+		return c.answerSessionCallback(ctx, query.ID, "Menu sudah kedaluwarsa. Jalankan command lagi.", true)
 	}
 	if query.Message == nil {
-		return c.answerSessionCallback(ctx, query.ID, "Menu session tidak memiliki konteks pesan yang valid.", true)
+		return c.answerSessionCallback(ctx, query.ID, "Menu tidak memiliki konteks pesan yang valid.", true)
 	}
 	message := query.Message.Message()
 	if message == nil || !c.sessionCallbackEnvelopeValid(query, message, menu) {
@@ -444,7 +518,7 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 	}
 	action, value, ok := resolveSessionMenuAction(menu.menu, code)
 	if !ok {
-		return c.answerSessionCallback(ctx, query.ID, "Tombol session tidak valid. Jalankan /session lagi.", true)
+		return c.answerSessionCallback(ctx, query.ID, "Tombol tidak valid. Jalankan command lagi.", true)
 	}
 
 	answerText := ""
@@ -456,7 +530,7 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 	case "noop":
 		answerText = fmt.Sprintf("Halaman %d/%d", menu.menu.Page+1, menu.menu.Pages)
 	}
-	// Stop the client spinner before any disk I/O or message edit.
+	// Stop the client spinner before any disk I/O, discovery request, or message edit.
 	if err := c.answerSessionCallback(ctx, query.ID, answerText, showAlert); err != nil {
 		return err
 	}
@@ -465,7 +539,7 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 	if handler == nil {
 		return nil
 	}
-	response, err := handler(ctx, bus.InternalCallbackRequest{
+	response, handlerErr := handler(ctx, bus.InternalCallbackRequest{
 		Kind:       menu.menu.Kind,
 		Action:     action,
 		Value:      value,
@@ -481,16 +555,20 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 		Page:       menu.menu.Page,
 		SessionKey: menu.menu.Current,
 	})
-	if err != nil {
-		logger.WarnCF("telegram", "Internal session callback was rejected", map[string]any{"reason": "scope_or_state_validation"})
-		return nil
+	if handlerErr != nil {
+		logger.WarnCF(
+			"telegram",
+			"Internal callback was rejected",
+			map[string]any{"reason": "scope_or_state_validation"},
+		)
+		return handlerErr
 	}
 	if response == nil {
 		return nil
 	}
 	if response.Close {
-		if err := c.clearSessionMenuKeyboard(ctx, message, menu); err != nil {
-			return err
+		if clearErr := c.clearSessionMenuKeyboard(ctx, message, menu); clearErr != nil {
+			return clearErr
 		}
 		c.deleteSessionMenu(token)
 		return nil
@@ -498,12 +576,15 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 	if response.Content == nil {
 		return nil
 	}
-	markup, pending, err := c.structuredReplyMarkup(response.Content, menu.chatID, menu.threadID)
-	if err != nil || pending == nil {
+	markup, pending, markupErr := c.structuredReplyMarkup(response.Content, menu.chatID, menu.threadID)
+	if markupErr != nil {
+		return markupErr
+	}
+	if pending == nil {
 		return nil
 	}
-	if err := c.editStructuredSessionMenu(ctx, message, menu, response.Content, markup); err != nil {
-		return err
+	if editErr := c.editStructuredSessionMenu(ctx, message, menu, response.Content, markup); editErr != nil {
+		return editErr
 	}
 	pending.messageID = menu.messageID
 	pending.ephemeralID = menu.ephemeralID
@@ -547,6 +628,17 @@ func (c *TelegramChannel) sessionCallbackEnvelopeValid(
 }
 
 func resolveSessionMenuAction(menu bus.InteractionMenu, code string) (action, value string, ok bool) {
+	if strings.EqualFold(strings.TrimSpace(menu.Kind), "model") && strings.HasPrefix(code, "m") {
+		idx, err := strconv.Atoi(strings.TrimPrefix(code, "m"))
+		if err != nil || idx < 0 || idx >= len(menu.Entries) {
+			return "", "", false
+		}
+		entry := menu.Entries[idx]
+		if strings.TrimSpace(entry.Action) == "" {
+			return "", "", false
+		}
+		return entry.Action, entry.Value, true
+	}
 	switch {
 	case strings.HasPrefix(code, "s"):
 		idx, err := strconv.Atoi(strings.TrimPrefix(code, "s"))
@@ -603,7 +695,11 @@ func (c *TelegramChannel) editStructuredSessionMenu(
 			Text:               fallback,
 			ReplyMarkup:        markup,
 		}
-		if err := c.bot.EditEphemeralMessageText(ctx, params); err != nil && !strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
+		if err := c.bot.EditEphemeralMessageText(
+			ctx,
+			params,
+		); err != nil &&
+			!strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
 			return err
 		}
 		return nil

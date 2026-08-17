@@ -21,13 +21,18 @@ func configureSessionCommandRuntime(rt *commands.Runtime, agent *AgentInstance, 
 	rt.SessionCommand = func(ctx context.Context, req commands.SessionCommandRequest) (*bus.StructuredContent, error) {
 		return al.executeSessionCommand(ctx, agent, opts, req)
 	}
+	configureModelCommandRuntime(rt, agent, opts, al)
 }
 
 func (al *AgentLoop) handleInternalCallback(
-	_ context.Context,
+	ctx context.Context,
 	req bus.InternalCallbackRequest,
 ) (*bus.InternalCallbackResponse, error) {
-	if !strings.EqualFold(strings.TrimSpace(req.Kind), "session") {
+	kind := strings.ToLower(strings.TrimSpace(req.Kind))
+	if kind == "model" {
+		return al.handleInternalModelCallback(ctx, req)
+	}
+	if kind != "session" {
 		return nil, fmt.Errorf("unsupported internal callback")
 	}
 	inbound := bus.NormalizeInboundMessage(bus.InboundMessage{Context: req.Inbound}).Context
@@ -77,7 +82,9 @@ func (al *AgentLoop) handleInternalCallback(
 		active = record.Key
 		page = 0
 	case "rename":
-		return &bus.InternalCallbackResponse{Text: "Gunakan /session rename <nama baru> untuk mengganti nama session aktif."}, nil
+		return &bus.InternalCallbackResponse{
+			Text: "Gunakan /session rename <nama baru> untuk mengganti nama session aktif.",
+		}, nil
 	case "noop":
 		return &bus.InternalCallbackResponse{Text: fmt.Sprintf("Halaman %d", page+1)}, nil
 	case "close":
@@ -106,7 +113,8 @@ func (al *AgentLoop) executeSessionCommand(
 	scope := opts.Dispatch.SessionScope
 	aliases := append([]string(nil), opts.Dispatch.SessionAliases...)
 	active := catalog.ActiveScopedSession(scope, aliases)
-	if strings.TrimSpace(opts.Dispatch.SessionKey) != "" && catalogSessionInScope(catalog, scope, aliases, opts.Dispatch.SessionKey) {
+	if strings.TrimSpace(opts.Dispatch.SessionKey) != "" &&
+		catalogSessionInScope(catalog, scope, aliases, opts.Dispatch.SessionKey) {
 		active = opts.Dispatch.SessionKey
 	}
 
@@ -128,7 +136,9 @@ func (al *AgentLoop) executeSessionCommand(
 		if err := catalog.RenameScopedSession(scope, aliases, active, req.Argument); err != nil {
 			return nil, err
 		}
-		return paragraphContent("Nama session berhasil diubah menjadi: " + session.SanitizeSessionName(req.Argument)), nil
+		return paragraphContent(
+			"Nama session berhasil diubah menjadi: " + session.SanitizeSessionName(req.Argument),
+		), nil
 	case "use":
 		record, err := catalog.ResolveScopedSelector(scope, aliases, req.Argument)
 		if err != nil {
@@ -143,7 +153,12 @@ func (al *AgentLoop) executeSessionCommand(
 	}
 }
 
-func catalogSessionInScope(catalog session.ScopedSessionStore, scope *session.SessionScope, aliases []string, key string) bool {
+func catalogSessionInScope(
+	catalog session.ScopedSessionStore,
+	scope *session.SessionScope,
+	aliases []string,
+	key string,
+) bool {
 	records, err := catalog.ListScopedSessions(scope, aliases)
 	if err != nil {
 		return false
@@ -192,13 +207,19 @@ func buildSessionListContent(
 		if record.Key == active {
 			no = "✅" + no
 		}
-		rows = append(rows, []string{no, record.Name, strconv.Itoa(record.MessageCount), compactSessionTime(record.UpdatedAt)})
+		rows = append(
+			rows,
+			[]string{no, record.Name, strconv.Itoa(record.MessageCount), compactSessionTime(record.UpdatedAt)},
+		)
 		entries = append(entries, bus.InteractionEntry{Label: strconv.Itoa(i + 1), Action: "select", Value: record.Key})
 	}
 	if page > 0 {
 		entries = append(entries, bus.InteractionEntry{Label: "◀️", Action: "page", Value: strconv.Itoa(page - 1)})
 	}
-	entries = append(entries, bus.InteractionEntry{Label: fmt.Sprintf("Halaman %d/%d", page+1, pages), Action: "noop", Value: ""})
+	entries = append(
+		entries,
+		bus.InteractionEntry{Label: fmt.Sprintf("Halaman %d/%d", page+1, pages), Action: "noop", Value: ""},
+	)
 	if page+1 < pages {
 		entries = append(entries, bus.InteractionEntry{Label: "▶️", Action: "page", Value: strconv.Itoa(page + 1)})
 	}
@@ -236,7 +257,12 @@ func buildSessionListContent(
 	}
 }
 
-func buildCurrentSessionContent(catalog session.ScopedSessionStore, scope *session.SessionScope, aliases []string, active string) *bus.StructuredContent {
+func buildCurrentSessionContent(
+	catalog session.ScopedSessionStore,
+	scope *session.SessionScope,
+	aliases []string,
+	active string,
+) *bus.StructuredContent {
 	records, err := catalog.ListScopedSessions(scope, aliases)
 	if err != nil {
 		return paragraphContent("Session aktif belum tersedia.")
@@ -245,22 +271,52 @@ func buildCurrentSessionContent(catalog session.ScopedSessionStore, scope *sessi
 		if record.Key != active {
 			continue
 		}
-		fallback := fmt.Sprintf("Session aktif: %s\nID: %s\nPesan: %d\nTerakhir: %s", record.Name, record.ShortID, record.MessageCount, compactSessionTime(record.UpdatedAt))
-		return &bus.StructuredContent{Kind: "session_current", Title: "Session aktif", Tables: []bus.StructuredTable{{
-			Columns: []string{"Properti", "Nilai"}, Rows: [][]string{{"Nama", record.Name}, {"Short-ID", record.ShortID}, {"Pesan", strconv.Itoa(record.MessageCount)}, {"Terakhir", compactSessionTime(record.UpdatedAt)}}, Border: true, Striped: true, Header: true,
-		}}, Fallback: fallback}
+		fallback := fmt.Sprintf(
+			"Session aktif: %s\nID: %s\nPesan: %d\nTerakhir: %s",
+			record.Name,
+			record.ShortID,
+			record.MessageCount,
+			compactSessionTime(record.UpdatedAt),
+		)
+		return &bus.StructuredContent{Kind: "session_current", Title: "Session aktif", Tables: []bus.StructuredTable{
+			{
+				Columns: []string{
+					"Properti",
+					"Nilai",
+				},
+				Rows: [][]string{
+					{"Nama", record.Name},
+					{"Short-ID", record.ShortID},
+					{"Pesan", strconv.Itoa(record.MessageCount)},
+					{"Terakhir", compactSessionTime(record.UpdatedAt)},
+				},
+				Border:  true,
+				Striped: true,
+				Header:  true,
+			},
+		}, Fallback: fallback}
 	}
 	return paragraphContent("Belum ada session aktif dalam scope aman ini.")
 }
 
 func sessionTableFallback(records []session.SessionRecord, active string, offset int) string {
-	lines := []string{"| No | Nama Session | Pesan | Terakhir |", "|---|---|---:|---|"}
+	lines := make([]string, 0, 2+len(records))
+	lines = append(lines, "| No | Nama Session | Pesan | Terakhir |", "|---|---|---:|---|")
 	for i, record := range records {
 		no := strconv.Itoa(offset + i + 1)
 		if record.Key == active {
 			no = "✅" + no
 		}
-		lines = append(lines, fmt.Sprintf("| %s | %s | %d | %s |", escapeTableCell(no), escapeTableCell(record.Name), record.MessageCount, escapeTableCell(compactSessionTime(record.UpdatedAt))))
+		lines = append(
+			lines,
+			fmt.Sprintf(
+				"| %s | %s | %d | %s |",
+				escapeTableCell(no),
+				escapeTableCell(record.Name),
+				record.MessageCount,
+				escapeTableCell(compactSessionTime(record.UpdatedAt)),
+			),
+		)
 	}
 	return strings.Join(lines, "\n")
 }

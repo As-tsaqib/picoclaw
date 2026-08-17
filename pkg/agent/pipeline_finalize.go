@@ -21,6 +21,7 @@ func (p *Pipeline) Finalize(
 	turnStatus TurnEndStatus,
 	finalContent string,
 ) (turnResult, error) {
+	defer closeOwnedSessionModelProvider(exec)
 	al := p.al
 
 	// When allResponsesHandled=true, ExecuteTools already finalized
