@@ -245,16 +245,28 @@ func credentialIdentityConflicts(expected, current *AuthCredential) bool {
 	if expected == nil || current == nil {
 		return expected != current
 	}
-	if expectedProvider, currentProvider := canonicalProvider(expected.Provider), canonicalProvider(current.Provider); expectedProvider != "" && currentProvider != "" && expectedProvider != currentProvider {
+
+	expectedProvider := canonicalProvider(expected.Provider)
+	currentProvider := canonicalProvider(current.Provider)
+	if expectedProvider != "" && currentProvider != "" && expectedProvider != currentProvider {
 		return true
 	}
-	if expectedAccount, currentAccount := strings.TrimSpace(expected.AccountID), strings.TrimSpace(current.AccountID); expectedAccount != "" && currentAccount != "" && expectedAccount != currentAccount {
+
+	expectedAccount := strings.TrimSpace(expected.AccountID)
+	currentAccount := strings.TrimSpace(current.AccountID)
+	if expectedAccount != "" && currentAccount != "" && expectedAccount != currentAccount {
 		return true
 	}
-	if expectedEmail, currentEmail := strings.TrimSpace(expected.Email), strings.TrimSpace(current.Email); expectedEmail != "" && currentEmail != "" && !strings.EqualFold(expectedEmail, currentEmail) {
+
+	expectedEmail := strings.TrimSpace(expected.Email)
+	currentEmail := strings.TrimSpace(current.Email)
+	if expectedEmail != "" && currentEmail != "" && !strings.EqualFold(expectedEmail, currentEmail) {
 		return true
 	}
-	if expectedProject, currentProject := strings.TrimSpace(expected.ProjectID), strings.TrimSpace(current.ProjectID); expectedProject != "" && currentProject != "" && expectedProject != currentProject {
+
+	expectedProject := strings.TrimSpace(expected.ProjectID)
+	currentProject := strings.TrimSpace(current.ProjectID)
+	if expectedProject != "" && currentProject != "" && expectedProject != currentProject {
 		return true
 	}
 	return false
