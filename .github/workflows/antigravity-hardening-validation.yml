@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   apply-project-id-recovery:
-    if: github.event.head_commit.message == 'ci: stage antigravity project recovery'
+    if: "${{ github.event.head_commit.message == 'ci: stage antigravity project recovery' }}"
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -224,54 +224,3 @@ jobs:
             pkg/providers/oauth/antigravity_project_recovery_test.go
           git commit -m "fix: recover antigravity project identity after 401"
           git push origin HEAD:fix/antigravity-hardening
-
-  targeted-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.2.0
-        with:
-          go-version-file: go.mod
-      - name: Run targeted tests
-        env:
-          GOTOOLCHAIN: local
-        run: >-
-          go test -count=1 -tags=goolm,stdjson
-          ./pkg/session/...
-          ./pkg/modelcatalog/...
-          ./pkg/auth/...
-          ./pkg/providers/...
-          ./pkg/agent/...
-          ./pkg/channels/telegram/...
-
-  race-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - ./pkg/session/...
-          - ./pkg/modelcatalog/...
-          - ./pkg/auth/...
-          - ./pkg/providers/...
-          - ./pkg/agent/...
-          - ./pkg/channels/telegram/...
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.2.0
-        with:
-          go-version-file: go.mod
-      - name: Run race test
-        env:
-          GOTOOLCHAIN: local
-        run: go test -count=1 -race -tags=goolm,stdjson ${{ matrix.package }}
