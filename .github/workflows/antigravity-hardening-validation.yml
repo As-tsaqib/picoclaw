@@ -1,9 +1,9 @@
 name: Antigravity Hardening Validation
 
 on:
-  push:
+  pull_request:
     branches:
-      - fix/antigravity-hardening
+      - main
 
 permissions:
   contents: read
