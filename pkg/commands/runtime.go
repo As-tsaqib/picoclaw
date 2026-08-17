@@ -19,6 +19,14 @@ type SessionCommandRequest struct {
 
 type SessionCommandHandler func(context.Context, SessionCommandRequest) (*bus.StructuredContent, error)
 
+type ModelCommandRequest struct {
+	Operation    string
+	Argument     string
+	LegacySwitch bool
+}
+
+type ModelCommandHandler func(context.Context, ModelCommandRequest) (*bus.StructuredContent, error)
+
 type MCPServerInfo struct {
 	Name      string
 	Enabled   bool
@@ -92,4 +100,5 @@ type Runtime struct {
 	CheckpointResume   func(id string) (string, error)
 	CheckpointForget   func(id string) (string, error)
 	SessionCommand     SessionCommandHandler
+	ModelCommand       ModelCommandHandler
 }

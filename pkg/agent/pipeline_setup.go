@@ -160,5 +160,8 @@ func (p *Pipeline) SetupTurn(ctx context.Context, ts *turnState) (*turnExecution
 	exec.activeProvider = activeProvider
 	exec.usedLight = usedLight
 
+	if err := p.al.applySessionModelOverride(ctx, ts, exec); err != nil {
+		return nil, err
+	}
 	return exec, nil
 }

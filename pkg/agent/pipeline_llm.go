@@ -43,7 +43,7 @@ func (p *Pipeline) CallLLM(
 	webSearchEnabled := al.cfg.Tools.IsToolEnabled("web") && turnProfileToolAllowed(ts.profile, "web_search")
 	exec.useNativeSearch = webSearchEnabled && al.cfg.Tools.Web.PreferNative &&
 		func() bool {
-			if ns, ok := ts.agent.Provider.(providers.NativeSearchCapable); ok {
+			if ns, ok := exec.activeProvider.(providers.NativeSearchCapable); ok {
 				return ns.SupportsNativeSearch()
 			}
 			return false
@@ -160,7 +160,10 @@ func (p *Pipeline) CallLLM(
 	}
 
 	// LLM call closure with fallback support
-	callLLM := func(messagesForCall []providers.Message, toolDefsForCall []providers.ToolDefinition) (*providers.LLMResponse, error) {
+	callLLM := func(
+		messagesForCall []providers.Message,
+		toolDefsForCall []providers.ToolDefinition,
+	) (*providers.LLMResponse, error) {
 		providerCtx, providerCancel := context.WithCancel(turnCtx)
 		ts.setProviderCancel(providerCancel)
 		defer func() {
@@ -189,8 +192,7 @@ func (p *Pipeline) CallLLM(
 				ts.agent,
 				exec.activeProvider,
 				exec.activeCandidates,
-				candidate.Provider,
-				candidate.Model,
+				candidate,
 			)
 			if err != nil {
 				return nil, err
@@ -708,16 +710,22 @@ func providerForFallbackCandidate(
 	agent *AgentInstance,
 	activeProvider providers.LLMProvider,
 	activeCandidates []providers.FallbackCandidate,
-	provider string,
-	model string,
+	candidate providers.FallbackCandidate,
 ) (providers.LLMProvider, error) {
+	if len(activeCandidates) > 0 && candidate.StableKey() == activeCandidates[0].StableKey() {
+		if activeProvider == nil {
+			return nil, fmt.Errorf("primary model %q has no active provider", candidate.Model)
+		}
+		return activeProvider, nil
+	}
 	if agent != nil {
-		if cp, ok := agent.CandidateProviders[providers.ModelKey(provider, model)]; ok && cp != nil {
+		key := providers.ModelKey(candidate.Provider, candidate.Model)
+		if cp, ok := agent.CandidateProviders[key]; ok && cp != nil {
 			return cp, nil
 		}
 	}
 	if activeProvider == nil {
-		return nil, fmt.Errorf("fallback model %q has no active provider", model)
+		return nil, fmt.Errorf("fallback model %q has no active provider", candidate.Model)
 	}
 	return activeProvider, nil
 }

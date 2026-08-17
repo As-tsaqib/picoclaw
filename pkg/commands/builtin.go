@@ -13,6 +13,7 @@ func BuiltinDefinitions() []Definition {
 		listCommand(),
 		useCommand(),
 		btwCommand(),
+		modelCommand(),
 		switchCommand(),
 		checkCommand(),
 		clearCommand(),

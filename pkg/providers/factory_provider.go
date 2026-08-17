@@ -375,6 +375,9 @@ func finalizeProviderFromConfig(
 ) (LLMProvider, string, error) {
 	wrapped, err := wrapProviderWithToolSchemaTransform(provider, cfg.ToolSchemaTransform)
 	if err != nil {
+		if stateful, ok := provider.(StatefulProvider); ok {
+			stateful.Close()
+		}
 		return nil, "", err
 	}
 	return wrapped, modelID, nil

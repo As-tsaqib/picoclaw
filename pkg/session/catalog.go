@@ -39,6 +39,7 @@ type SessionRecord struct {
 type catalogStore interface {
 	GetSessionMeta(ctx context.Context, sessionKey string) (memory.SessionMeta, error)
 	UpsertSessionMeta(ctx context.Context, sessionKey string, scope json.RawMessage, aliases []string) error
+	DeleteSession(ctx context.Context, sessionKey string) error
 	SetSessionName(ctx context.Context, sessionKey, name, source string, autoNamePending bool) error
 	SetSessionNameIfEmpty(ctx context.Context, sessionKey, name string) (bool, error)
 	GetActiveSession(ctx context.Context, routeSignature string) (string, error)
@@ -163,6 +164,60 @@ func (b *JSONLBackend) RenameScopedSession(
 		return ErrSessionNotInScope
 	}
 	return store.SetSessionName(context.Background(), sessionKey, cleanName, "custom", false)
+}
+
+func (b *JSONLBackend) RemoveScopedSession(
+	scope *SessionScope,
+	routeAliases []string,
+	sessionKey string,
+) error {
+	store, err := b.catalogStore()
+	if err != nil {
+		return err
+	}
+	sessionKey = b.resolveSessionKey(strings.TrimSpace(sessionKey))
+	if !b.sessionBelongsToScope(sessionKey, scope, routeAliases) {
+		return ErrSessionNotInScope
+	}
+
+	// Clear the credential-free model preference as part of removing the
+	// session. Preserve it if deleting the actual session data fails so a
+	// transient filesystem error cannot partially change the live session.
+	var previousOverride json.RawMessage
+	var hadOverride bool
+	if modelStore, ok := b.store.(modelOverrideMetaStore); ok {
+		previousOverride, hadOverride, err = modelStore.GetSessionModelOverride(
+			context.Background(),
+			sessionKey,
+		)
+		if err != nil {
+			return err
+		}
+		if hadOverride {
+			if err := modelStore.ClearSessionModelOverride(context.Background(), sessionKey); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := store.DeleteSession(context.Background(), sessionKey); err != nil {
+		if hadOverride {
+			if modelStore, ok := b.store.(modelOverrideMetaStore); ok {
+				_ = modelStore.SetSessionModelOverride(context.Background(), sessionKey, previousOverride)
+			}
+		}
+		return err
+	}
+	active, activeErr := store.GetActiveSession(context.Background(), routeSignature(scope))
+	if activeErr != nil {
+		return activeErr
+	}
+	if active == sessionKey {
+		if err := store.ClearActiveSession(context.Background(), routeSignature(scope)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *JSONLBackend) SetAutomaticSessionName(sessionKey, content string) error {
@@ -395,11 +450,6 @@ func (b *JSONLBackend) sessionBelongsToScope(
 	return false
 }
 
-func isLegacyMainSession(key string) bool {
-	parsed := ParseLegacyAgentSessionKey(key)
-	return parsed != nil && strings.EqualFold(strings.TrimSpace(parsed.Rest), "main")
-}
-
 func containsSessionRecord(records []SessionRecord, key string) bool {
 	for _, record := range records {
 		if record.Key == key {
@@ -438,7 +488,8 @@ func visibleSessionStats(history []providers.Message) (int, time.Time) {
 		case "user":
 			visible = strings.TrimSpace(message.Content) != "" || len(message.Media) > 0 || len(message.Attachments) > 0
 		case "assistant":
-			visible = strings.TrimSpace(message.Content) != "" && len(message.ToolCalls) == 0 && strings.TrimSpace(message.ToolCallID) == ""
+			visible = strings.TrimSpace(message.Content) != "" && len(message.ToolCalls) == 0 &&
+				strings.TrimSpace(message.ToolCallID) == ""
 		}
 		if !visible {
 			continue

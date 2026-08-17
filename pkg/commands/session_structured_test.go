@@ -22,18 +22,24 @@ func TestSessionCommandDispatchesAllSupportedForms(t *testing.T) {
 		{text: "/session new", operation: "new"},
 		{text: "/session new Watchdog Gateway", operation: "new", argument: "Watchdog Gateway"},
 		{text: "/session rename Telegram Config", operation: "rename", argument: "Telegram Config"},
+		{text: "/session remove", operation: "remove"},
 		{text: "/session use a1b2c3d4", operation: "use", argument: "a1b2c3d4"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.text, func(t *testing.T) {
 			var got SessionCommandRequest
-			rt := &Runtime{SessionCommand: func(_ context.Context, req SessionCommandRequest) (*bus.StructuredContent, error) {
-				got = req
-				return &bus.StructuredContent{Kind: "paragraph", Fallback: "ok"}, nil
-			}}
+			rt := &Runtime{
+				SessionCommand: func(_ context.Context, req SessionCommandRequest) (*bus.StructuredContent, error) {
+					got = req
+					return &bus.StructuredContent{Kind: "paragraph", Fallback: "ok"}, nil
+				},
+			}
 			var structured bus.StructuredContent
-			result := NewExecutor(NewRegistry([]Definition{sessionCommand()}), rt).Execute(context.Background(), Request{
+			result := NewExecutor(
+				NewRegistry([]Definition{sessionCommand()}),
+				rt,
+			).Execute(context.Background(), Request{
 				Channel: "telegram", Text: tt.text,
 				ReplyStructured: func(content bus.StructuredContent) error {
 					structured = content

@@ -31,6 +31,25 @@ func TestSwitchModel_Success(t *testing.T) {
 	}
 }
 
+func TestSwitchModel_PreservesSpacedAlias(t *testing.T) {
+	var selected string
+	rt := &Runtime{SwitchModel: func(value string) (string, error) {
+		selected = value
+		return "old-model", nil
+	}}
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
+	result := ex.Execute(context.Background(), Request{
+		Text:  "/switch model to Team Account Model",
+		Reply: func(string) error { return nil },
+	})
+	if result.Outcome != OutcomeHandled || result.Err != nil {
+		t.Fatalf("result = %+v", result)
+	}
+	if selected != "Team Account Model" {
+		t.Fatalf("selected = %q", selected)
+	}
+}
+
 func TestSwitchModel_MissingToKeyword(t *testing.T) {
 	rt := &Runtime{
 		SwitchModel: func(value string) (string, error) {

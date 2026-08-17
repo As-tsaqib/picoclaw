@@ -3,8 +3,10 @@ package providers
 import (
 	"context"
 	"reflect"
+	"sync/atomic"
 	"testing"
 
+	"github.com/As-tsaqib/picoclaw/pkg/config"
 	providercommon "github.com/As-tsaqib/picoclaw/pkg/providers/common"
 )
 
@@ -25,6 +27,26 @@ func (p *toolCaptureProvider) Chat(
 
 func (p *toolCaptureProvider) GetDefaultModel() string {
 	return "test"
+}
+
+type statefulToolCaptureProvider struct {
+	toolCaptureProvider
+	closes atomic.Int32
+}
+
+func (p *statefulToolCaptureProvider) Close() { p.closes.Add(1) }
+
+func TestFinalizeProviderClosesStatefulProviderOnTransformValidationFailure(t *testing.T) {
+	provider := &statefulToolCaptureProvider{}
+	_, _, err := finalizeProviderFromConfig(provider, "test", &config.ModelConfig{
+		ToolSchemaTransform: "invalid",
+	})
+	if err == nil {
+		t.Fatal("expected invalid transform error")
+	}
+	if got := provider.closes.Load(); got != 1 {
+		t.Fatalf("Close calls = %d, want 1", got)
+	}
 }
 
 func TestWrapProviderWithToolSchemaTransform_DisabledPassesToolsThrough(t *testing.T) {

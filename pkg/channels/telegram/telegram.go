@@ -77,6 +77,8 @@ type TelegramChannel struct {
 	internalCallbackHandler bus.InternalCallbackHandler
 	sessionMenuMu           sync.Mutex
 	sessionMenus            map[string]telegramSessionMenu
+	sessionRenameMu         sync.Mutex
+	sessionRenamePrompts    map[telegramSessionRenamePromptKey]telegramSessionRenamePrompt
 }
 
 type telegramMediaGroup struct {
@@ -151,6 +153,9 @@ func NewTelegramChannel(
 		ephemeralRoutes:   make(map[string]telegramEphemeralTarget),
 		ephemeralSessions: make(map[string]string),
 		sessionMenus:      make(map[string]telegramSessionMenu),
+		sessionRenamePrompts: make(
+			map[telegramSessionRenamePromptKey]telegramSessionRenamePrompt,
+		),
 	}
 	ch.progress = channels.NewToolFeedbackAnimator(ch.EditMessage)
 	return ch, nil
@@ -1248,6 +1253,9 @@ func (c *TelegramChannel) handleMessagesWithPrivatePlan(
 	}
 	if message == nil {
 		return fmt.Errorf("message is nil")
+	}
+	if handled, err := c.handlePendingSessionRenameReply(ctx, message); handled || err != nil {
+		return err
 	}
 
 	privatePlan := providedPlan

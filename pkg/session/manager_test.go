@@ -124,8 +124,8 @@ func TestSessionManagerNamedCatalogAndActiveMappingPersist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateScopedSession: %v", err)
 	}
-	if err := sm.SetActiveScopedSession(scope, nil, record.Key); err != nil {
-		t.Fatalf("SetActiveScopedSession: %v", err)
+	if setErr := sm.SetActiveScopedSession(scope, nil, record.Key); setErr != nil {
+		t.Fatalf("SetActiveScopedSession: %v", setErr)
 	}
 
 	reopened := NewSessionManager(dir)
@@ -151,4 +151,61 @@ func TestSessionManagerNamedCatalogAndActiveMappingPersist(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, activeSessionsFilename)); err != nil {
 		t.Fatalf("active mapping missing: %v", err)
 	}
+}
+
+func TestSessionManagerRemoveScopedSessionPersistsFallbackAndCleanup(t *testing.T) {
+	dir := t.TempDir()
+	scope := &SessionScope{
+		Version: ScopeVersionV1, AgentID: "main", Channel: "telegram", Account: "bot-a",
+		Dimensions: []string{"chat"}, Values: map[string]string{"chat": "direct:42"},
+	}
+	sm := NewSessionManager(dir)
+	record, err := sm.CreateScopedSession(scope, "Disposable")
+	if err != nil {
+		t.Fatalf("CreateScopedSession: %v", err)
+	}
+	sm.AddMessage(record.Key, "user", "history")
+	if err := sm.Save(record.Key); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := sm.SetActiveScopedSession(scope, nil, record.Key); err != nil {
+		t.Fatalf("SetActiveScopedSession: %v", err)
+	}
+	if err := sm.SetModelOverride(record.Key, ModelOverride{
+		Provider: "openai", Model: "gpt-test", ConfigRef: "cfg:v1:test",
+	}); err != nil {
+		t.Fatalf("SetModelOverride: %v", err)
+	}
+
+	if err := sm.RemoveScopedSession(scope, nil, record.Key); err != nil {
+		t.Fatalf("RemoveScopedSession: %v", err)
+	}
+	if got := sm.ActiveScopedSession(scope, nil); got != BuildSessionKey(*scope) {
+		t.Fatalf("active fallback = %q", got)
+	}
+	if history := sm.GetHistory(record.Key); len(history) != 0 {
+		t.Fatalf("removed history length = %d", len(history))
+	}
+	if _, found, err := sm.GetModelOverride(record.Key); err != nil || found {
+		t.Fatalf("removed model override found=%t err=%v", found, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, sanitizeFilename(record.Key)+".json")); !os.IsNotExist(err) {
+		t.Fatalf("removed session file still exists: %v", err)
+	}
+
+	reopened := NewSessionManager(dir)
+	for _, got := range mustListScopedSessions(t, reopened, scope) {
+		if got.Key == record.Key {
+			t.Fatal("removed session reappeared after reopen")
+		}
+	}
+}
+
+func mustListScopedSessions(t *testing.T, sm *SessionManager, scope *SessionScope) []SessionRecord {
+	t.Helper()
+	records, err := sm.ListScopedSessions(scope, nil)
+	if err != nil {
+		t.Fatalf("ListScopedSessions: %v", err)
+	}
+	return records
 }
