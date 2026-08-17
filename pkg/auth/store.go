@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/As-tsaqib/picoclaw/pkg/config"
@@ -25,6 +26,8 @@ type AuthCredential struct {
 type AuthStore struct {
 	Credentials map[string]*AuthCredential `json:"credentials"`
 }
+
+var authStoreMu sync.RWMutex
 
 const (
 	providerGoogleAntigravity = "google-antigravity"
@@ -168,7 +171,7 @@ func normalizeStore(store *AuthStore) {
 	store.Credentials = normalized
 }
 
-func LoadStore() (*AuthStore, error) {
+func loadStoreUnlocked() (*AuthStore, error) {
 	path := authFilePath()
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -186,7 +189,7 @@ func LoadStore() (*AuthStore, error) {
 	return &store, nil
 }
 
-func SaveStore(store *AuthStore) error {
+func saveStoreUnlocked(store *AuthStore) error {
 	path := authFilePath()
 	data, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
@@ -197,8 +200,23 @@ func SaveStore(store *AuthStore) error {
 	return fileutil.WriteFileAtomic(path, data, 0o600)
 }
 
+func LoadStore() (*AuthStore, error) {
+	authStoreMu.RLock()
+	defer authStoreMu.RUnlock()
+	return loadStoreUnlocked()
+}
+
+func SaveStore(store *AuthStore) error {
+	authStoreMu.Lock()
+	defer authStoreMu.Unlock()
+	return saveStoreUnlocked(store)
+}
+
 func GetCredential(provider string) (*AuthCredential, error) {
-	store, err := LoadStore()
+	authStoreMu.RLock()
+	defer authStoreMu.RUnlock()
+
+	store, err := loadStoreUnlocked()
 	if err != nil {
 		return nil, err
 	}
@@ -206,15 +224,10 @@ func GetCredential(provider string) (*AuthCredential, error) {
 	if !ok {
 		return nil, nil
 	}
-	return cred, nil
+	return cloneCredential(cred), nil
 }
 
-func SetCredential(provider string, cred *AuthCredential) error {
-	store, err := LoadStore()
-	if err != nil {
-		return err
-	}
-
+func normalizedCredential(provider string, cred *AuthCredential) *AuthCredential {
 	canonical := canonicalProvider(provider)
 	normalized := cloneCredential(cred)
 	if normalized != nil {
@@ -223,21 +236,80 @@ func SetCredential(provider string, cred *AuthCredential) error {
 			normalized.Provider = canonical
 		}
 	}
+	return normalized
+}
 
+func SetCredential(provider string, cred *AuthCredential) error {
+	authStoreMu.Lock()
+	defer authStoreMu.Unlock()
+
+	store, err := loadStoreUnlocked()
+	if err != nil {
+		return err
+	}
+	store.Credentials[canonicalProvider(provider)] = normalizedCredential(provider, cred)
+	return saveStoreUnlocked(store)
+}
+
+// UpdateCredentialIfCurrent atomically replaces a credential only if the
+// stored access/refresh token generation still matches expected. It is used for
+// metadata updates that must not overwrite a concurrently rotated OAuth token.
+func UpdateCredentialIfCurrent(
+	provider string,
+	expected, replacement *AuthCredential,
+) (*AuthCredential, bool, error) {
+	return replaceCredentialIfCurrent(provider, expected, replacement)
+}
+
+// replaceCredentialIfCurrent atomically replaces provider's credential only when
+// the stored token generation still matches expected. The authoritative stored
+// credential is returned when another refresh won the race first.
+func replaceCredentialIfCurrent(
+	provider string,
+	expected, replacement *AuthCredential,
+) (*AuthCredential, bool, error) {
+	authStoreMu.Lock()
+	defer authStoreMu.Unlock()
+
+	store, err := loadStoreUnlocked()
+	if err != nil {
+		return nil, false, err
+	}
+	canonical := canonicalProvider(provider)
+	current := store.Credentials[canonical]
+	if current == nil {
+		return nil, false, nil
+	}
+	if expected == nil ||
+		current.AccessToken != expected.AccessToken ||
+		current.RefreshToken != expected.RefreshToken {
+		return cloneCredential(current), false, nil
+	}
+
+	normalized := normalizedCredential(provider, replacement)
 	store.Credentials[canonical] = normalized
-	return SaveStore(store)
+	if err := saveStoreUnlocked(store); err != nil {
+		return nil, false, err
+	}
+	return cloneCredential(normalized), true, nil
 }
 
 func DeleteCredential(provider string) error {
-	store, err := LoadStore()
+	authStoreMu.Lock()
+	defer authStoreMu.Unlock()
+
+	store, err := loadStoreUnlocked()
 	if err != nil {
 		return err
 	}
 	delete(store.Credentials, canonicalProvider(provider))
-	return SaveStore(store)
+	return saveStoreUnlocked(store)
 }
 
 func DeleteAllCredentials() error {
+	authStoreMu.Lock()
+	defer authStoreMu.Unlock()
+
 	path := authFilePath()
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err

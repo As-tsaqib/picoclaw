@@ -19,6 +19,8 @@ import (
 
 var ErrUnsupported = errors.New("model discovery unsupported")
 
+var antigravityOAuthConfig = auth.GoogleAntigravityOAuthConfig
+
 type Model struct {
 	ID      string
 	OwnedBy string
@@ -279,38 +281,70 @@ func fetchAntigravity(ctx context.Context, client *http.Client, mc *config.Model
 	if cred == nil {
 		return nil, fmt.Errorf("not logged in to antigravity")
 	}
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	if cred.NeedsRefresh() && cred.RefreshToken != "" {
-		refreshed, refreshErr := auth.RefreshAccessTokenContext(ctx, cred, auth.GoogleAntigravityOAuthConfig())
-		if refreshErr == nil {
-			refreshed.Email = cred.Email
-			if refreshed.ProjectID == "" {
-				refreshed.ProjectID = cred.ProjectID
-			}
-			_ = auth.SetCredential("google-antigravity", refreshed)
-			cred = refreshed
-		} else if ctx.Err() != nil {
-			return nil, ctx.Err()
+
+	oauthCfg := antigravityOAuthConfig()
+	refreshed, refreshErr := auth.EnsureFreshCredentialContext(
+		ctx,
+		"google-antigravity",
+		cred,
+		oauthCfg,
+		client,
+		5*time.Minute,
+	)
+	if refreshErr == nil {
+		cred = refreshed
+	} else {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// A near-expiry refresh is opportunistic: keep using a still-valid token
+		// and let an actual 401 trigger bounded recovery. An already-expired
+		// credential cannot safely continue.
+		if cred.IsExpired() {
+			return nil, fmt.Errorf("refreshing antigravity credentials: %w", refreshErr)
 		}
 	}
 	if strings.TrimSpace(cred.ProjectID) == "" {
 		return nil, fmt.Errorf("antigravity project ID is unavailable")
 	}
-	items, err := providers.FetchAntigravityModelsWithClientContext(
-		ctx,
-		client,
-		cred.AccessToken,
-		cred.ProjectID,
-		mc.CustomHeaders,
-		mc.UserAgent,
-	)
+
+	fetch := func(current *auth.AuthCredential) ([]providers.AntigravityModelInfo, error) {
+		return providers.FetchAntigravityModelsAtBaseURLWithClientContext(
+			ctx,
+			client,
+			mc.APIBase,
+			current.AccessToken,
+			current.ProjectID,
+			mc.CustomHeaders,
+			mc.UserAgent,
+		)
+	}
+
+	items, err := fetch(cred)
+	if providers.IsAntigravityUnauthorized(err) {
+		recovered, refreshErr := auth.RefreshCredentialAfterUnauthorizedContext(
+			ctx,
+			"google-antigravity",
+			cred,
+			oauthCfg,
+			client,
+		)
+		if refreshErr != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			return nil, fmt.Errorf("recovering antigravity authentication: %w", refreshErr)
+		}
+		cred = recovered
+		items, err = fetch(cred) // exactly one retry after auth recovery
+	}
 	if err != nil {
 		return nil, err
 	}
+
 	out := make([]Model, 0, len(items))
 	for _, item := range items {
 		ownedBy := "google"
