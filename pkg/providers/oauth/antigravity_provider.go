@@ -9,15 +9,16 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
-
-	"golang.org/x/sync/singleflight"
 
 	"github.com/As-tsaqib/picoclaw/pkg/auth"
 	"github.com/As-tsaqib/picoclaw/pkg/logger"
 	"github.com/As-tsaqib/picoclaw/pkg/providers/common"
 )
+
+var antigravityOAuthConfig = auth.GoogleAntigravityOAuthConfig
 
 const (
 	antigravityBaseURL      = "https://cloudcode-pa.googleapis.com"
@@ -32,24 +33,89 @@ const (
 	antigravityRefreshSkew  = 50 * time.Minute
 )
 
-var antigravityRefreshGroup singleflight.Group
-
 // AntigravityProvider implements LLMProvider using Google's Cloud Code Assist (Antigravity) API.
 // This provider authenticates via Google OAuth and provides access to models like Claude and Gemini
 // through Google's infrastructure.
 type AntigravityProvider struct {
-	tokenSource func() (string, string, error) // Returns (accessToken, projectID, error)
-	httpClient  *http.Client
+	httpClient    *http.Client
+	authClient    *http.Client
+	baseURL       string
+	customHeaders map[string]string
+	userAgent     string
 }
 
 // NewAntigravityProvider creates a new Antigravity provider using stored auth credentials.
 func NewAntigravityProvider() *AntigravityProvider {
-	return &AntigravityProvider{
-		tokenSource: createAntigravityTokenSource(),
-		httpClient: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+	provider, err := NewAntigravityProviderWithConfig("", "", "", 0, nil)
+	if err != nil {
+		// The default constructor has no user-supplied URL or proxy and therefore
+		// cannot fail under normal conditions. Keep the historical no-error API.
+		return &AntigravityProvider{
+			httpClient: &http.Client{Timeout: 120 * time.Second},
+			authClient: &http.Client{Timeout: 15 * time.Second},
+			baseURL:    antigravityBaseURL,
+		}
 	}
+	return provider
+}
+
+// NewAntigravityProviderWithConfig creates an Antigravity provider that honors
+// configured endpoint, proxy, user-agent, timeout, and custom headers. OAuth
+// refresh uses the same proxy transport but a shorter bounded timeout.
+func NewAntigravityProviderWithConfig(
+	apiBase, proxy, userAgent string,
+	requestTimeoutSeconds int,
+	customHeaders map[string]string,
+) (*AntigravityProvider, error) {
+	transport, err := antigravityTransport(proxy)
+	if err != nil {
+		return nil, err
+	}
+	requestTimeout := 120 * time.Second
+	if requestTimeoutSeconds > 0 {
+		requestTimeout = time.Duration(requestTimeoutSeconds) * time.Second
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(apiBase), "/")
+	if baseURL == "" {
+		baseURL = antigravityBaseURL
+	}
+	headers := make(map[string]string, len(customHeaders))
+	for key, value := range customHeaders {
+		headers[key] = value
+	}
+	return &AntigravityProvider{
+		httpClient:    &http.Client{Transport: transport, Timeout: requestTimeout},
+		authClient:    &http.Client{Transport: transport, Timeout: 15 * time.Second},
+		baseURL:       baseURL,
+		customHeaders: headers,
+		userAgent:     strings.TrimSpace(userAgent),
+	}, nil
+}
+
+func antigravityTransport(proxy string) (*http.Transport, error) {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("default HTTP transport is unavailable")
+	}
+	transport := base.Clone()
+	proxy = strings.TrimSpace(proxy)
+	if proxy == "" {
+		return transport, nil
+	}
+	proxyURL, err := url.Parse(proxy)
+	if err != nil {
+		return nil, fmt.Errorf("invalid antigravity proxy: %w", err)
+	}
+	switch strings.ToLower(proxyURL.Scheme) {
+	case "http", "https", "socks5", "socks5h":
+	default:
+		return nil, fmt.Errorf("unsupported antigravity proxy scheme %q", proxyURL.Scheme)
+	}
+	if strings.TrimSpace(proxyURL.Host) == "" {
+		return nil, fmt.Errorf("invalid antigravity proxy: host is required")
+	}
+	transport.Proxy = http.ProxyURL(proxyURL)
+	return transport, nil
 }
 
 // Chat implements LLMProvider.Chat using the Cloud Code Assist v1internal API.
@@ -62,7 +128,10 @@ func (p *AntigravityProvider) Chat(
 	model string,
 	options map[string]any,
 ) (*LLMResponse, error) {
-	accessToken, projectID, err := p.tokenSource()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cred, err := p.credential(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("antigravity auth: %w", err)
 	}
@@ -70,89 +139,136 @@ func (p *AntigravityProvider) Chat(
 	if model == "" || model == "antigravity" || model == "google-antigravity" {
 		model = antigravityDefaultModel
 	}
-	// Strip provider prefixes if present
 	model = strings.TrimPrefix(model, "google-antigravity/")
 	model = strings.TrimPrefix(model, "antigravity/")
 
 	logger.DebugCF("provider.antigravity", "Starting chat", map[string]any{
 		"model":     model,
-		"project":   projectID,
+		"project":   cred.ProjectID,
 		"requestId": fmt.Sprintf("agent-%d-%s", time.Now().UnixMilli(), randomString(9)),
 	})
 
-	// Build the inner Gemini-format request
 	innerRequest := p.buildRequest(messages, tools, model, options)
-
-	// Wrap in v1internal envelope (matches pi-ai SDK format)
 	envelope := map[string]any{
-		"project":     projectID,
+		"project":     cred.ProjectID,
 		"model":       model,
 		"request":     innerRequest,
 		"requestType": "agent",
 		"userAgent":   antigravityUserAgent,
 		"requestId":   fmt.Sprintf("agent-%d-%s", time.Now().UnixMilli(), randomString(9)),
 	}
-
 	bodyBytes, err := json.Marshal(envelope)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
 
-	// Build API URL — uses Cloud Code Assist v1internal streaming endpoint
-	apiURL := fmt.Sprintf("%s/v1internal:streamGenerateContent?alt=sse", antigravityBaseURL)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(bodyBytes))
+	statusCode, respBody, err := p.doChatRequest(ctx, cred.AccessToken, bodyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return nil, err
+	}
+	if statusCode == http.StatusUnauthorized {
+		recovered, refreshErr := auth.RefreshCredentialAfterUnauthorizedContext(
+			ctx,
+			"google-antigravity",
+			cred,
+			antigravityOAuthConfig(),
+			p.authHTTPClient(),
+		)
+		if refreshErr != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			return nil, fmt.Errorf("antigravity auth recovery: %w", refreshErr)
+		}
+		cred = recovered
+		statusCode, respBody, err = p.doChatRequest(ctx, cred.AccessToken, bodyBytes)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// Headers matching the pi-ai SDK antigravity format
-	clientMetadata, _ := json.Marshal(map[string]string{
-		"ideType": "ANTIGRAVITY",
-	})
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("User-Agent", fmt.Sprintf("antigravity/%s linux/amd64", antigravityVersion))
-	req.Header.Set("X-Goog-Api-Client", antigravityXGoogClient)
-	req.Header.Set("Client-Metadata", string(clientMetadata))
-
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("antigravity API call: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
+	if statusCode != http.StatusOK {
 		logger.ErrorCF("provider.antigravity", "API call failed", map[string]any{
-			"status_code": resp.StatusCode,
-			"response":    string(respBody),
+			"status_code": statusCode,
 			"model":       model,
 		})
-
-		return nil, p.parseAntigravityError(resp.StatusCode, respBody)
+		return nil, p.parseAntigravityError(statusCode, respBody)
 	}
 
-	// Response is always SSE from streamGenerateContent — each line is "data: {...}"
-	// with a "response" wrapper containing the standard Gemini response
 	llmResp, err := p.parseSSEResponse(string(respBody))
 	if err != nil {
 		return nil, err
 	}
-
-	// Check for empty response (some models might return valid success but empty text)
 	if llmResp.Content == "" && len(llmResp.ToolCalls) == 0 {
 		return nil, fmt.Errorf(
 			"antigravity: model returned an empty response (this model might be invalid or restricted)",
 		)
 	}
-
 	return llmResp, nil
+}
+
+func (p *AntigravityProvider) doChatRequest(
+	ctx context.Context,
+	accessToken string,
+	body []byte,
+) (int, []byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	apiURL := strings.TrimRight(p.apiBaseURL(), "/") + "/v1internal:streamGenerateContent?alt=sse"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, fmt.Errorf("creating request: %w", err)
+	}
+	for key, value := range p.customHeaders {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			req.Header.Set(key, value)
+		}
+	}
+	clientMetadata, _ := json.Marshal(map[string]string{"ideType": "ANTIGRAVITY"})
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	userAgent := strings.TrimSpace(p.userAgent)
+	if userAgent == "" {
+		userAgent = fmt.Sprintf("antigravity/%s linux/amd64", antigravityVersion)
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("X-Goog-Api-Client", antigravityXGoogClient)
+	req.Header.Set("Client-Metadata", string(clientMetadata))
+
+	resp, err := p.requestHTTPClient().Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("antigravity API call: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, fmt.Errorf("reading response: %w", err)
+	}
+	return resp.StatusCode, respBody, nil
+}
+
+func (p *AntigravityProvider) requestHTTPClient() *http.Client {
+	if p != nil && p.httpClient != nil {
+		return p.httpClient
+	}
+	return &http.Client{Timeout: 120 * time.Second}
+}
+
+func (p *AntigravityProvider) authHTTPClient() *http.Client {
+	if p != nil && p.authClient != nil {
+		return p.authClient
+	}
+	return &http.Client{Timeout: 15 * time.Second}
+}
+
+func (p *AntigravityProvider) apiBaseURL() string {
+	if p != nil && strings.TrimSpace(p.baseURL) != "" {
+		return p.baseURL
+	}
+	return antigravityBaseURL
 }
 
 // GetDefaultModel returns the default model identifier.
@@ -452,142 +568,190 @@ func extractPartThoughtSignature(thoughtSignature string, thoughtSignatureSnake 
 	return ""
 }
 
-// --- Token source ---
+// --- Credential handling ---
 
-func createAntigravityTokenSource() func() (string, string, error) {
-	return func() (string, string, error) {
-		cred, err := auth.GetCredential("google-antigravity")
-		if err != nil {
-			return "", "", fmt.Errorf("loading auth credentials: %w", err)
-		}
-		if cred == nil {
-			return "", "", fmt.Errorf(
-				"no credentials for google-antigravity. Run: picoclaw auth login --provider google-antigravity",
-			)
-		}
-
-		// Refresh if needed
-		needsRefresh := !cred.ExpiresAt.IsZero() && time.Now().Add(antigravityRefreshSkew).After(cred.ExpiresAt)
-		if needsRefresh && cred.RefreshToken != "" {
-			result, refreshErr, _ := antigravityRefreshGroup.Do(cred.RefreshToken, func() (any, error) {
-				current, err := auth.GetCredential("google-antigravity")
-				if err != nil {
-					return nil, fmt.Errorf("loading current credentials: %w", err)
-				}
-				if current != nil {
-					if current.RefreshToken != cred.RefreshToken {
-						return current, nil
-					}
-					cred = current
-				}
-
-				stillNeedsRefresh := !cred.ExpiresAt.IsZero() &&
-					time.Now().Add(antigravityRefreshSkew).After(cred.ExpiresAt)
-				if !stillNeedsRefresh {
-					return cred, nil
-				}
-
-				oauthCfg := auth.GoogleAntigravityOAuthConfig()
-				refreshed, err := auth.RefreshAccessToken(cred, oauthCfg)
-				if err != nil {
-					return nil, err
-				}
-				refreshed.Email = cred.Email
-				if refreshed.ProjectID == "" {
-					refreshed.ProjectID = cred.ProjectID
-				}
-				if err := auth.SetCredential("google-antigravity", refreshed); err != nil {
-					return nil, fmt.Errorf("saving refreshed token: %w", err)
-				}
-				return refreshed, nil
-			})
-			if refreshErr != nil {
-				return "", "", fmt.Errorf("refreshing token: %w", refreshErr)
-			}
-			refreshed, ok := result.(*auth.AuthCredential)
-			if !ok || refreshed == nil {
-				return "", "", fmt.Errorf("refreshing token: invalid singleflight result")
-			}
-			cred = refreshed
-		}
-
-		if cred.IsExpired() {
-			return "", "", fmt.Errorf(
-				"antigravity credentials expired. Run: picoclaw auth login --provider google-antigravity",
-			)
-		}
-
-		projectID := cred.ProjectID
-		if projectID == "" {
-			// Try to fetch project ID from API
-			fetchedID, err := FetchAntigravityProjectID(cred.AccessToken)
-			if err != nil {
-				logger.WarnCF("provider.antigravity", "Could not fetch project ID from loadCodeAssist", map[string]any{
-					"error": err.Error(),
-				})
-				return "", "", fmt.Errorf("antigravity: project ID discovery failed: %w", err)
-			}
-			projectID = fetchedID
-			cred.ProjectID = projectID
-			_ = auth.SetCredential("google-antigravity", cred)
-		}
-
-		return cred.AccessToken, projectID, nil
+func (p *AntigravityProvider) credential(ctx context.Context) (*auth.AuthCredential, error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
+	cred, err := auth.GetCredential("google-antigravity")
+	if err != nil {
+		return nil, fmt.Errorf("loading auth credentials: %w", err)
+	}
+	if cred == nil {
+		return nil, fmt.Errorf(
+			"no credentials for google-antigravity. Run: picoclaw auth login --provider google-antigravity",
+		)
+	}
+
+	refreshed, refreshErr := auth.EnsureFreshCredentialContext(
+		ctx,
+		"google-antigravity",
+		cred,
+		antigravityOAuthConfig(),
+		p.authHTTPClient(),
+		antigravityRefreshSkew,
+	)
+	if refreshErr == nil {
+		cred = refreshed
+	} else {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		// Keep a still-valid token usable during a transient refresh outage. A
+		// real 401 below will force generation-aware recovery.
+		if cred.IsExpired() {
+			return nil, fmt.Errorf("refreshing token: %w", refreshErr)
+		}
+	}
+	if cred.IsExpired() {
+		return nil, fmt.Errorf(
+			"antigravity credentials expired. Run: picoclaw auth login --provider google-antigravity",
+		)
+	}
+
+	if strings.TrimSpace(cred.ProjectID) == "" {
+		projectID, recoveredCred, err := p.fetchProjectIDWithRecovery(ctx, cred)
+		if recoveredCred != nil {
+			cred = recoveredCred
+		}
+		if err != nil {
+			logger.WarnCF("provider.antigravity", "Could not fetch project ID from loadCodeAssist", map[string]any{
+				"error": err.Error(),
+			})
+			return nil, fmt.Errorf("antigravity: project ID discovery failed: %w", err)
+		}
+		updated := *cred
+		updated.ProjectID = projectID
+		stored, replaced, err := auth.UpdateCredentialIfCurrent("google-antigravity", cred, &updated)
+		if err != nil {
+			return nil, fmt.Errorf("saving antigravity project identity: %w", err)
+		}
+		if replaced {
+			cred = stored
+		} else if stored != nil {
+			// A concurrent token rotation won. Never overwrite it with metadata
+			// derived from the stale generation.
+			cred = stored
+		}
+	}
+	if strings.TrimSpace(cred.ProjectID) == "" {
+		return nil, fmt.Errorf("antigravity project ID is unavailable")
+	}
+	return cred, nil
 }
 
 // FetchAntigravityProjectID retrieves the Google Cloud project ID from the loadCodeAssist endpoint.
 func FetchAntigravityProjectID(accessToken string) (string, error) {
-	reqBody, _ := json.Marshal(map[string]any{
-		"metadata": map[string]any{
-			"ideType": "ANTIGRAVITY",
-		},
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	return FetchAntigravityProjectIDWithClientContext(
+		ctx,
+		&http.Client{Timeout: 15 * time.Second},
+		antigravityBaseURL,
+		accessToken,
+		nil,
+		"",
+	)
+}
 
-	req, err := http.NewRequest("POST", antigravityBaseURL+"/v1internal:loadCodeAssist", bytes.NewReader(reqBody))
+// FetchAntigravityProjectIDWithClientContext resolves project identity using a
+// bounded, cancellable request path. A configured base URL is also used for
+// onboarding so test/private endpoints remain self-contained.
+func FetchAntigravityProjectIDWithClientContext(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	accessToken string,
+	customHeaders map[string]string,
+	userAgent string,
+) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	} else if client.Timeout <= 0 {
+		clone := *client
+		clone.Timeout = 15 * time.Second
+		client = &clone
+	}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = antigravityBaseURL
+	}
+
+	reqBody, _ := json.Marshal(map[string]any{
+		"metadata": map[string]any{"ideType": "ANTIGRAVITY"},
+	})
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		baseURL+"/v1internal:loadCodeAssist",
+		bytes.NewReader(reqBody),
+	)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", antigravityUserAgent)
-	req.Header.Set("X-Goog-Api-Client", antigravityXGoogClient)
+	applyAntigravityControlHeaders(req, accessToken, customHeaders, userAgent)
 
-	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return "", fmt.Errorf("reading loadCodeAssist response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("loadCodeAssist failed: %s", string(body))
+		return "", &AntigravityHTTPError{Operation: "loadCodeAssist", StatusCode: resp.StatusCode}
 	}
 
 	var loadResp map[string]any
-	if unmarshalErr := json.Unmarshal(body, &loadResp); unmarshalErr != nil {
-		return "", unmarshalErr
+	if err := json.Unmarshal(body, &loadResp); err != nil {
+		return "", fmt.Errorf("decoding loadCodeAssist response: %w", err)
 	}
-
-	projectID := extractCloudAICompanionProject(loadResp)
-	if projectID != "" {
+	if projectID := extractCloudAICompanionProject(loadResp); projectID != "" {
 		return projectID, nil
 	}
 
-	// Project ID not found — attempt onboarding for new accounts
-	tierID := extractDefaultTierID(loadResp)
-	onboardedID, err := OnboardUser(accessToken, tierID)
-	if err != nil {
-		return "", fmt.Errorf("onboardUser failed: %w", err)
+	dailyBaseURL := antigravityDailyBaseURL
+	if baseURL != antigravityBaseURL {
+		dailyBaseURL = baseURL
 	}
-	if onboardedID == "" {
-		return "", fmt.Errorf("no project ID from loadCodeAssist or onboardUser")
+	return OnboardUserWithClientContext(
+		ctx,
+		client,
+		dailyBaseURL,
+		accessToken,
+		extractDefaultTierID(loadResp),
+		customHeaders,
+		userAgent,
+	)
+}
+
+func applyAntigravityControlHeaders(
+	req *http.Request,
+	accessToken string,
+	customHeaders map[string]string,
+	userAgent string,
+) {
+	for key, value := range customHeaders {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			req.Header.Set(key, value)
+		}
 	}
-	return onboardedID, nil
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	if strings.TrimSpace(userAgent) == "" {
+		userAgent = antigravityUserAgent
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("X-Goog-Api-Client", antigravityXGoogClient)
 }
 
 // extractCloudAICompanionProject extracts the project ID from a loadCodeAssist response.
@@ -644,9 +808,40 @@ func extractDefaultTierID(loadResp map[string]any) string {
 // OnboardUser attempts to provision a Cloud Code Assist project for a new user
 // by polling the onboardUser endpoint until the operation completes.
 func OnboardUser(accessToken, tierID string) (string, error) {
-	logger.DebugCF("provider.antigravity", "Onboarding user", map[string]any{
-		"tier_id": tierID,
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	return OnboardUserWithClientContext(
+		ctx,
+		&http.Client{Timeout: 15 * time.Second},
+		antigravityDailyBaseURL,
+		accessToken,
+		tierID,
+		nil,
+		"",
+	)
+}
+
+// OnboardUserWithClientContext polls onboarding while honoring cancellation and
+// the shared project-discovery deadline.
+func OnboardUserWithClientContext(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	accessToken, tierID string,
+	customHeaders map[string]string,
+	userAgent string,
+) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = antigravityDailyBaseURL
+	}
+	logger.DebugCF("provider.antigravity", "Onboarding user", map[string]any{"tier_id": tierID})
 
 	reqBody, _ := json.Marshal(map[string]any{
 		"tier_id": tierID,
@@ -657,53 +852,47 @@ func OnboardUser(accessToken, tierID string) (string, error) {
 		},
 	})
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	const maxAttempts = 5
-
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		logger.DebugCF("provider.antigravity", "onboardUser polling", map[string]any{
 			"attempt": attempt,
 			"max":     maxAttempts,
 		})
 
-		req, err := http.NewRequest(
-			"POST",
-			antigravityDailyBaseURL+"/v1internal:onboardUser",
+		req, err := http.NewRequestWithContext(
+			ctx,
+			http.MethodPost,
+			baseURL+"/v1internal:onboardUser",
 			bytes.NewReader(reqBody),
 		)
 		if err != nil {
 			return "", fmt.Errorf("creating onboardUser request: %w", err)
 		}
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", fmt.Sprintf("%s/%s", antigravityUserAgent, antigravityVersion))
-		req.Header.Set("X-Goog-Api-Client", antigravityXGoogClient)
+		applyAntigravityControlHeaders(req, accessToken, customHeaders, userAgent)
 
 		resp, err := client.Do(req)
 		if err != nil {
 			return "", fmt.Errorf("onboardUser request failed: %w", err)
 		}
-
-		body, err := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		resp.Body.Close()
-
-		if err != nil {
-			return "", fmt.Errorf("reading onboardUser response: %w", err)
+		if readErr != nil {
+			return "", fmt.Errorf("reading onboardUser response: %w", readErr)
 		}
-
 		if resp.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("onboardUser HTTP %d: %s", resp.StatusCode, truncateString(string(body), 200))
+			return "", &AntigravityHTTPError{Operation: "onboardUser", StatusCode: resp.StatusCode}
 		}
 
 		var data map[string]any
 		if err := json.Unmarshal(body, &data); err != nil {
 			return "", fmt.Errorf("decoding onboardUser response: %w", err)
 		}
-
 		if done, ok := data["done"].(bool); ok && done {
 			if responseData, ok := data["response"].(map[string]any); ok {
-				projectID := extractCloudAICompanionProject(responseData)
-				if projectID != "" {
+				if projectID := extractCloudAICompanionProject(responseData); projectID != "" {
 					logger.DebugCF("provider.antigravity", "Onboarding succeeded", map[string]any{
 						"project_id": projectID,
 					})
@@ -712,95 +901,26 @@ func OnboardUser(accessToken, tierID string) (string, error) {
 			}
 			return "", fmt.Errorf("onboardUser completed but no project ID in response")
 		}
-
-		time.Sleep(2 * time.Second)
+		if attempt < maxAttempts {
+			timer := time.NewTimer(2 * time.Second)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return "", ctx.Err()
+			case <-timer.C:
+			}
+		}
 	}
-
 	return "", fmt.Errorf("onboardUser did not complete after %d attempts", maxAttempts)
 }
 
 // FetchAntigravityModels fetches available models from the Cloud Code Assist API.
 func FetchAntigravityModels(accessToken, projectID string) ([]AntigravityModelInfo, error) {
-	reqBody, _ := json.Marshal(map[string]any{
-		"project": projectID,
-	})
-
-	req, err := http.NewRequest("POST", antigravityBaseURL+"/v1internal:fetchAvailableModels", bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", antigravityUserAgent)
-	req.Header.Set("X-Goog-Api-Client", antigravityXGoogClient)
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading fetchAvailableModels response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf(
-			"fetchAvailableModels failed (HTTP %d): %s",
-			resp.StatusCode,
-			truncateString(string(body), 200),
-		)
-	}
-
-	var result struct {
-		Models map[string]struct {
-			DisplayName string `json:"displayName"`
-			QuotaInfo   struct {
-				RemainingFraction any    `json:"remainingFraction"`
-				ResetTime         string `json:"resetTime"`
-				IsExhausted       bool   `json:"isExhausted"`
-			} `json:"quotaInfo"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("parsing models response: %w", err)
-	}
-
-	var models []AntigravityModelInfo
-	for id, info := range result.Models {
-		models = append(models, AntigravityModelInfo{
-			ID:          id,
-			DisplayName: info.DisplayName,
-			IsExhausted: info.QuotaInfo.IsExhausted,
-		})
-	}
-
-	// Ensure gemini-3-flash-preview and gemini-3-flash are in the list if they aren't already
-	hasFlashPreview := false
-	hasFlash := false
-	for _, m := range models {
-		if m.ID == "gemini-3-flash-preview" {
-			hasFlashPreview = true
-		}
-		if m.ID == "gemini-3-flash" {
-			hasFlash = true
-		}
-	}
-	if !hasFlashPreview {
-		models = append(models, AntigravityModelInfo{
-			ID:          "gemini-3-flash-preview",
-			DisplayName: "Gemini 3 Flash (Preview)",
-		})
-	}
-	if !hasFlash {
-		models = append(models, AntigravityModelInfo{
-			ID:          "gemini-3-flash",
-			DisplayName: "Gemini 3 Flash",
-		})
-	}
-
-	return models, nil
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return FetchAntigravityModelsContext(ctx, accessToken, projectID)
 }
 
 type AntigravityModelInfo struct {
@@ -810,13 +930,6 @@ type AntigravityModelInfo struct {
 }
 
 // --- Helpers ---
-
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
 
 func randomString(n int) string {
 	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -828,33 +941,28 @@ func randomString(n int) string {
 }
 
 func (p *AntigravityProvider) parseAntigravityError(statusCode int, body []byte) error {
-	var errResp struct {
-		Error struct {
-			Code    int              `json:"code"`
-			Message string           `json:"message"`
-			Status  string           `json:"status"`
-			Details []map[string]any `json:"details"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(body, &errResp); err != nil {
-		return fmt.Errorf("antigravity API error (HTTP %d): %s", statusCode, truncateString(string(body), 500))
-	}
-
-	msg := errResp.Error.Message
-	if statusCode == 429 {
-		// Try to extract quota reset info
-		for _, detail := range errResp.Error.Details {
-			if typeVal, ok := detail["@type"].(string); ok && strings.HasSuffix(typeVal, "ErrorInfo") {
-				if metadata, ok := detail["metadata"].(map[string]any); ok {
-					if delay, ok := metadata["quotaResetDelay"].(string); ok {
-						return fmt.Errorf("antigravity rate limit exceeded: %s (reset in %s)", msg, delay)
-					}
+	if statusCode == http.StatusTooManyRequests {
+		var errResp struct {
+			Error struct {
+				Details []map[string]any `json:"details"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(body, &errResp) == nil {
+			for _, detail := range errResp.Error.Details {
+				metadata, ok := detail["metadata"].(map[string]any)
+				if !ok {
+					continue
+				}
+				delay, ok := metadata["quotaResetDelay"].(string)
+				if !ok {
+					continue
+				}
+				if _, err := time.ParseDuration(delay); err == nil {
+					return fmt.Errorf("antigravity rate limit exceeded (reset in %s)", delay)
 				}
 			}
 		}
-		return fmt.Errorf("antigravity rate limit exceeded: %s", msg)
+		return fmt.Errorf("antigravity rate limit exceeded")
 	}
-
-	return fmt.Errorf("antigravity API error (%s): %s", errResp.Error.Status, msg)
+	return &AntigravityHTTPError{Operation: "antigravity API", StatusCode: statusCode}
 }

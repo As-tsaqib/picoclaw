@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/As-tsaqib/picoclaw/pkg/config"
@@ -25,6 +26,8 @@ type AuthCredential struct {
 type AuthStore struct {
 	Credentials map[string]*AuthCredential `json:"credentials"`
 }
+
+var authStoreMu sync.RWMutex
 
 const (
 	providerGoogleAntigravity = "google-antigravity"
@@ -168,7 +171,7 @@ func normalizeStore(store *AuthStore) {
 	store.Credentials = normalized
 }
 
-func LoadStore() (*AuthStore, error) {
+func loadStoreUnlocked() (*AuthStore, error) {
 	path := authFilePath()
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -186,7 +189,7 @@ func LoadStore() (*AuthStore, error) {
 	return &store, nil
 }
 
-func SaveStore(store *AuthStore) error {
+func saveStoreUnlocked(store *AuthStore) error {
 	path := authFilePath()
 	data, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
@@ -197,8 +200,23 @@ func SaveStore(store *AuthStore) error {
 	return fileutil.WriteFileAtomic(path, data, 0o600)
 }
 
+func LoadStore() (*AuthStore, error) {
+	authStoreMu.RLock()
+	defer authStoreMu.RUnlock()
+	return loadStoreUnlocked()
+}
+
+func SaveStore(store *AuthStore) error {
+	authStoreMu.Lock()
+	defer authStoreMu.Unlock()
+	return saveStoreUnlocked(store)
+}
+
 func GetCredential(provider string) (*AuthCredential, error) {
-	store, err := LoadStore()
+	authStoreMu.RLock()
+	defer authStoreMu.RUnlock()
+
+	store, err := loadStoreUnlocked()
 	if err != nil {
 		return nil, err
 	}
@@ -206,15 +224,10 @@ func GetCredential(provider string) (*AuthCredential, error) {
 	if !ok {
 		return nil, nil
 	}
-	return cred, nil
+	return cloneCredential(cred), nil
 }
 
-func SetCredential(provider string, cred *AuthCredential) error {
-	store, err := LoadStore()
-	if err != nil {
-		return err
-	}
-
+func normalizedCredential(provider string, cred *AuthCredential) *AuthCredential {
 	canonical := canonicalProvider(provider)
 	normalized := cloneCredential(cred)
 	if normalized != nil {
@@ -223,21 +236,149 @@ func SetCredential(provider string, cred *AuthCredential) error {
 			normalized.Provider = canonical
 		}
 	}
+	return normalized
+}
 
-	store.Credentials[canonical] = normalized
-	return SaveStore(store)
+func SetCredential(provider string, cred *AuthCredential) error {
+	authStoreMu.Lock()
+	defer authStoreMu.Unlock()
+
+	store, err := loadStoreUnlocked()
+	if err != nil {
+		return err
+	}
+	store.Credentials[canonicalProvider(provider)] = normalizedCredential(provider, cred)
+	return saveStoreUnlocked(store)
+}
+
+// UpdateCredentialIfCurrent atomically applies metadata changes only if the
+// stored access/refresh token generation and credential identity still match
+// expected. It performs a three-way merge so an in-flight metadata lookup cannot
+// roll back unrelated metadata that another caller updated concurrently.
+func UpdateCredentialIfCurrent(
+	provider string,
+	expected, replacement *AuthCredential,
+) (*AuthCredential, bool, error) {
+	authStoreMu.Lock()
+	defer authStoreMu.Unlock()
+
+	store, err := loadStoreUnlocked()
+	if err != nil {
+		return nil, false, err
+	}
+	canonical := canonicalProvider(provider)
+	current := store.Credentials[canonical]
+	if current == nil {
+		return nil, false, nil
+	}
+	if !credentialTokenGenerationMatches(expected, current) || credentialIdentityConflicts(expected, current) {
+		return cloneCredential(current), false, nil
+	}
+
+	normalizedExpected := normalizedCredential(provider, expected)
+	normalizedReplacement := normalizedCredential(provider, replacement)
+	if normalizedExpected == nil || normalizedReplacement == nil {
+		return cloneCredential(current), false, nil
+	}
+
+	updated := cloneCredential(current)
+	mergeCredentialMetadataField(&updated.Provider, normalizedExpected.Provider, normalizedReplacement.Provider)
+	mergeCredentialMetadataField(&updated.AuthMethod, normalizedExpected.AuthMethod, normalizedReplacement.AuthMethod)
+	mergeCredentialMetadataField(&updated.AccountID, normalizedExpected.AccountID, normalizedReplacement.AccountID)
+	mergeCredentialMetadataField(&updated.Email, normalizedExpected.Email, normalizedReplacement.Email)
+	mergeCredentialMetadataField(&updated.ProjectID, normalizedExpected.ProjectID, normalizedReplacement.ProjectID)
+
+	store.Credentials[canonical] = updated
+	if err := saveStoreUnlocked(store); err != nil {
+		return nil, false, err
+	}
+	return cloneCredential(updated), true, nil
+}
+
+func mergeCredentialMetadataField(current *string, expected, replacement string) {
+	if current == nil || replacement == expected || *current != expected {
+		return
+	}
+	*current = replacement
+}
+
+// replaceCredentialIfCurrent atomically applies a refreshed token generation
+// only when the stored tokens still match expected. Metadata is preserved from
+// the authoritative current store so an in-flight refresh cannot roll back a
+// concurrent account/project metadata update.
+func replaceCredentialIfCurrent(
+	provider string,
+	expected, replacement *AuthCredential,
+) (*AuthCredential, bool, error) {
+	authStoreMu.Lock()
+	defer authStoreMu.Unlock()
+
+	store, err := loadStoreUnlocked()
+	if err != nil {
+		return nil, false, err
+	}
+	canonical := canonicalProvider(provider)
+	current := store.Credentials[canonical]
+	if current == nil {
+		return nil, false, nil
+	}
+	if !credentialTokenGenerationMatches(expected, current) {
+		return cloneCredential(current), false, nil
+	}
+
+	normalized := normalizedCredential(provider, replacement)
+	if normalized == nil {
+		return nil, false, nil
+	}
+	updated := cloneCredential(current)
+	updated.AccessToken = normalized.AccessToken
+	updated.RefreshToken = normalized.RefreshToken
+	updated.ExpiresAt = normalized.ExpiresAt
+	if updated.Provider == "" {
+		updated.Provider = normalized.Provider
+	}
+	if updated.AuthMethod == "" {
+		updated.AuthMethod = normalized.AuthMethod
+	}
+	if updated.AccountID == "" {
+		updated.AccountID = normalized.AccountID
+	}
+	if updated.Email == "" {
+		updated.Email = normalized.Email
+	}
+	if updated.ProjectID == "" {
+		updated.ProjectID = normalized.ProjectID
+	}
+	store.Credentials[canonical] = updated
+	if err := saveStoreUnlocked(store); err != nil {
+		return nil, false, err
+	}
+	return cloneCredential(updated), true, nil
+}
+
+func credentialTokenGenerationMatches(expected, current *AuthCredential) bool {
+	if expected == nil || current == nil {
+		return expected == current
+	}
+	return current.AccessToken == expected.AccessToken && current.RefreshToken == expected.RefreshToken
 }
 
 func DeleteCredential(provider string) error {
-	store, err := LoadStore()
+	authStoreMu.Lock()
+	defer authStoreMu.Unlock()
+
+	store, err := loadStoreUnlocked()
 	if err != nil {
 		return err
 	}
 	delete(store.Credentials, canonicalProvider(provider))
-	return SaveStore(store)
+	return saveStoreUnlocked(store)
 }
 
 func DeleteAllCredentials() error {
+	authStoreMu.Lock()
+	defer authStoreMu.Unlock()
+
 	path := authFilePath()
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err

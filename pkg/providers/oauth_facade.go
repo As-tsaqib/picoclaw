@@ -15,6 +15,16 @@ func NewAntigravityProvider() *AntigravityProvider {
 	return oauthprovider.NewAntigravityProvider()
 }
 
+func NewAntigravityProviderWithConfig(
+	apiBase, proxy, userAgent string,
+	requestTimeoutSeconds int,
+	customHeaders map[string]string,
+) (*AntigravityProvider, error) {
+	return oauthprovider.NewAntigravityProviderWithConfig(
+		apiBase, proxy, userAgent, requestTimeoutSeconds, customHeaders,
+	)
+}
+
 func NewClaudeProvider(token string) *ClaudeProvider {
 	return oauthprovider.NewClaudeProvider(token)
 }

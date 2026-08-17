@@ -7,12 +7,28 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
+const defaultOAuthRefreshTimeout = 15 * time.Second
+
 // RefreshAccessTokenContext refreshes an OAuth credential while honoring ctx.
-// The legacy RefreshAccessToken API remains unchanged for existing callers.
+// It uses a bounded HTTP client so callers without a deadline still cannot hang
+// indefinitely on the token endpoint.
 func RefreshAccessTokenContext(
 	ctx context.Context,
+	cred *AuthCredential,
+	cfg OAuthProviderConfig,
+) (*AuthCredential, error) {
+	return RefreshAccessTokenWithClientContext(ctx, nil, cred, cfg)
+}
+
+// RefreshAccessTokenWithClientContext is the transport-aware refresh primitive.
+// A supplied client may carry provider-specific proxy settings; its timeout is
+// capped when unset so refresh remains bounded independently of caller behavior.
+func RefreshAccessTokenWithClientContext(
+	ctx context.Context,
+	client *http.Client,
 	cred *AuthCredential,
 	cfg OAuthProviderConfig,
 ) (*AuthCredential, error) {
@@ -24,6 +40,13 @@ func RefreshAccessTokenContext(
 	}
 	if cred.RefreshToken == "" {
 		return nil, fmt.Errorf("no refresh token available")
+	}
+	if client == nil {
+		client = &http.Client{Timeout: defaultOAuthRefreshTimeout}
+	} else if client.Timeout <= 0 {
+		clone := *client
+		clone.Timeout = defaultOAuthRefreshTimeout
+		client = &clone
 	}
 
 	isGoogle := strings.Contains(strings.ToLower(cfg.Issuer), "accounts.google.com") ||
@@ -49,7 +72,7 @@ func RefreshAccessTokenContext(
 		return nil, fmt.Errorf("creating token refresh request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("refreshing token: %w", err)
 	}
@@ -60,6 +83,8 @@ func RefreshAccessTokenContext(
 		return nil, fmt.Errorf("reading token refresh response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		// Token endpoints occasionally echo request metadata. Never surface the
+		// response body because it may contain credentials.
 		return nil, fmt.Errorf("token refresh failed with status %d", resp.StatusCode)
 	}
 

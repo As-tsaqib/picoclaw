@@ -34,3 +34,24 @@ func FetchAntigravityModelsWithClientContext(
 		userAgent,
 	)
 }
+
+// FetchAntigravityModelsAtBaseURLWithClientContext allows model discovery to
+// honor an explicitly configured Antigravity endpoint while retaining the
+// production endpoint when baseURL is empty.
+func FetchAntigravityModelsAtBaseURLWithClientContext(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	accessToken, projectID string,
+	customHeaders map[string]string,
+	userAgent string,
+) ([]AntigravityModelInfo, error) {
+	return oauthprovider.FetchAntigravityModelsAtBaseURLWithClientContext(
+		ctx, client, baseURL, accessToken, projectID, customHeaders, userAgent,
+	)
+}
+
+// IsAntigravityUnauthorized reports whether err is an Antigravity HTTP 401.
+func IsAntigravityUnauthorized(err error) bool {
+	return oauthprovider.IsAntigravityUnauthorized(err)
+}

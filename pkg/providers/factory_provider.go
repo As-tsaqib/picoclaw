@@ -332,7 +332,13 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		), modelID, cfg)
 
 	case "antigravity":
-		return finalizeProviderFromConfig(NewAntigravityProvider(), modelID, cfg)
+		provider, err := NewAntigravityProviderWithConfig(
+			cfg.APIBase, cfg.Proxy, userAgent, cfg.RequestTimeout, cfg.CustomHeaders,
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		return finalizeProviderFromConfig(provider, modelID, cfg)
 
 	case "claude-cli":
 		workspace := cfg.Workspace

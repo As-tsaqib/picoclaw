@@ -436,61 +436,9 @@ func pollDeviceCode(cfg OAuthProviderConfig, deviceAuthID, userCode string) (*Au
 }
 
 func RefreshAccessToken(cred *AuthCredential, cfg OAuthProviderConfig) (*AuthCredential, error) {
-	if cred.RefreshToken == "" {
-		return nil, fmt.Errorf("no refresh token available")
-	}
-
-	isGoogle := strings.Contains(strings.ToLower(cfg.Issuer), "accounts.google.com") ||
-		(cfg.TokenURL != "" && strings.Contains(cfg.TokenURL, "googleapis.com"))
-
-	data := url.Values{
-		"client_id":     {cfg.ClientID},
-		"grant_type":    {"refresh_token"},
-		"refresh_token": {cred.RefreshToken},
-	}
-	if !isGoogle {
-		data.Set("scope", "openid profile email")
-	}
-	if cfg.ClientSecret != "" {
-		data.Set("client_secret", cfg.ClientSecret)
-	}
-
-	tokenURL := cfg.Issuer + "/oauth/token"
-	if cfg.TokenURL != "" {
-		tokenURL = cfg.TokenURL
-	}
-
-	resp, err := http.PostForm(tokenURL, data)
-	if err != nil {
-		return nil, fmt.Errorf("refreshing token: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading token refresh response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token refresh failed: %s", string(body))
-	}
-
-	refreshed, err := parseTokenResponse(body, cred.Provider)
-	if err != nil {
-		return nil, err
-	}
-	if refreshed.RefreshToken == "" {
-		refreshed.RefreshToken = cred.RefreshToken
-	}
-	if refreshed.AccountID == "" {
-		refreshed.AccountID = cred.AccountID
-	}
-	if cred.Email != "" && refreshed.Email == "" {
-		refreshed.Email = cred.Email
-	}
-	if cred.ProjectID != "" && refreshed.ProjectID == "" {
-		refreshed.ProjectID = cred.ProjectID
-	}
-	return refreshed, nil
+	ctx, cancel := context.WithTimeout(context.Background(), defaultOAuthRefreshTimeout)
+	defer cancel()
+	return RefreshAccessTokenContext(ctx, cred, cfg)
 }
 
 func BuildAuthorizeURL(cfg OAuthProviderConfig, pkce PKCECodes, state, redirectURI string) string {

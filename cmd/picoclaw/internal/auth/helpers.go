@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -441,14 +442,21 @@ func authModelsCmd() error {
 		)
 	}
 
-	// Refresh token if needed
-	if cred.NeedsRefresh() && cred.RefreshToken != "" {
-		oauthCfg := auth.GoogleAntigravityOAuthConfig()
-		refreshed, refreshErr := auth.RefreshAccessToken(cred, oauthCfg)
-		if refreshErr == nil {
-			cred = refreshed
-			_ = auth.SetCredential("google-antigravity", cred)
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	refreshed, refreshErr := auth.EnsureFreshCredentialContext(
+		ctx,
+		"google-antigravity",
+		cred,
+		auth.GoogleAntigravityOAuthConfig(),
+		nil,
+		5*time.Minute,
+	)
+	if refreshErr == nil {
+		cred = refreshed
+	} else if cred.IsExpired() {
+		return fmt.Errorf("refreshing antigravity credentials: %w", refreshErr)
 	}
 
 	projectID := cred.ProjectID
@@ -458,7 +466,20 @@ func authModelsCmd() error {
 
 	fmt.Printf("Fetching models for project: %s\n\n", projectID)
 
-	models, err := providers.FetchAntigravityModels(cred.AccessToken, projectID)
+	models, err := providers.FetchAntigravityModelsContext(ctx, cred.AccessToken, projectID)
+	if providers.IsAntigravityUnauthorized(err) {
+		cred, refreshErr = auth.RefreshCredentialAfterUnauthorizedContext(
+			ctx,
+			"google-antigravity",
+			cred,
+			auth.GoogleAntigravityOAuthConfig(),
+			nil,
+		)
+		if refreshErr != nil {
+			return fmt.Errorf("recovering antigravity credentials: %w", refreshErr)
+		}
+		models, err = providers.FetchAntigravityModelsContext(ctx, cred.AccessToken, projectID)
+	}
 	if err != nil {
 		return fmt.Errorf("error fetching models: %w", err)
 	}
