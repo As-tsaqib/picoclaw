@@ -6,7 +6,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 type antigravityCatalogRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -65,5 +68,91 @@ func TestFetchAntigravityModelsWithClientContextAppliesHeadersSafely(t *testing.
 	}
 	if len(models) < 1 || models[0].ID != "gemini-test" {
 		t.Fatalf("unexpected models: %#v", models)
+	}
+}
+
+func TestFetchAntigravityModelsAtBaseURLReturnsOnlyDynamicCatalog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1internal:fetchAvailableModels" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_, _ = io.WriteString(w, `{"models":{"account-model":{"displayName":"Account Model"}}}`)
+	}))
+	defer server.Close()
+
+	models, err := FetchAntigravityModelsAtBaseURLWithClientContext(
+		context.Background(), server.Client(), server.URL, "token", "project", nil, "",
+	)
+	if err != nil {
+		t.Fatalf("FetchAntigravityModelsAtBaseURLWithClientContext: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "account-model" {
+		t.Fatalf("models = %#v, want only dynamic account model", models)
+	}
+}
+
+func TestFetchAntigravityModelsAtBaseURLEmptyCatalog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"models":{}}`)
+	}))
+	defer server.Close()
+
+	models, err := FetchAntigravityModelsAtBaseURLWithClientContext(
+		context.Background(), server.Client(), server.URL, "token", "project", nil, "",
+	)
+	if err != nil {
+		t.Fatalf("FetchAntigravityModelsAtBaseURLWithClientContext: %v", err)
+	}
+	if len(models) != 0 {
+		t.Fatalf("models = %#v, want empty catalog", models)
+	}
+}
+
+func TestFetchAntigravityModelsAtBaseURLMalformedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{not-json`)
+	}))
+	defer server.Close()
+
+	_, err := FetchAntigravityModelsAtBaseURLWithClientContext(
+		context.Background(), server.Client(), server.URL, "token", "project", nil, "",
+	)
+	if err == nil || !strings.Contains(err.Error(), "parsing models response") {
+		t.Fatalf("error = %v, want parse failure", err)
+	}
+}
+
+func TestFetchAntigravityModelsAtBaseURLUnauthorizedIsTypedAndSanitized(t *testing.T) {
+	const secret = "refresh-token-must-not-leak"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":"`+secret+`"}`)
+	}))
+	defer server.Close()
+
+	_, err := FetchAntigravityModelsAtBaseURLWithClientContext(
+		context.Background(), server.Client(), server.URL, "access-token", "project", nil, "",
+	)
+	if !IsAntigravityUnauthorized(err) {
+		t.Fatalf("error = %v, want typed 401", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("error leaked upstream body: %v", err)
+	}
+}
+
+func TestFetchAntigravityModelsAtBaseURLHonorsTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := FetchAntigravityModelsAtBaseURLWithClientContext(
+		ctx, server.Client(), server.URL, "token", "project", nil, "",
+	)
+	if err == nil || (!errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled)) {
+		t.Fatalf("error = %v, want cancellation/timeout", err)
 	}
 }

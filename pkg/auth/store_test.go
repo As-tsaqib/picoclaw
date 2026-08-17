@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -501,5 +502,40 @@ func TestSetCredentialCanonicalizesTrimmedMixedCaseProvider(t *testing.T) {
 	}
 	if got.Provider != "google-antigravity" {
 		t.Fatalf("GetCredential provider = %q, want %q", got.Provider, "google-antigravity")
+	}
+}
+
+func TestSetCredentialConcurrentProvidersPreservesAllEntries(t *testing.T) {
+	setTestAuthHome(t)
+	providers := []string{"provider-a", "provider-b", "provider-c", "provider-d"}
+	var wg sync.WaitGroup
+	for _, provider := range providers {
+		provider := provider
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 25; i++ {
+				if err := SetCredential(provider, &AuthCredential{
+					AccessToken: "token-" + provider,
+					Provider:    provider,
+					AuthMethod:  "oauth",
+				}); err != nil {
+					t.Errorf("SetCredential(%s) error: %v", provider, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	store, err := LoadStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range providers {
+		cred := store.Credentials[provider]
+		if cred == nil || cred.AccessToken != "token-"+provider {
+			t.Fatalf("credential %s = %#v", provider, cred)
+		}
 	}
 }

@@ -1599,3 +1599,16 @@ func TestCreateProviderFromConfig_InvalidToolSchemaTransform(t *testing.T) {
 		t.Fatalf("error = %v, want mention tool_schema_transform", err)
 	}
 }
+
+func TestCreateProviderFromConfig_AntigravityRejectsInvalidProxy(t *testing.T) {
+	cfg := &config.ModelConfig{
+		ModelName: "test-antigravity-proxy",
+		Model:     "antigravity/gemini-test",
+		Provider:  "antigravity",
+		Proxy:     "ftp://proxy.example.invalid",
+	}
+	_, _, err := CreateProviderFromConfig(cfg)
+	if err == nil {
+		t.Fatal("expected invalid Antigravity proxy to fail provider creation")
+	}
+}

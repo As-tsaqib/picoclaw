@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/As-tsaqib/picoclaw/pkg/auth"
 	"github.com/As-tsaqib/picoclaw/pkg/config"
 	"github.com/As-tsaqib/picoclaw/pkg/session"
 )
@@ -350,4 +351,38 @@ func resetModelDiscoveryCacheForTest() {
 	modelDiscoveryCache.Lock()
 	modelDiscoveryCache.entries = make(map[string]discoveryCacheEntry)
 	modelDiscoveryCache.Unlock()
+}
+
+func TestAntigravityDiscoveryCacheKeyTracksCredentialGenerationWithoutPlaintext(t *testing.T) {
+	t.Setenv(config.EnvHome, t.TempDir())
+	mc := &config.ModelConfig{
+		ModelName: "antigravity-account",
+		Provider:  "antigravity",
+		Model:     "antigravity/seed",
+		APIBase:   "https://catalog.example.invalid",
+		Enabled:   true,
+	}
+	source := modelSelection{Provider: "antigravity", ConfigRef: stableModelConfigRef(mc)}
+
+	first := &auth.AuthCredential{
+		AccessToken: "access-a-secret", RefreshToken: "refresh-a-secret",
+		Provider: "google-antigravity", AuthMethod: "oauth", AccountID: "account-a", ProjectID: "project-a",
+	}
+	require.NoError(t, auth.SetCredential("google-antigravity", first))
+	keyA, err := modelDiscoveryCacheKey(source, mc)
+	require.NoError(t, err)
+
+	second := &auth.AuthCredential{
+		AccessToken: "access-b-secret", RefreshToken: "refresh-b-secret",
+		Provider: "google-antigravity", AuthMethod: "oauth", AccountID: "account-b", ProjectID: "project-b",
+	}
+	require.NoError(t, auth.SetCredential("google-antigravity", second))
+	keyB, err := modelDiscoveryCacheKey(source, mc)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, keyA, keyB, "credential/account rotation must isolate discovery cache entries")
+	for _, secret := range []string{"access-a-secret", "refresh-a-secret", "access-b-secret", "refresh-b-secret"} {
+		assert.NotContains(t, keyA, secret)
+		assert.NotContains(t, keyB, secret)
+	}
 }
