@@ -26,14 +26,7 @@ func listCommand() Definition {
 						"Configured Model: %s\nProvider: %s\n\nTo change models, update config.json",
 						name, provider,
 					)
-					return req.replyStructured(
-						tableContent(
-							"Models",
-							[]string{"Properti", "Nilai"},
-							[][]string{{"Model", name}, {"Provider", provider}},
-							fallback,
-						),
-					)
+					return req.replyStructured(tableContent("Models", []string{"Properti", "Nilai"}, [][]string{{"Model", name}, {"Provider", provider}}, fallback))
 				},
 			},
 			{

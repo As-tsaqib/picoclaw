@@ -19,14 +19,7 @@ func showCommand() Definition {
 					}
 					name, provider := rt.GetModelInfo()
 					fallback := fmt.Sprintf("Current Model: %s (Provider: %s)", name, provider)
-					return req.replyStructured(
-						tableContent(
-							"Model",
-							[]string{"Properti", "Nilai"},
-							[][]string{{"Model", name}, {"Provider", provider}},
-							fallback,
-						),
-					)
+					return req.replyStructured(tableContent("Model", []string{"Properti", "Nilai"}, [][]string{{"Model", name}, {"Provider", provider}}, fallback))
 				},
 			},
 			{
@@ -34,14 +27,7 @@ func showCommand() Definition {
 				Description: "Current channel",
 				Handler: func(_ context.Context, req Request, _ *Runtime) error {
 					fallback := fmt.Sprintf("Current Channel: %s", req.Channel)
-					return req.replyStructured(
-						tableContent(
-							"Channel",
-							[]string{"Properti", "Nilai"},
-							[][]string{{"Channel", req.Channel}},
-							fallback,
-						),
-					)
+					return req.replyStructured(tableContent("Channel", []string{"Properti", "Nilai"}, [][]string{{"Channel", req.Channel}}, fallback))
 				},
 			},
 			{

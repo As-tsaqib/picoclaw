@@ -443,9 +443,7 @@ func TestMigrateFromJSONPreservesNamedSessionMetadataAndActiveMapping(t *testing
 		t.Fatalf("NewJSONLStore: %v", err)
 	}
 	ctx := context.Background()
-	scope := json.RawMessage(
-		`{"version":1,"agent_id":"main","channel":"telegram","account":"bot-a","dimensions":["chat"],"values":{"chat":"direct:42"}}`,
-	)
+	scope := json.RawMessage(`{"version":1,"agent_id":"main","channel":"telegram","account":"bot-a","dimensions":["chat"],"values":{"chat":"direct:42"}}`)
 	writeJSONSession(t, sessionsDir, "named.json", jsonSession{
 		Key: "si_v1_named", Name: "Watchdog Gateway", NameSource: "custom",
 		Messages: []providers.Message{{Role: "user", Content: "hello"}},
@@ -456,12 +454,8 @@ func TestMigrateFromJSONPreservesNamedSessionMetadataAndActiveMapping(t *testing
 	if err != nil {
 		t.Fatalf("marshal active mapping: %v", err)
 	}
-	if writeErr := os.WriteFile(
-		filepath.Join(sessionsDir, activeSessionsFilename),
-		activeData,
-		0o600,
-	); writeErr != nil {
-		t.Fatalf("write active mapping: %v", writeErr)
+	if err := os.WriteFile(filepath.Join(sessionsDir, activeSessionsFilename), activeData, 0o600); err != nil {
+		t.Fatalf("write active mapping: %v", err)
 	}
 
 	count, err := MigrateFromJSON(ctx, sessionsDir, store)
