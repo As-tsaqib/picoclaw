@@ -35,15 +35,38 @@ func listMCPServersHandler() Handler {
 			lines = append(lines, fmt.Sprintf("  Connected: %s", yesNo(server.Connected)))
 			if server.Connected {
 				lines = append(lines, fmt.Sprintf("  Active tools: %d", server.ToolCount))
-				rows = append(rows, []string{fmt.Sprintf("%d", idx+1), "MCP", server.Name, fmt.Sprintf("enabled=%s, connected=%s, tools=%d", yesNo(server.Enabled), yesNo(server.Connected), server.ToolCount)})
+				rows = append(
+					rows,
+					[]string{
+						fmt.Sprintf("%d", idx+1),
+						"MCP",
+						server.Name,
+						fmt.Sprintf(
+							"enabled=%s, connected=%s, tools=%d",
+							yesNo(server.Enabled),
+							yesNo(server.Connected),
+							server.ToolCount,
+						),
+					},
+				)
 				continue
 			}
 			lines = append(lines, "  Active tools: unavailable")
-			rows = append(rows, []string{fmt.Sprintf("%d", idx+1), "MCP", server.Name, fmt.Sprintf("enabled=%s, connected=%s", yesNo(server.Enabled), yesNo(server.Connected))})
+			rows = append(
+				rows,
+				[]string{
+					fmt.Sprintf("%d", idx+1),
+					"MCP",
+					server.Name,
+					fmt.Sprintf("enabled=%s, connected=%s", yesNo(server.Enabled), yesNo(server.Connected)),
+				},
+			)
 		}
 
 		fallback := strings.Join(lines, "\n")
-		return req.replyStructured(tableContent("MCP Servers", []string{"No", "Jenis", "Nama", "Status"}, rows, fallback))
+		return req.replyStructured(
+			tableContent("MCP Servers", []string{"No", "Jenis", "Nama", "Status"}, rows, fallback),
+		)
 	}
 }
 
@@ -98,11 +121,21 @@ func showMCPToolsHandler() Handler {
 				}
 				lines = append(lines, line)
 			}
-			rows = append(rows, []string{fmt.Sprintf("%d", idx+1), tool.Name, tool.Description, fmt.Sprintf("%d", len(tool.Parameters))})
+			rows = append(
+				rows,
+				[]string{
+					fmt.Sprintf("%d", idx+1),
+					tool.Name,
+					tool.Description,
+					fmt.Sprintf("%d", len(tool.Parameters)),
+				},
+			)
 		}
 
 		fallback := strings.Join(lines, "\n")
-		return req.replyStructured(tableContent("MCP Tools", []string{"No", "Tool", "Deskripsi", "Parameter"}, rows, fallback))
+		return req.replyStructured(
+			tableContent("MCP Tools", []string{"No", "Tool", "Deskripsi", "Parameter"}, rows, fallback),
+		)
 	}
 }
 
