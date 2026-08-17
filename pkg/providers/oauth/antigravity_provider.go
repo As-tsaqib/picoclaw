@@ -611,14 +611,10 @@ func (p *AntigravityProvider) credential(ctx context.Context) (*auth.AuthCredent
 	}
 
 	if strings.TrimSpace(cred.ProjectID) == "" {
-		projectID, err := FetchAntigravityProjectIDWithClientContext(
-			ctx,
-			p.authHTTPClient(),
-			p.apiBaseURL(),
-			cred.AccessToken,
-			p.customHeaders,
-			p.userAgent,
-		)
+		projectID, recoveredCred, err := p.fetchProjectIDWithRecovery(ctx, cred)
+		if recoveredCred != nil {
+			cred = recoveredCred
+		}
 		if err != nil {
 			logger.WarnCF("provider.antigravity", "Could not fetch project ID from loadCodeAssist", map[string]any{
 				"error": err.Error(),
