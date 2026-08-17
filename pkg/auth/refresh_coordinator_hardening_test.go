@@ -109,3 +109,74 @@ func TestRefreshCredentialAfterUnauthorizedRejectsIdentityChange(t *testing.T) {
 		t.Fatalf("unexpected context error: %v", err)
 	}
 }
+
+func TestUpdateCredentialIfCurrentPreservesConcurrentMetadata(t *testing.T) {
+	setTestAuthHome(t)
+	original := antigravityTestCredential("access-stable", "refresh-stable")
+	original.AccountID = "account-a"
+	original.Email = "old@example.com"
+	if err := SetCredential("google-antigravity", original); err != nil {
+		t.Fatal(err)
+	}
+
+	concurrent := *original
+	concurrent.Email = "new@example.com"
+	if err := SetCredential("google-antigravity", &concurrent); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement := *original
+	replacement.ProjectID = "project-new"
+	stored, replaced, err := UpdateCredentialIfCurrent(
+		"google-antigravity",
+		original,
+		&replacement,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replaced {
+		t.Fatal("expected metadata update to apply to matching token generation")
+	}
+	if stored.Email != "new@example.com" {
+		t.Fatalf("Email = %q, want concurrent metadata value", stored.Email)
+	}
+	if stored.ProjectID != "project-new" {
+		t.Fatalf("ProjectID = %q, want project-new", stored.ProjectID)
+	}
+	if stored.AccessToken != original.AccessToken || stored.RefreshToken != original.RefreshToken {
+		t.Fatalf("token generation changed during metadata update: %#v", stored)
+	}
+}
+
+func TestUpdateCredentialIfCurrentRejectsIdentityChangeWithSameTokens(t *testing.T) {
+	setTestAuthHome(t)
+	original := antigravityTestCredential("access-stable", "refresh-stable")
+	original.AccountID = "account-a"
+	if err := SetCredential("google-antigravity", original); err != nil {
+		t.Fatal(err)
+	}
+
+	current := *original
+	current.AccountID = "account-b"
+	if err := SetCredential("google-antigravity", &current); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement := *original
+	replacement.ProjectID = "project-a"
+	stored, replaced, err := UpdateCredentialIfCurrent(
+		"google-antigravity",
+		original,
+		&replacement,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced {
+		t.Fatal("metadata update crossed a credential identity change")
+	}
+	if stored.AccountID != "account-b" || stored.ProjectID != "" {
+		t.Fatalf("stored credential = %#v, want authoritative current identity", stored)
+	}
+}
