@@ -81,10 +81,28 @@ func (al *AgentLoop) handleInternalCallback(
 		}
 		active = record.Key
 		page = 0
+	case "remove":
+		target := strings.TrimSpace(req.SessionKey)
+		if target == "" || target != active || !catalogSessionInScope(catalog, &allocation.Scope, aliases, target) {
+			return nil, fmt.Errorf("session removal was rejected")
+		}
+		if err := catalog.RemoveScopedSession(&allocation.Scope, aliases, target); err != nil {
+			return nil, fmt.Errorf("session could not be removed")
+		}
+		active = catalog.ActiveScopedSession(&allocation.Scope, aliases)
 	case "rename":
-		return &bus.InternalCallbackResponse{
-			Text: "Gunakan /session rename <nama baru> untuk mengganti nama session aktif.",
-		}, nil
+		target := strings.TrimSpace(req.SessionKey)
+		if target == "" || target != active || !catalogSessionInScope(catalog, &allocation.Scope, aliases, target) {
+			return nil, fmt.Errorf("session rename was rejected")
+		}
+		if strings.TrimSpace(req.Value) == "" {
+			return &bus.InternalCallbackResponse{
+				Text: "Balas pesan ini dengan nama baru untuk session aktif.",
+			}, nil
+		}
+		if err := catalog.RenameScopedSession(&allocation.Scope, aliases, target, req.Value); err != nil {
+			return nil, fmt.Errorf("session could not be renamed")
+		}
 	case "noop":
 		return &bus.InternalCallbackResponse{Text: fmt.Sprintf("Halaman %d", page+1)}, nil
 	case "close":
@@ -139,6 +157,20 @@ func (al *AgentLoop) executeSessionCommand(
 		return paragraphContent(
 			"Nama session berhasil diubah menjadi: " + session.SanitizeSessionName(req.Argument),
 		), nil
+	case "remove":
+		removedName := active
+		if records, err := catalog.ListScopedSessions(scope, aliases); err == nil {
+			for _, record := range records {
+				if record.Key == active {
+					removedName = record.Name
+					break
+				}
+			}
+		}
+		if err := catalog.RemoveScopedSession(scope, aliases, active); err != nil {
+			return nil, err
+		}
+		return paragraphContent("Session dihapus: " + removedName + "."), nil
 	case "use":
 		record, err := catalog.ResolveScopedSelector(scope, aliases, req.Argument)
 		if err != nil {
@@ -200,7 +232,7 @@ func buildSessionListContent(
 		end = len(records)
 	}
 	rows := make([][]string, 0, end-start)
-	entries := make([]bus.InteractionEntry, 0, end-start+4)
+	entries := make([]bus.InteractionEntry, 0, end-start+5)
 	for i := start; i < end; i++ {
 		record := records[i]
 		no := strconv.Itoa(i + 1)
@@ -224,7 +256,8 @@ func buildSessionListContent(
 		entries = append(entries, bus.InteractionEntry{Label: "▶️", Action: "page", Value: strconv.Itoa(page + 1)})
 	}
 	entries = append(entries,
-		bus.InteractionEntry{Label: "➕ Baru", Action: "new", Value: ""},
+		bus.InteractionEntry{Label: "➕ New", Action: "new", Value: ""},
+		bus.InteractionEntry{Label: "🗑️ Remove", Action: "remove", Value: ""},
 		bus.InteractionEntry{Label: "✏️ Rename", Action: "rename", Value: ""},
 		bus.InteractionEntry{Label: "✖️ Tutup", Action: "close", Value: ""},
 	)

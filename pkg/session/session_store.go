@@ -40,6 +40,7 @@ type ScopedSessionStore interface {
 	SessionStore
 	CreateScopedSession(scope *SessionScope, name string) (SessionRecord, error)
 	RenameScopedSession(scope *SessionScope, routeAliases []string, sessionKey, name string) error
+	RemoveScopedSession(scope *SessionScope, routeAliases []string, sessionKey string) error
 	SetAutomaticSessionName(sessionKey, content string) error
 	ActiveScopedSession(scope *SessionScope, routeAliases []string) string
 	SetActiveScopedSession(scope *SessionScope, routeAliases []string, sessionKey string) error

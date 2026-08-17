@@ -20,6 +20,8 @@ import (
 const (
 	sessionCallbackPrefix = "pcsm:"
 	sessionMenuTTL        = 15 * time.Minute
+	sessionRenameTTL      = 5 * time.Minute
+	sessionRenameMax      = 256
 	modelMenuTTL          = 5 * time.Minute
 	richMessageMaxBytes   = 32768
 	richMessageMaxBlocks  = 500
@@ -35,6 +37,20 @@ type telegramSessionMenu struct {
 	ephemeralID    int
 	receiverUserID int64
 	createdAt      time.Time
+}
+
+type telegramSessionRenamePromptKey struct {
+	chatID      int64
+	threadID    int
+	messageID   int
+	ephemeralID int
+}
+
+type telegramSessionRenamePrompt struct {
+	token     string
+	menu      telegramSessionMenu
+	createdAt time.Time
+	consumed  bool
 }
 
 func (c *TelegramChannel) SupportsStructuredContent() bool { return true }
@@ -365,7 +381,8 @@ func sessionInteractionKeyboard(
 	}
 	keyboard = append(keyboard, []telego.InlineKeyboardButton{prev, pageButton, next})
 	keyboard = append(keyboard, []telego.InlineKeyboardButton{
-		{Text: "➕ Baru", CallbackData: callback("n"), Style: telego.ButtonStylePrimary},
+		{Text: "➕ New", CallbackData: callback("n"), Style: telego.ButtonStylePrimary},
+		{Text: "🗑️ Remove", CallbackData: callback("d"), Style: telego.ButtonStyleDanger},
 		{Text: "✏️ Rename", CallbackData: callback("r"), Style: telego.ButtonStylePrimary},
 	})
 	keyboard = append(
@@ -458,6 +475,12 @@ func (c *TelegramChannel) replaceSessionMenu(oldToken string, menu telegramSessi
 		c.sessionMenus = make(map[string]telegramSessionMenu)
 	}
 	delete(c.sessionMenus, oldToken)
+	for token, existing := range c.sessionMenus {
+		if existing.chatID == menu.chatID && existing.threadID == menu.threadID &&
+			existing.messageID == menu.messageID && existing.ephemeralID == menu.ephemeralID {
+			delete(c.sessionMenus, token)
+		}
+	}
 	c.pruneSessionMenusLocked(time.Now())
 	c.sessionMenus[menu.token] = menu
 }
@@ -466,6 +489,20 @@ func (c *TelegramChannel) deleteSessionMenu(token string) {
 	c.sessionMenuMu.Lock()
 	delete(c.sessionMenus, token)
 	c.sessionMenuMu.Unlock()
+}
+
+func (c *TelegramChannel) consumeSessionMenu(token string) bool {
+	c.sessionMenuMu.Lock()
+	defer c.sessionMenuMu.Unlock()
+	if c.sessionMenus == nil {
+		return false
+	}
+	c.pruneSessionMenusLocked(time.Now())
+	if _, ok := c.sessionMenus[token]; !ok {
+		return false
+	}
+	delete(c.sessionMenus, token)
+	return true
 }
 
 func (c *TelegramChannel) pruneSessionMenusLocked(now time.Time) {
@@ -478,6 +515,305 @@ func (c *TelegramChannel) pruneSessionMenusLocked(now time.Time) {
 			delete(c.sessionMenus, token)
 		}
 	}
+}
+
+func (c *TelegramChannel) beginSessionRenamePrompt(
+	ctx context.Context,
+	query *telego.CallbackQuery,
+	token string,
+	menu telegramSessionMenu,
+	promptText string,
+) error {
+	promptText = strings.TrimSpace(promptText)
+	if promptText == "" {
+		promptText = "Balas pesan ini dengan nama baru untuk session aktif."
+	}
+	params := tu.Message(tu.ID(menu.chatID), promptText)
+	params.MessageThreadID = menu.threadID
+	params.ReplyMarkup = &telego.ForceReply{
+		ForceReply:            true,
+		InputFieldPlaceholder: "Nama session baru",
+		Selective:             true,
+	}
+	if menu.ephemeralID > 0 {
+		params.ReceiverUserID = menu.receiverUserID
+		if params.ReceiverUserID <= 0 && query != nil {
+			params.ReceiverUserID = query.From.ID
+		}
+		if query != nil {
+			params.CallbackQueryID = query.ID
+		}
+	} else if replyID, err := strconv.Atoi(strings.TrimSpace(menu.menu.Inbound.MessageID)); err == nil && replyID > 0 {
+		params.ReplyParameters = &telego.ReplyParameters{
+			MessageID:                replyID,
+			AllowSendingWithoutReply: true,
+		}
+	}
+
+	promptMessage, err := c.bot.SendMessage(ctx, params)
+	if err != nil {
+		return fmt.Errorf("send session rename prompt: %w", err)
+	}
+	if promptMessage == nil || (promptMessage.MessageID <= 0 && promptMessage.EphemeralMessageID <= 0) {
+		return fmt.Errorf("send session rename prompt: Telegram returned no message identity")
+	}
+	key := telegramSessionRenamePromptKey{chatID: menu.chatID, threadID: menu.threadID}
+	if promptMessage.EphemeralMessageID > 0 {
+		key.ephemeralID = promptMessage.EphemeralMessageID
+	} else {
+		key.messageID = promptMessage.MessageID
+	}
+	c.storeSessionRenamePrompt(key, telegramSessionRenamePrompt{
+		token: token, menu: menu, createdAt: time.Now(),
+	})
+	return nil
+}
+
+func (c *TelegramChannel) storeSessionRenamePrompt(
+	key telegramSessionRenamePromptKey,
+	prompt telegramSessionRenamePrompt,
+) {
+	c.sessionRenameMu.Lock()
+	defer c.sessionRenameMu.Unlock()
+	if c.sessionRenamePrompts == nil {
+		c.sessionRenamePrompts = make(map[telegramSessionRenamePromptKey]telegramSessionRenamePrompt)
+	}
+	now := time.Now()
+	c.pruneSessionRenamePromptsLocked(now)
+	for existingKey, existing := range c.sessionRenamePrompts {
+		if existing.menu.chatID == prompt.menu.chatID && existing.menu.threadID == prompt.menu.threadID &&
+			existing.menu.menu.OwnerID == prompt.menu.menu.OwnerID &&
+			existing.menu.menu.AgentID == prompt.menu.menu.AgentID &&
+			existing.menu.menu.Scope == prompt.menu.menu.Scope &&
+			existing.menu.menu.Current == prompt.menu.menu.Current && !existing.consumed {
+			existing.consumed = true
+			c.sessionRenamePrompts[existingKey] = existing
+		}
+	}
+	for len(c.sessionRenamePrompts) >= sessionRenameMax {
+		var oldestKey telegramSessionRenamePromptKey
+		var oldestTime time.Time
+		found := false
+		for candidateKey, candidate := range c.sessionRenamePrompts {
+			if !found || candidate.createdAt.Before(oldestTime) {
+				oldestKey = candidateKey
+				oldestTime = candidate.createdAt
+				found = true
+			}
+		}
+		if !found {
+			break
+		}
+		delete(c.sessionRenamePrompts, oldestKey)
+	}
+	c.sessionRenamePrompts[key] = prompt
+}
+
+func (c *TelegramChannel) pruneSessionRenamePromptsLocked(now time.Time) {
+	for key, prompt := range c.sessionRenamePrompts {
+		if now.Sub(prompt.createdAt) > 2*sessionRenameTTL {
+			delete(c.sessionRenamePrompts, key)
+		}
+	}
+}
+
+type sessionRenameClaimStatus uint8
+
+const (
+	sessionRenameClaimNone sessionRenameClaimStatus = iota
+	sessionRenameClaimRejected
+	sessionRenameClaimExpired
+	sessionRenameClaimReplay
+	sessionRenameClaimInvalid
+	sessionRenameClaimed
+)
+
+func sessionRenamePromptKeyFromReply(message *telego.Message) (telegramSessionRenamePromptKey, bool) {
+	if message == nil || message.ReplyToMessage == nil {
+		return telegramSessionRenamePromptKey{}, false
+	}
+	reply := message.ReplyToMessage
+	key := telegramSessionRenamePromptKey{chatID: message.Chat.ID, threadID: message.MessageThreadID}
+	if reply.EphemeralMessageID > 0 {
+		key.ephemeralID = reply.EphemeralMessageID
+	} else if reply.MessageID > 0 {
+		key.messageID = reply.MessageID
+	} else {
+		return telegramSessionRenamePromptKey{}, false
+	}
+	return key, true
+}
+
+func (c *TelegramChannel) claimSessionRenamePrompt(
+	message *telego.Message,
+) (telegramSessionRenamePrompt, sessionRenameClaimStatus) {
+	key, ok := sessionRenamePromptKeyFromReply(message)
+	if !ok {
+		return telegramSessionRenamePrompt{}, sessionRenameClaimNone
+	}
+	c.sessionRenameMu.Lock()
+	defer c.sessionRenameMu.Unlock()
+	prompt, ok := c.sessionRenamePrompts[key]
+	if !ok {
+		c.pruneSessionRenamePromptsLocked(time.Now())
+		return telegramSessionRenamePrompt{}, sessionRenameClaimNone
+	}
+	now := time.Now()
+	if now.Sub(prompt.createdAt) > sessionRenameTTL {
+		prompt.consumed = true
+		c.sessionRenamePrompts[key] = prompt
+		return prompt, sessionRenameClaimExpired
+	}
+	if prompt.consumed {
+		return prompt, sessionRenameClaimReplay
+	}
+	if message.From == nil || message.From.IsBot || message.From.ID <= 0 ||
+		strconv.FormatInt(message.From.ID, 10) != strings.TrimSpace(prompt.menu.menu.OwnerID) ||
+		(prompt.menu.receiverUserID > 0 && message.From.ID != prompt.menu.receiverUserID) ||
+		(prompt.menu.menu.Channel != "" && prompt.menu.menu.Channel != c.Name()) ||
+		strings.TrimSpace(prompt.menu.menu.AgentID) == "" || strings.TrimSpace(prompt.menu.menu.Scope) == "" ||
+		strings.TrimSpace(prompt.menu.menu.Current) == "" {
+		return prompt, sessionRenameClaimRejected
+	}
+	senderID := strconv.FormatInt(message.From.ID, 10)
+	if !c.IsAllowedSender(bus.SenderInfo{
+		Platform: "telegram", PlatformID: senderID, CanonicalID: "telegram:" + senderID,
+		Username: message.From.Username, DisplayName: message.From.FirstName,
+	}) {
+		return prompt, sessionRenameClaimRejected
+	}
+	if strings.TrimSpace(message.Text) == "" {
+		return prompt, sessionRenameClaimInvalid
+	}
+	prompt.consumed = true
+	c.sessionRenamePrompts[key] = prompt
+	return prompt, sessionRenameClaimed
+}
+
+func (c *TelegramChannel) handlePendingSessionRenameReply(
+	ctx context.Context,
+	message *telego.Message,
+) (bool, error) {
+	prompt, status := c.claimSessionRenamePrompt(message)
+	switch status {
+	case sessionRenameClaimNone:
+		return false, nil
+	case sessionRenameClaimRejected, sessionRenameClaimReplay:
+		return true, nil
+	case sessionRenameClaimExpired:
+		return true, c.sendSessionRenameNotice(ctx, message, "Permintaan rename sudah kedaluwarsa. Jalankan /session lagi.")
+	case sessionRenameClaimInvalid:
+		return true, c.sendSessionRenameNotice(ctx, message, "Nama session harus berupa teks yang tidak kosong.")
+	}
+
+	handler := c.currentInternalCallbackHandler()
+	if handler == nil {
+		return true, c.sendSessionRenameNotice(ctx, message, "Rename session sedang tidak tersedia.")
+	}
+	inbound := prompt.menu.menu.Inbound
+	inbound.MessageID = strconv.Itoa(message.MessageID)
+	if message.EphemeralMessageID > 0 {
+		inbound.MessageID = encodeInboundEphemeralMessageID(message.EphemeralMessageID)
+	}
+	if message.ReplyToMessage != nil {
+		inbound.ReplyToMessageID = strconv.Itoa(message.ReplyToMessage.MessageID)
+		if message.ReplyToMessage.EphemeralMessageID > 0 {
+			inbound.ReplyToMessageID = encodeInboundEphemeralMessageID(
+				message.ReplyToMessage.EphemeralMessageID,
+			)
+		}
+	}
+	response, err := handler(ctx, bus.InternalCallbackRequest{
+		Kind:       prompt.menu.menu.Kind,
+		Action:     "rename",
+		Value:      message.Text,
+		OwnerID:    prompt.menu.menu.OwnerID,
+		Channel:    prompt.menu.menu.Channel,
+		Account:    prompt.menu.menu.Account,
+		ChatID:     prompt.menu.menu.ChatID,
+		TopicID:    prompt.menu.menu.TopicID,
+		MessageID:  inbound.MessageID,
+		AgentID:    prompt.menu.menu.AgentID,
+		Scope:      prompt.menu.menu.Scope,
+		Inbound:    inbound,
+		Page:       prompt.menu.menu.Page,
+		SessionKey: prompt.menu.menu.Current,
+	})
+	if err != nil {
+		logger.WarnCF("telegram", "Session rename reply was rejected", map[string]any{
+			"reason": "scope_or_state_validation",
+		})
+		return true, c.sendSessionRenameNotice(ctx, message, "Session tidak dapat di-rename. Jalankan /session lagi.")
+	}
+	if response == nil || response.Content == nil {
+		text := "Nama session berhasil diubah."
+		if response != nil && strings.TrimSpace(response.Text) != "" {
+			text = strings.TrimSpace(response.Text)
+		}
+		return true, c.sendSessionRenameNotice(ctx, message, text)
+	}
+	if err := c.refreshSessionMenuAfterRename(ctx, prompt, response.Content); err != nil {
+		logger.WarnCF("telegram", "Session menu refresh after rename failed", map[string]any{
+			"reason": "telegram_edit_failed",
+		})
+		return true, c.sendSessionRenameNotice(
+			ctx,
+			message,
+			"Nama session berhasil diubah. Jalankan /session untuk memperbarui dashboard.",
+		)
+	}
+	return true, nil
+}
+
+func (c *TelegramChannel) refreshSessionMenuAfterRename(
+	ctx context.Context,
+	prompt telegramSessionRenamePrompt,
+	content *bus.StructuredContent,
+) error {
+	markup, pending, err := c.structuredReplyMarkup(content, prompt.menu.chatID, prompt.menu.threadID)
+	if err != nil {
+		return err
+	}
+	if pending == nil {
+		return fmt.Errorf("renamed session response has no interaction menu")
+	}
+	message := &telego.Message{
+		MessageID: prompt.menu.messageID,
+		Chat:      telego.Chat{ID: prompt.menu.chatID},
+	}
+	if err := c.editStructuredSessionMenu(ctx, message, prompt.menu, content, markup); err != nil {
+		return err
+	}
+	pending.messageID = prompt.menu.messageID
+	pending.ephemeralID = prompt.menu.ephemeralID
+	pending.receiverUserID = prompt.menu.receiverUserID
+	c.replaceSessionMenu(prompt.token, *pending)
+	return nil
+}
+
+func (c *TelegramChannel) sendSessionRenameNotice(
+	ctx context.Context,
+	message *telego.Message,
+	text string,
+) error {
+	if message == nil {
+		return nil
+	}
+	params := tu.Message(tu.ID(message.Chat.ID), text)
+	params.MessageThreadID = message.MessageThreadID
+	if message.EphemeralMessageID > 0 && message.From != nil {
+		params.ReceiverUserID = message.From.ID
+		params.ReplyParameters = &telego.ReplyParameters{EphemeralMessageID: message.EphemeralMessageID}
+	} else if message.MessageID > 0 {
+		params.ReplyParameters = &telego.ReplyParameters{
+			MessageID:                message.MessageID,
+			AllowSendingWithoutReply: true,
+		}
+	}
+	if _, err := c.bot.SendMessage(ctx, params); err != nil {
+		return fmt.Errorf("send session rename notice: %w", err)
+	}
+	return nil
 }
 
 func isInternalSessionCallback(data string) bool {
@@ -525,13 +861,17 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 	if !ok {
 		return c.answerSessionCallback(ctx, query.ID, "Tombol tidak valid. Jalankan command lagi.", true)
 	}
+	consume := strings.EqualFold(strings.TrimSpace(menu.menu.Kind), "session") &&
+		(action == "select" || action == "new" || action == "remove" || action == "rename" || action == "close")
+	if consume && !c.consumeSessionMenu(token) {
+		return c.answerSessionCallback(ctx, query.ID, "Tombol sudah diproses. Jalankan /session lagi.", true)
+	}
 
 	answerText := ""
 	showAlert := false
 	switch action {
 	case "rename":
-		answerText = "Gunakan /session rename <nama baru>."
-		showAlert = true
+		answerText = "Balas prompt untuk mengganti nama session."
 	case "noop":
 		answerText = fmt.Sprintf("Halaman %d/%d", menu.menu.Page+1, menu.menu.Pages)
 	}
@@ -570,6 +910,9 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 	}
 	if response == nil {
 		return nil
+	}
+	if action == "rename" && strings.TrimSpace(value) == "" {
+		return c.beginSessionRenamePrompt(ctx, query, token, menu, response.Text)
 	}
 	if response.Close {
 		if clearErr := c.clearSessionMenuKeyboard(ctx, message, menu); clearErr != nil {
@@ -664,6 +1007,8 @@ func resolveSessionMenuAction(menu bus.InteractionMenu, code string) (action, va
 		return "", "", false
 	case code == "n":
 		return menuStaticAction(menu, "new")
+	case code == "d":
+		return menuStaticAction(menu, "remove")
 	case code == "r":
 		return menuStaticAction(menu, "rename")
 	case code == "x":

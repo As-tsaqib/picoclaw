@@ -160,7 +160,10 @@ func (p *Pipeline) CallLLM(
 	}
 
 	// LLM call closure with fallback support
-	callLLM := func(messagesForCall []providers.Message, toolDefsForCall []providers.ToolDefinition) (*providers.LLMResponse, error) {
+	callLLM := func(
+		messagesForCall []providers.Message,
+		toolDefsForCall []providers.ToolDefinition,
+	) (*providers.LLMResponse, error) {
 		providerCtx, providerCancel := context.WithCancel(turnCtx)
 		ts.setProviderCancel(providerCancel)
 		defer func() {
@@ -189,8 +192,7 @@ func (p *Pipeline) CallLLM(
 				ts.agent,
 				exec.activeProvider,
 				exec.activeCandidates,
-				candidate.Provider,
-				candidate.Model,
+				candidate,
 			)
 			if err != nil {
 				return nil, err
@@ -708,16 +710,21 @@ func providerForFallbackCandidate(
 	agent *AgentInstance,
 	activeProvider providers.LLMProvider,
 	activeCandidates []providers.FallbackCandidate,
-	provider string,
-	model string,
+	candidate providers.FallbackCandidate,
 ) (providers.LLMProvider, error) {
+	if len(activeCandidates) > 0 && candidate.StableKey() == activeCandidates[0].StableKey() {
+		if activeProvider == nil {
+			return nil, fmt.Errorf("primary model %q has no active provider", candidate.Model)
+		}
+		return activeProvider, nil
+	}
 	if agent != nil {
-		if cp, ok := agent.CandidateProviders[providers.ModelKey(provider, model)]; ok && cp != nil {
+		if cp, ok := agent.CandidateProviders[providers.ModelKey(candidate.Provider, candidate.Model)]; ok && cp != nil {
 			return cp, nil
 		}
 	}
 	if activeProvider == nil {
-		return nil, fmt.Errorf("fallback model %q has no active provider", model)
+		return nil, fmt.Errorf("fallback model %q has no active provider", candidate.Model)
 	}
 	return activeProvider, nil
 }

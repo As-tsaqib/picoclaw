@@ -49,6 +49,22 @@ const (
 // discarded managers alive indefinitely.
 var managerModelOverridesMu sync.Mutex
 
+func lockManagerModelOverrides(path string) (func(), error) {
+	managerModelOverridesMu.Lock()
+	fileUnlock, err := fileutil.LockFile(path)
+	if err != nil {
+		managerModelOverridesMu.Unlock()
+		return nil, fmt.Errorf("session: lock model overrides: %w", err)
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			_ = fileUnlock()
+			managerModelOverridesMu.Unlock()
+		})
+	}, nil
+}
+
 func normalizeModelOverride(override ModelOverride) ModelOverride {
 	override.Provider = strings.TrimSpace(override.Provider)
 	override.Model = strings.TrimSpace(override.Model)
@@ -126,8 +142,11 @@ func (sm *SessionManager) GetModelOverride(sessionKey string) (ModelOverride, bo
 		return sm.getMemoryModelOverride(sessionKey)
 	}
 
-	managerModelOverridesMu.Lock()
-	defer managerModelOverridesMu.Unlock()
+	unlock, err := lockManagerModelOverrides(sm.modelOverridesPath())
+	if err != nil {
+		return ModelOverride{}, false, err
+	}
+	defer unlock()
 	overrides, err := sm.readModelOverridesLocked()
 	if err != nil {
 		return ModelOverride{}, false, err
@@ -153,8 +172,11 @@ func (sm *SessionManager) SetModelOverride(sessionKey string, override ModelOver
 		return sm.setMemoryModelOverride(sessionKey, override)
 	}
 
-	managerModelOverridesMu.Lock()
-	defer managerModelOverridesMu.Unlock()
+	unlock, err := lockManagerModelOverrides(sm.modelOverridesPath())
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	overrides, err := sm.readModelOverridesLocked()
 	if err != nil {
 		return err
@@ -175,8 +197,11 @@ func (sm *SessionManager) ClearModelOverride(sessionKey string) error {
 		return nil
 	}
 
-	managerModelOverridesMu.Lock()
-	defer managerModelOverridesMu.Unlock()
+	unlock, err := lockManagerModelOverrides(sm.modelOverridesPath())
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	overrides, err := sm.readModelOverridesLocked()
 	if err != nil {
 		return err

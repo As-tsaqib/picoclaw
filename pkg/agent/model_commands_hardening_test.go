@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -52,6 +54,8 @@ func TestModelConfigSelectableRepresentativeCredentialModes(t *testing.T) {
 	}{
 		{"disabled ordinary provider", &config.ModelConfig{Provider: "openai", Model: "openai/x"}, false},
 		{"oauth openai", &config.ModelConfig{Provider: "openai", Model: "openai/x", AuthMethod: "oauth"}, true},
+		{"oauth anthropic", &config.ModelConfig{Provider: "anthropic", Model: "anthropic/x", AuthMethod: "oauth"}, true},
+		{"token anthropic", &config.ModelConfig{Provider: "anthropic", Model: "anthropic/x", AuthMethod: "token"}, true},
 		{"antigravity oauth", &config.ModelConfig{Provider: "antigravity", Model: "antigravity/x"}, true},
 		{"bedrock external credentials", &config.ModelConfig{Provider: "bedrock", Model: "bedrock/x"}, true},
 		{"claude cli", &config.ModelConfig{Provider: "claude-cli", Model: "claude-cli/x"}, true},
@@ -112,6 +116,25 @@ func TestStableModelConfigRefDoesNotDependOnCredentialSliceOrder(t *testing.T) {
 	a.APIKeys = config.SimpleSecureStrings("key-a", "key-b")
 	b.APIKeys = config.SimpleSecureStrings("key-b", "key-a")
 	assert.Equal(t, stableModelConfigRef(a), stableModelConfigRef(b))
+}
+
+func TestStableModelConfigRefIncludesStreamingMode(t *testing.T) {
+	a := &config.ModelConfig{ModelName: "shared", Provider: "openai", Model: "openai/model", Enabled: true}
+	b := *a
+	b.Streaming.Enabled = true
+	assert.NotEqual(t, stableModelConfigRef(a), stableModelConfigRef(&b))
+}
+
+func TestLegacyModelReferenceFailsClosedAcrossDuplicateSources(t *testing.T) {
+	a := &config.ModelConfig{
+		ModelName: "account-a", Provider: "openai", Model: "openai/shared", APIBase: "https://a.example", Enabled: true,
+	}
+	b := &config.ModelConfig{
+		ModelName: "account-b", Provider: "openai", Model: "openai/shared", APIBase: "https://b.example", Enabled: true,
+	}
+	cfg := &config.Config{ModelList: []*config.ModelConfig{a, b}}
+	assert.Nil(t, lookupSessionModelConfigByRef(cfg, "shared", "openai"))
+	assert.Nil(t, lookupSessionModelConfigByRef(cfg, "openai/shared", "openai"))
 }
 
 func TestStableModelConfigRefPersistsAndResolvesAfterRestart(t *testing.T) {
@@ -289,6 +312,30 @@ func TestValidateDiscoveredSelectionRejectsStaleCatalogEntry(t *testing.T) {
 	_, ok, readErr := store.GetModelOverride("session-a")
 	require.NoError(t, readErr)
 	assert.False(t, ok)
+}
+
+func TestDiscoveryCacheIsBoundedAndPublicErrorsHideProviderURL(t *testing.T) {
+	resetModelDiscoveryCacheForTest()
+	t.Cleanup(resetModelDiscoveryCacheForTest)
+	now := time.Now()
+	modelDiscoveryCache.Lock()
+	for i := 0; i < modelDiscoveryMaxCacheEntries; i++ {
+		key := fmt.Sprintf("source-%03d", i)
+		modelDiscoveryCache.entries[key] = discoveryCacheEntry{ExpiresAt: now.Add(time.Duration(i+1) * time.Second)}
+	}
+	pruneModelDiscoveryCacheLocked(now, "incoming")
+	modelDiscoveryCache.entries["incoming"] = discoveryCacheEntry{ExpiresAt: now.Add(time.Minute)}
+	count := len(modelDiscoveryCache.entries)
+	modelDiscoveryCache.Unlock()
+	assert.LessOrEqual(t, count, modelDiscoveryMaxCacheEntries)
+
+	err := publicModelDiscoveryError(errors.New(
+		`Get "https://user:secret@example.invalid/models?token=credential": connection refused`,
+	))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "secret")
+	assert.NotContains(t, err.Error(), "credential")
+	assert.NotContains(t, err.Error(), "example.invalid")
 }
 
 func resetModelDiscoveryCacheForTest() {

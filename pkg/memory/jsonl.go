@@ -242,6 +242,31 @@ func (s *JSONLStore) metaPath(key string) string {
 	return filepath.Join(s.dir, sanitizeKey(key)+".meta.json")
 }
 
+// DeleteSession removes the durable message and metadata files for one
+// canonical session. The per-session shard lock keeps deletion ordered with
+// concurrent history and metadata writes in this process.
+func (s *JSONLStore) DeleteSession(_ context.Context, sessionKey string) error {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return fmt.Errorf("memory: session key is required")
+	}
+	filename := sanitizeKey(sessionKey)
+	if filename == "." || !filepath.IsLocal(filename) {
+		return fmt.Errorf("memory: invalid session key")
+	}
+
+	l := s.sessionLock(sessionKey)
+	l.Lock()
+	defer l.Unlock()
+
+	for _, path := range []string{s.metaPath(sessionKey), s.jsonlPath(sessionKey)} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("memory: delete session data: %w", err)
+		}
+	}
+	return nil
+}
+
 // sanitizeKey converts a session key to a safe filename component.
 // Mirrors pkg/session.sanitizeFilename so that migration paths match.
 // Replaces ':' with '_' (session key separator) and '/' and '\' with '_'

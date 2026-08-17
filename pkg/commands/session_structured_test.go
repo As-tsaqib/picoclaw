@@ -22,6 +22,7 @@ func TestSessionCommandDispatchesAllSupportedForms(t *testing.T) {
 		{text: "/session new", operation: "new"},
 		{text: "/session new Watchdog Gateway", operation: "new", argument: "Watchdog Gateway"},
 		{text: "/session rename Telegram Config", operation: "rename", argument: "Telegram Config"},
+		{text: "/session remove", operation: "remove"},
 		{text: "/session use a1b2c3d4", operation: "use", argument: "a1b2c3d4"},
 	}
 

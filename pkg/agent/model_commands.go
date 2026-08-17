@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	modelsPerPage         = 5
-	modelDiscoveryTTL     = 5 * time.Minute
-	modelDiscoveryTimeout = 12 * time.Second
+	modelsPerPage                 = 5
+	modelDiscoveryTTL             = 5 * time.Minute
+	modelDiscoveryTimeout         = 12 * time.Second
+	modelDiscoveryMaxCacheEntries = 256
 )
 
 type discoveredModel struct {
@@ -623,6 +624,9 @@ func fetchDiscoveredModels(
 	source modelSelection,
 	force bool,
 ) ([]discoveredModel, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	sourceConfig := lookupSessionModelConfigByRef(cfg, source.ConfigRef, cfg.Agents.Defaults.Provider)
 	if sourceConfig == nil || !modelConfigSelectable(sourceConfig) {
 		return nil, fmt.Errorf("configured provider source %q is unavailable", source.ConfigRef)
@@ -647,6 +651,7 @@ func fetchDiscoveredModels(
 	models, err := modelcatalog.Fetch(fetchCtx, sourceConfig)
 	entry := discoveryCacheEntry{ExpiresAt: time.Now().Add(modelDiscoveryTTL)}
 	if err != nil {
+		err = publicModelDiscoveryError(err)
 		entry.Err = err.Error()
 	} else {
 		entry.Models = make([]discoveredModel, 0, len(models))
@@ -657,12 +662,69 @@ func fetchDiscoveredModels(
 		}
 	}
 	modelDiscoveryCache.Lock()
+	pruneModelDiscoveryCacheLocked(time.Now(), cacheKey)
 	modelDiscoveryCache.entries[cacheKey] = entry
 	modelDiscoveryCache.Unlock()
 	if err != nil {
 		return nil, err
 	}
 	return append([]discoveredModel(nil), entry.Models...), nil
+}
+
+func pruneModelDiscoveryCacheLocked(now time.Time, incomingKey string) {
+	for key, entry := range modelDiscoveryCache.entries {
+		if now.After(entry.ExpiresAt) {
+			delete(modelDiscoveryCache.entries, key)
+		}
+	}
+	if _, replacing := modelDiscoveryCache.entries[incomingKey]; replacing {
+		return
+	}
+	for len(modelDiscoveryCache.entries) >= modelDiscoveryMaxCacheEntries {
+		oldestKey := ""
+		var oldestExpiry time.Time
+		for key, entry := range modelDiscoveryCache.entries {
+			if oldestKey == "" || entry.ExpiresAt.Before(oldestExpiry) ||
+				(entry.ExpiresAt.Equal(oldestExpiry) && key < oldestKey) {
+				oldestKey = key
+				oldestExpiry = entry.ExpiresAt
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(modelDiscoveryCache.entries, oldestKey)
+	}
+}
+
+func publicModelDiscoveryError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	if errors.Is(err, modelcatalog.ErrUnsupported) {
+		return modelcatalog.ErrUnsupported
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(message, "proxy"):
+		return errors.New("model discovery proxy configuration is invalid")
+	case strings.Contains(message, "not logged in to antigravity"):
+		return errors.New("antigravity authentication is unavailable")
+	case strings.Contains(message, "project id is unavailable"):
+		return errors.New("antigravity project identity is unavailable")
+	case strings.Contains(message, "returned status"), strings.Contains(message, "failed (http"):
+		return errors.New("provider model catalog returned an error")
+	default:
+		// Network errors may embed a configured URL (including user-info or
+		// query credentials). Keep those details out of callback state and UI.
+		return errors.New("provider model discovery request failed")
+	}
 }
 
 func (al *AgentLoop) resolveModelSelection(
@@ -734,10 +796,10 @@ func validateAndPersistModelSelectionWithFactory(
 	}
 	provider, _, err := factory(&clone)
 	if err != nil {
-		closeProviderIfStateful(provider)
+		closeSessionModelProviderIfOwned(mcx.Agent, provider)
 		return fmt.Errorf("failed to initialize model %q: %w", selection.Model, err)
 	}
-	closeProviderIfStateful(provider)
+	closeSessionModelProviderIfOwned(mcx.Agent, provider)
 	return store.SetModelOverride(mcx.SessionKey, session.ModelOverride{
 		Provider: selection.Provider, Model: selection.Model, Alias: selection.Alias,
 		ConfigRef: selection.ConfigRef, Source: selection.Source,

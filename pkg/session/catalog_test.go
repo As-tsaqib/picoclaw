@@ -300,3 +300,54 @@ func TestConcurrentActiveSwitchKeepsSessionHistoriesIsolated(t *testing.T) {
 	assert.Equal(t, "history-first", backend.GetHistory(first.Key)[0].Content)
 	assert.Equal(t, "history-second", backend.GetHistory(second.Key)[0].Content)
 }
+
+func TestRemoveScopedSessionClearsActiveDataAndModelOverride(t *testing.T) {
+	dir := t.TempDir()
+	backend, _ := newCatalogBackend(t, dir)
+	scope := telegramScope("main", "primary", "42", "", "42", false)
+	record, err := backend.CreateScopedSession(scope, "Disposable")
+	require.NoError(t, err)
+	backend.AddMessage(record.Key, "user", "private history")
+	require.NoError(t, backend.SetActiveScopedSession(scope, nil, record.Key))
+	require.NoError(t, backend.SetModelOverride(record.Key, session.ModelOverride{
+		Provider: "openai", Model: "gpt-test", ConfigRef: "cfg:v1:test",
+	}))
+
+	require.NoError(t, backend.RemoveScopedSession(scope, nil, record.Key))
+	assert.Equal(t, session.BuildSessionKey(*scope), backend.ActiveScopedSession(scope, nil))
+	assert.Empty(t, backend.GetHistory(record.Key))
+	_, found, err := backend.GetModelOverride(record.Key)
+	require.NoError(t, err)
+	assert.False(t, found)
+	records, err := backend.ListScopedSessions(scope, nil)
+	require.NoError(t, err)
+	for _, got := range records {
+		assert.NotEqual(t, record.Key, got.Key)
+	}
+	require.NoError(t, backend.Close())
+
+	reopened, _ := newCatalogBackend(t, dir)
+	t.Cleanup(func() { _ = reopened.Close() })
+	reopenedRecords, err := reopened.ListScopedSessions(scope, nil)
+	require.NoError(t, err)
+	for _, got := range reopenedRecords {
+		assert.NotEqual(t, record.Key, got.Key)
+	}
+}
+
+func TestRemoveScopedSessionRejectsForeignScope(t *testing.T) {
+	backend, _ := newCatalogBackend(t, t.TempDir())
+	t.Cleanup(func() { _ = backend.Close() })
+	scope := telegramScope("main", "primary", "42", "7", "42", false)
+	record, err := backend.CreateScopedSession(scope, "Protected")
+	require.NoError(t, err)
+	foreign := telegramScope("main", "primary", "42", "8", "42", false)
+	require.ErrorIs(t, backend.RemoveScopedSession(foreign, nil, record.Key), session.ErrSessionNotInScope)
+	records, err := backend.ListScopedSessions(scope, nil)
+	require.NoError(t, err)
+	found := false
+	for _, got := range records {
+		found = found || got.Key == record.Key
+	}
+	assert.True(t, found)
+}

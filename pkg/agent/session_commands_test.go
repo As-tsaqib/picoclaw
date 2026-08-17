@@ -80,7 +80,7 @@ func TestInternalSessionCallbackRevalidatesOwnerScopeAndActions(t *testing.T) {
 	base := bus.InternalCallbackRequest{
 		Kind: "session", Action: "select", Value: second.Key, OwnerID: "42",
 		Channel: "telegram", Account: "bot-a", ChatID: "42", AgentID: agent.ID,
-		Scope: session.CanonicalScopeSignature(allocation.Scope), Inbound: msg.Context,
+		Scope: session.CanonicalScopeSignature(allocation.Scope), Inbound: msg.Context, SessionKey: first.Key,
 	}
 	beforeFirst := agent.Sessions.GetHistory(first.Key)
 	beforeSecond := agent.Sessions.GetHistory(second.Key)
@@ -121,9 +121,50 @@ func TestInternalSessionCallbackRevalidatesOwnerScopeAndActions(t *testing.T) {
 
 	renameRequest := base
 	renameRequest.Action = "rename"
+	renameRequest.Value = ""
+	renameRequest.SessionKey = newActive
 	response, err = al.handleInternalCallback(context.Background(), renameRequest)
 	require.NoError(t, err)
-	assert.Contains(t, response.Text, "/session rename")
+	assert.Contains(t, response.Text, "Balas pesan ini")
+
+	renameRequest.Value = "Renamed from reply"
+	response, err = al.handleInternalCallback(context.Background(), renameRequest)
+	require.NoError(t, err)
+	require.NotNil(t, response.Content)
+	records, err := catalog.ListScopedSessions(&allocation.Scope, allocation.SessionAliases)
+	require.NoError(t, err)
+	renamed := false
+	for _, record := range records {
+		if record.Key == newActive {
+			renamed = record.Name == "Renamed from reply"
+		}
+	}
+	assert.True(t, renamed)
+
+	overrides := agent.Sessions.(session.ModelOverrideStore)
+	require.NoError(t, overrides.SetModelOverride(newActive, session.ModelOverride{
+		Provider: "openai", Model: "gpt-test", ConfigRef: "cfg:v1:test",
+	}))
+	removeRequest := base
+	removeRequest.Action = "remove"
+	removeRequest.Value = ""
+	removeRequest.SessionKey = newActive
+	response, err = al.handleInternalCallback(context.Background(), removeRequest)
+	require.NoError(t, err)
+	require.NotNil(t, response.Content)
+	assert.NotEqual(t, newActive, catalog.ActiveScopedSession(&allocation.Scope, allocation.SessionAliases))
+	_, found, err := overrides.GetModelOverride(newActive)
+	require.NoError(t, err)
+	assert.False(t, found)
+	records, err = catalog.ListScopedSessions(&allocation.Scope, allocation.SessionAliases)
+	require.NoError(t, err)
+	for _, record := range records {
+		assert.NotEqual(t, newActive, record.Key)
+	}
+
+	replayedRemove := removeRequest
+	_, err = al.handleInternalCallback(context.Background(), replayedRemove)
+	require.Error(t, err)
 	closeRequest := base
 	closeRequest.Action = "close"
 	response, err = al.handleInternalCallback(context.Background(), closeRequest)

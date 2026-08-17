@@ -7,11 +7,30 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/As-tsaqib/picoclaw/pkg/fileutil"
 )
 
 const modelOverridesFilename = ".model-overrides.json"
+
+var jsonlModelOverridesMu sync.Mutex
+
+func lockJSONLModelOverrides(path string) (func(), error) {
+	jsonlModelOverridesMu.Lock()
+	fileUnlock, err := fileutil.LockFile(path)
+	if err != nil {
+		jsonlModelOverridesMu.Unlock()
+		return nil, fmt.Errorf("memory: lock model overrides: %w", err)
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			_ = fileUnlock()
+			jsonlModelOverridesMu.Unlock()
+		})
+	}, nil
+}
 
 func (s *JSONLStore) modelOverridesPath() string {
 	return filepath.Join(s.dir, modelOverridesFilename)
@@ -44,15 +63,18 @@ func (s *JSONLStore) writeModelOverridesLocked(overrides map[string]json.RawMess
 }
 
 // GetSessionModelOverride returns the credential-free model override payload.
-// activeMu is reused as the small sidecar-state lock so concurrent session
-// switches cannot race file replacement.
+// A process-wide mutex plus an advisory file lock protects read-modify-write
+// across concurrent store instances and cooperating PicoClaw processes.
 func (s *JSONLStore) GetSessionModelOverride(_ context.Context, sessionKey string) (json.RawMessage, bool, error) {
 	sessionKey = strings.TrimSpace(sessionKey)
 	if sessionKey == "" {
 		return nil, false, nil
 	}
-	s.activeMu.Lock()
-	defer s.activeMu.Unlock()
+	unlock, err := lockJSONLModelOverrides(s.modelOverridesPath())
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlock()
 	overrides, err := s.readModelOverridesLocked()
 	if err != nil {
 		return nil, false, err
@@ -73,8 +95,11 @@ func (s *JSONLStore) SetSessionModelOverride(_ context.Context, sessionKey strin
 	if err := json.Unmarshal(raw, &validated); err != nil {
 		return fmt.Errorf("memory: invalid model override: %w", err)
 	}
-	s.activeMu.Lock()
-	defer s.activeMu.Unlock()
+	unlock, err := lockJSONLModelOverrides(s.modelOverridesPath())
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	overrides, err := s.readModelOverridesLocked()
 	if err != nil {
 		return err
@@ -88,8 +113,11 @@ func (s *JSONLStore) ClearSessionModelOverride(_ context.Context, sessionKey str
 	if sessionKey == "" {
 		return nil
 	}
-	s.activeMu.Lock()
-	defer s.activeMu.Unlock()
+	unlock, err := lockJSONLModelOverrides(s.modelOverridesPath())
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	overrides, err := s.readModelOverridesLocked()
 	if err != nil {
 		return err

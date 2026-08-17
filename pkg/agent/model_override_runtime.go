@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -25,7 +26,10 @@ func (al *AgentLoop) applySessionModelOverride(ctx context.Context, ts *turnStat
 	}
 	override, found, err := store.GetModelOverride(ts.sessionKey)
 	if err != nil {
-		return fmt.Errorf("load session model override: %w", err)
+		// A corrupt or temporarily unavailable preference must not make the
+		// configured agent unusable. Keep the durable state intact so it can be
+		// repaired, but run this turn on the already-resolved default provider.
+		return nil
 	}
 	if !found {
 		return nil
@@ -53,17 +57,20 @@ func (al *AgentLoop) applySessionModelOverride(ctx context.Context, ts *turnStat
 	}
 	provider, _, err := factory(&modelCfg)
 	if err != nil {
-		closeProviderIfStateful(provider)
-		return fmt.Errorf("initialize session model %q: %w", override.Model, err)
+		closeSessionModelProviderIfOwned(ts.agent, provider)
+		// Credentials and provider availability can change after an override was
+		// persisted. Treat that as stale runtime state and fail soft to default.
+		return nil
 	}
 
 	primary, ok := candidateFromModelConfig(cfg.Agents.Defaults.Provider, &modelCfg)
 	if !ok {
-		closeProviderIfStateful(provider)
-		return fmt.Errorf("session model %q did not resolve to a provider candidate", override.Model)
+		closeSessionModelProviderIfOwned(ts.agent, provider)
+		return nil
 	}
 	primary.Model = strings.TrimSpace(override.Model)
 	primary.Provider = providers.NormalizeProvider(override.Provider)
+	primary.IdentityKey = strings.TrimSpace(override.ConfigRef)
 	if strings.TrimSpace(override.Alias) != "" {
 		primary.DisplayName = strings.TrimSpace(override.Alias)
 	} else {
@@ -86,7 +93,8 @@ func (al *AgentLoop) applySessionModelOverride(ctx context.Context, ts *turnStat
 	exec.activeProvider = provider
 	exec.llmModelName = primary.DisplayName
 	exec.usedLight = false
-	if stateful, closeOK := provider.(providers.StatefulProvider); closeOK {
+	if stateful, closeOK := provider.(providers.StatefulProvider); closeOK &&
+		!isSharedSessionModelProvider(ts.agent, provider) {
 		ownedSessionModelProviders.Store(exec, stateful)
 		// Finalize closes normal paths. The turn context is canceled by runTurn on
 		// every return path, so this covers setup/call/hook/abort errors that bypass
@@ -94,6 +102,40 @@ func (al *AgentLoop) applySessionModelOverride(ctx context.Context, ts *turnStat
 		context.AfterFunc(ctx, func() { closeOwnedSessionModelProvider(exec) })
 	}
 	return nil
+}
+
+func closeSessionModelProviderIfOwned(agent *AgentInstance, provider providers.LLMProvider) {
+	if provider == nil || isSharedSessionModelProvider(agent, provider) {
+		return
+	}
+	closeProviderIfStateful(provider)
+}
+
+func isSharedSessionModelProvider(agent *AgentInstance, provider providers.LLMProvider) bool {
+	if agent == nil || provider == nil {
+		return false
+	}
+	if sameSessionModelProviderInstance(provider, agent.Provider) ||
+		sameSessionModelProviderInstance(provider, agent.LightProvider) {
+		return true
+	}
+	for _, shared := range agent.CandidateProviders {
+		if sameSessionModelProviderInstance(provider, shared) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameSessionModelProviderInstance(left, right providers.LLMProvider) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	leftType := reflect.TypeOf(left)
+	if leftType != reflect.TypeOf(right) || !leftType.Comparable() {
+		return false
+	}
+	return reflect.ValueOf(left).Interface() == reflect.ValueOf(right).Interface()
 }
 
 func closeOwnedSessionModelProvider(exec *turnExecution) {

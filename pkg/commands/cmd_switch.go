@@ -16,7 +16,7 @@ func switchCommand() Definition {
 				Description: "Switch to a different model",
 				ArgsUsage:   "to <name>",
 				Handler: func(ctx context.Context, req Request, rt *Runtime) error {
-					value := nthToken(req.Text, 3)
+					value := afterNthToken(req.Text, 3)
 					if nthToken(req.Text, 2) != "to" || strings.TrimSpace(value) == "" {
 						return req.Reply("Usage: /switch model to <name>")
 					}

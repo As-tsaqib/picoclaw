@@ -30,6 +30,11 @@ func sessionCommand() Definition {
 				Handler:     sessionOperationHandler("rename", 2),
 			},
 			{
+				Name:        "remove",
+				Description: "Remove the active session",
+				Handler:     sessionOperationHandler("remove", -1),
+			},
+			{
 				Name:        "use",
 				Description: "Switch by number or short ID",
 				ArgsUsage:   "<number|short-id>",

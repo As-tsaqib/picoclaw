@@ -56,10 +56,36 @@ func TestOwnedSessionModelProviderClosesOnTurnContextCancellation(t *testing.T) 
 }
 
 func TestSharedProviderIsNotClosedBySessionCleanup(t *testing.T) {
-	exec := &turnExecution{}
 	shared := &recordingStatefulProvider{}
-	closeOwnedSessionModelProvider(exec)
+	agent := &AgentInstance{
+		Provider: shared,
+		CandidateProviders: map[string]providers.LLMProvider{
+			providers.ModelKey("openai", "shared"): shared,
+		},
+	}
+	closeSessionModelProviderIfOwned(agent, shared)
 	assert.Zero(t, shared.closes.Load())
+}
+
+func TestPrimarySessionCandidateUsesTurnLocalProviderForDuplicateModelSources(t *testing.T) {
+	turnLocal := &recordingStatefulProvider{}
+	global := &recordingStatefulProvider{}
+	agent := &AgentInstance{CandidateProviders: map[string]providers.LLMProvider{
+		providers.ModelKey("openai", "shared"): global,
+	}}
+	active := []providers.FallbackCandidate{{
+		Provider: "openai", Model: "shared", IdentityKey: "cfg:v1:account-a",
+	}}
+
+	got, err := providerForFallbackCandidate(agent, turnLocal, active, active[0])
+	require.NoError(t, err)
+	assert.Same(t, turnLocal, got)
+	otherSource := providers.FallbackCandidate{
+		Provider: "openai", Model: "shared", IdentityKey: "cfg:v1:account-b",
+	}
+	got, err = providerForFallbackCandidate(agent, turnLocal, active, otherSource)
+	require.NoError(t, err)
+	assert.Same(t, global, got)
 }
 
 func TestModelSelectionValidationFailureClosesTemporaryProviderAndPreservesOverride(t *testing.T) {
@@ -92,4 +118,61 @@ func TestModelSelectionValidationFailureClosesTemporaryProviderAndPreservesOverr
 	require.NoError(t, readErr)
 	require.True(t, ok)
 	assert.Equal(t, old, got)
+}
+
+func TestRuntimeProviderInitializationFailureFallsBackWithoutMutatingTurn(t *testing.T) {
+	store := session.NewSessionManager("")
+	source := &config.ModelConfig{
+		ModelName: "override", Provider: "openai", Model: "openai/override-model", Enabled: true,
+	}
+	cfg := &config.Config{ModelList: []*config.ModelConfig{source}}
+	cfg.Agents.Defaults.Provider = "openai"
+	require.NoError(t, store.SetModelOverride("session-a", session.ModelOverride{
+		Provider: "openai", Model: "override-model", ConfigRef: stableModelConfigRef(source), Source: "configured",
+	}))
+	defaultProvider := &recordingStatefulProvider{}
+	temporary := &recordingStatefulProvider{}
+	agent := &AgentInstance{Provider: defaultProvider, Sessions: store}
+	al := &AgentLoop{
+		cfg: cfg,
+		providerFactory: func(*config.ModelConfig) (providers.LLMProvider, string, error) {
+			return temporary, "", errors.New("credential expired")
+		},
+	}
+	exec := &turnExecution{activeProvider: defaultProvider, activeModel: "default-model"}
+	err := al.applySessionModelOverride(
+		context.Background(),
+		&turnState{agent: agent, sessionKey: "session-a"},
+		exec,
+	)
+	require.NoError(t, err)
+	assert.Same(t, defaultProvider, exec.activeProvider)
+	assert.Equal(t, "default-model", exec.activeModel)
+	assert.Equal(t, int32(1), temporary.closes.Load())
+}
+
+func TestRuntimeValidationNeverClosesSharedProviderReturnedByFactory(t *testing.T) {
+	store := session.NewSessionManager("")
+	source := &config.ModelConfig{
+		ModelName: "override", Provider: "openai", Model: "openai/override-model", Enabled: true,
+	}
+	cfg := &config.Config{ModelList: []*config.ModelConfig{source}}
+	cfg.Agents.Defaults.Provider = "openai"
+	require.NoError(t, store.SetModelOverride("session-a", session.ModelOverride{
+		Provider: "openai", Model: "override-model", ConfigRef: stableModelConfigRef(source), Source: "configured",
+	}))
+	shared := &recordingStatefulProvider{}
+	agent := &AgentInstance{Provider: shared, Sessions: store}
+	al := &AgentLoop{
+		cfg: cfg,
+		providerFactory: func(*config.ModelConfig) (providers.LLMProvider, string, error) {
+			return shared, "", errors.New("validation failed")
+		},
+	}
+	require.NoError(t, al.applySessionModelOverride(
+		context.Background(),
+		&turnState{agent: agent, sessionKey: "session-a"},
+		&turnExecution{activeProvider: shared},
+	))
+	assert.Zero(t, shared.closes.Load())
 }

@@ -490,6 +490,89 @@ func (sm *SessionManager) RenameScopedSession(scope *SessionScope, aliases []str
 	return sm.Save(key)
 }
 
+func (sm *SessionManager) RemoveScopedSession(scope *SessionScope, aliases []string, key string) error {
+	key = sm.ResolveSessionKey(strings.TrimSpace(key))
+	if key == "" || scope == nil {
+		return ErrSessionNotInScope
+	}
+
+	sm.mu.RLock()
+	stored := sm.sessions[key]
+	inScope := stored != nil && legacySessionMatchesScope(stored, scope, aliases)
+	sm.mu.RUnlock()
+	if !inScope {
+		return ErrSessionNotInScope
+	}
+
+	previousOverride, hadOverride, err := sm.GetModelOverride(key)
+	if err != nil {
+		return err
+	}
+	if hadOverride {
+		if err := sm.ClearModelOverride(key); err != nil {
+			return err
+		}
+	}
+	restoreOverride := func() {
+		if hadOverride {
+			_ = sm.SetModelOverride(key, previousOverride)
+		}
+	}
+
+	sm.mu.Lock()
+	stored = sm.sessions[key]
+	if stored == nil || !legacySessionMatchesScope(stored, scope, aliases) {
+		sm.mu.Unlock()
+		restoreOverride()
+		return ErrSessionNotInScope
+	}
+
+	activeSnapshot := make(map[string]string, len(sm.active))
+	activeChanged := false
+	for route, active := range sm.active {
+		if active == key {
+			activeChanged = true
+			continue
+		}
+		activeSnapshot[route] = active
+	}
+	if activeChanged {
+		if err := sm.saveActiveSessions(activeSnapshot); err != nil {
+			sm.mu.Unlock()
+			restoreOverride()
+			return err
+		}
+	}
+
+	if strings.TrimSpace(sm.storage) != "" {
+		filename := sanitizeFilename(key)
+		if filename == "." || !filepath.IsLocal(filename) {
+			if activeChanged {
+				_ = sm.saveActiveSessions(sm.active)
+			}
+			sm.mu.Unlock()
+			restoreOverride()
+			return os.ErrInvalid
+		}
+		path := filepath.Join(sm.storage, filename+".json")
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			if activeChanged {
+				_ = sm.saveActiveSessions(sm.active)
+			}
+			sm.mu.Unlock()
+			restoreOverride()
+			return err
+		}
+	}
+
+	delete(sm.sessions, key)
+	if activeChanged {
+		sm.active = activeSnapshot
+	}
+	sm.mu.Unlock()
+	return nil
+}
+
 func (sm *SessionManager) SetAutomaticSessionName(key, content string) error {
 	name := AutoNameFromMessage(content)
 	if name == "" {

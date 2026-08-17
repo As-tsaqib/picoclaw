@@ -41,6 +41,7 @@ func stableModelConfigRef(mc *config.ModelConfig) string {
 		RequestTimeout      int               `json:"request_timeout"`
 		ThinkingLevel       string            `json:"thinking_level"`
 		ToolSchemaTransform string            `json:"tool_schema_transform"`
+		Streaming           bool              `json:"streaming"`
 		ExtraBody           map[string]any    `json:"extra_body"`
 		CustomHeaders       map[string]string `json:"custom_headers"`
 		APIKeys             []string          `json:"api_keys"`
@@ -61,16 +62,13 @@ func stableModelConfigRef(mc *config.ModelConfig) string {
 		RequestTimeout:      mc.RequestTimeout,
 		ThinkingLevel:       strings.TrimSpace(mc.ThinkingLevel),
 		ToolSchemaTransform: strings.TrimSpace(mc.ToolSchemaTransform),
+		Streaming:           mc.Streaming.Enabled,
 		ExtraBody:           mc.ExtraBody,
 		CustomHeaders:       mc.CustomHeaders,
 		Enabled:             mc.Enabled,
 		UserAgent:           strings.TrimSpace(mc.UserAgent),
 	}
-	for _, key := range mc.APIKeys.Values() {
-		digest := sha256.Sum256([]byte(key))
-		material.APIKeys = append(material.APIKeys, fmt.Sprintf("%x", digest[:]))
-	}
-	sort.Strings(material.APIKeys)
+	material.APIKeys = stableSecretDigests(mc.APIKeys.Values())
 	encoded, err := json.Marshal(material)
 	if err != nil {
 		// ModelConfig's persisted fields are JSON-compatible by contract. Keep a
@@ -126,7 +124,54 @@ func lookupSessionModelConfigByRef(
 	if aliasCount == 1 {
 		return aliasMatch
 	}
-	return lookupModelConfigByRef(cfg, ref, defaultProvider...)
+	return lookupUniqueLegacyModelConfigByRef(cfg, ref, defaultProvider...)
+}
+
+// lookupUniqueLegacyModelConfigByRef keeps compatibility with pre-cfg:v1
+// persisted references without ever invoking Config.GetModelConfig's
+// round-robin selection. Any legacy reference that can identify more than one
+// concrete provider source fails closed.
+func lookupUniqueLegacyModelConfigByRef(
+	cfg *config.Config,
+	ref string,
+	defaultProvider ...string,
+) *config.ModelConfig {
+	ref = strings.TrimSpace(ref)
+	if cfg == nil || ref == "" {
+		return nil
+	}
+
+	rawRef := providers.ParseModelRef(ref, "")
+	rawKey := ""
+	if rawRef != nil && strings.TrimSpace(rawRef.Provider) != "" && strings.TrimSpace(rawRef.Model) != "" {
+		rawKey = providers.ModelKey(rawRef.Provider, rawRef.Model)
+	}
+	fallbackProvider := ""
+	if len(defaultProvider) > 0 {
+		fallbackProvider = effectiveDefaultProvider(defaultProvider[0])
+	}
+
+	matches := make([]*config.ModelConfig, 0, 1)
+	for _, mc := range cfg.ModelList {
+		if mc == nil || strings.TrimSpace(mc.Model) == "" {
+			continue
+		}
+		protocol, modelID := modelProviderAndIDForResolution(fallbackProvider, mc)
+		matched := strings.EqualFold(strings.TrimSpace(mc.Model), ref)
+		if !matched && strings.EqualFold(strings.TrimSpace(modelID), ref) {
+			matched = fallbackProvider == "" || providers.NormalizeProvider(protocol) == fallbackProvider
+		}
+		if !matched && rawKey != "" {
+			matched = providers.ModelKey(protocol, modelID) == rawKey
+		}
+		if matched {
+			matches = append(matches, mc)
+		}
+	}
+	if len(matches) != 1 {
+		return nil
+	}
+	return matches[0]
 }
 
 func modelConfigSelectable(mc *config.ModelConfig) bool {
@@ -147,7 +192,7 @@ func modelConfigSelectable(mc *config.ModelConfig) bool {
 	switch protocol {
 	case "antigravity", "bedrock", "claude-cli", "codex-cli", "github-copilot":
 		return true
-	case "openai":
+	case "openai", "anthropic":
 		if authMethod == "oauth" || authMethod == "token" {
 			return true
 		}
@@ -184,18 +229,27 @@ func modelDiscoveryCacheKey(source modelSelection, mc *config.ModelConfig) (stri
 		return "", fmt.Errorf("encode model discovery identity: %w", err)
 	}
 	provider := providers.NormalizeProvider(source.Provider)
-	credentialIdentity := strings.Join(mc.APIKeys.Values(), "\x1f")
+	credentialIdentity := strings.Join(stableSecretDigests(mc.APIKeys.Values()), "\x1f")
 	if provider == "antigravity" {
 		credentialIdentity = "antigravity:none"
 		if cred, credErr := auth.GetCredential("google-antigravity"); credErr == nil && cred != nil {
-			credentialIdentity = strings.Join([]string{
+			secretValues := []string{cred.RefreshToken}
+			if strings.TrimSpace(cred.RefreshToken) == "" {
+				secretValues = []string{cred.AccessToken}
+			}
+			credentialMaterial := strings.Join(append([]string{
+				cred.Provider,
+				cred.AccountID,
 				cred.Email,
 				cred.ProjectID,
-				cred.AccessToken,
-				cred.RefreshToken,
-			}, "\x1f")
+				cred.AuthMethod,
+			}, stableSecretDigests(secretValues)...), "\x1f")
+			digest := sha256.Sum256([]byte(credentialMaterial))
+			credentialIdentity = fmt.Sprintf("%x", digest[:])
 		}
 	}
+	headerDigest := sha256.Sum256(headers)
+	extraBodyDigest := sha256.Sum256(extraBody)
 	material := strings.Join([]string{
 		provider,
 		strings.TrimSpace(source.ConfigRef),
@@ -206,11 +260,21 @@ func modelDiscoveryCacheKey(source modelSelection, mc *config.ModelConfig) (stri
 		strings.TrimSpace(mc.Workspace),
 		credentialIdentity,
 		strings.TrimSpace(mc.UserAgent),
-		string(headers),
-		string(extraBody),
+		fmt.Sprintf("%x", headerDigest[:]),
+		fmt.Sprintf("%x", extraBodyDigest[:]),
 	}, "\x00")
 	sum := sha256.Sum256([]byte(material))
 	return provider + "\x00" + strings.TrimSpace(source.ConfigRef) + "\x00" + fmt.Sprintf("%x", sum[:]), nil
+}
+
+func stableSecretDigests(values []string) []string {
+	digests := make([]string, 0, len(values))
+	for _, value := range values {
+		digest := sha256.Sum256([]byte(value))
+		digests = append(digests, fmt.Sprintf("%x", digest[:]))
+	}
+	sort.Strings(digests)
+	return digests
 }
 
 func uniqueModelSelections(items []modelSelection) []modelSelection {

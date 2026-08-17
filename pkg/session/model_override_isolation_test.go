@@ -1,11 +1,14 @@
 package session
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/As-tsaqib/picoclaw/pkg/memory"
 )
 
 func TestModelOverridesRemainIsolatedAcrossConcurrentSessions(t *testing.T) {
@@ -73,4 +76,78 @@ func TestModelOverridesRemainIsolatedAcrossTopics(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "gpt-a", a.Model)
 	assert.Equal(t, "gpt-b", b.Model)
+}
+
+func TestModelOverrideWritesAreAtomicAcrossManagerInstances(t *testing.T) {
+	dir := t.TempDir()
+	managers := []*SessionManager{NewSessionManager(dir), NewSessionManager(dir)}
+	const total = 40
+	errs := make(chan error, total)
+	var wg sync.WaitGroup
+	for i := 0; i < total; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- managers[i%len(managers)].SetModelOverride(
+				fmt.Sprintf("session-%02d", i),
+				ModelOverride{
+					Provider: "openai", Model: fmt.Sprintf("model-%02d", i), ConfigRef: "cfg:v1:shared",
+				},
+			)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	reopened := NewSessionManager(dir)
+	for i := 0; i < total; i++ {
+		got, found, err := reopened.GetModelOverride(fmt.Sprintf("session-%02d", i))
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, fmt.Sprintf("model-%02d", i), got.Model)
+	}
+}
+
+func TestModelOverrideWritesAreAtomicAcrossJSONLStoreInstances(t *testing.T) {
+	dir := t.TempDir()
+	storeA, err := memory.NewJSONLStore(dir)
+	require.NoError(t, err)
+	storeB, err := memory.NewJSONLStore(dir)
+	require.NoError(t, err)
+	backends := []*JSONLBackend{NewJSONLBackend(storeA), NewJSONLBackend(storeB)}
+	const total = 40
+	errs := make(chan error, total)
+	var wg sync.WaitGroup
+	for i := 0; i < total; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- backends[i%len(backends)].SetModelOverride(
+				fmt.Sprintf("session-%02d", i),
+				ModelOverride{
+					Provider: "openai", Model: fmt.Sprintf("model-%02d", i), ConfigRef: "cfg:v1:shared",
+				},
+			)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	verifyStore, err := memory.NewJSONLStore(dir)
+	require.NoError(t, err)
+	verify := NewJSONLBackend(verifyStore)
+	for i := 0; i < total; i++ {
+		got, found, err := verify.GetModelOverride(fmt.Sprintf("session-%02d", i))
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, fmt.Sprintf("model-%02d", i), got.Model)
+	}
 }
