@@ -701,7 +701,11 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(
 	case sessionRenameClaimRejected, sessionRenameClaimReplay:
 		return true, nil
 	case sessionRenameClaimExpired:
-		return true, c.sendSessionRenameNotice(ctx, message, "Permintaan rename sudah kedaluwarsa. Jalankan /session lagi.")
+		return true, c.sendSessionRenameNotice(
+			ctx,
+			message,
+			"Permintaan rename sudah kedaluwarsa. Jalankan /session lagi.",
+		)
 	case sessionRenameClaimInvalid:
 		return true, c.sendSessionRenameNotice(ctx, message, "Nama session harus berupa teks yang tidak kosong.")
 	}

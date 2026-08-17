@@ -719,7 +719,8 @@ func providerForFallbackCandidate(
 		return activeProvider, nil
 	}
 	if agent != nil {
-		if cp, ok := agent.CandidateProviders[providers.ModelKey(candidate.Provider, candidate.Model)]; ok && cp != nil {
+		key := providers.ModelKey(candidate.Provider, candidate.Model)
+		if cp, ok := agent.CandidateProviders[key]; ok && cp != nil {
 			return cp, nil
 		}
 	}

@@ -85,7 +85,6 @@ func TestModelOverrideWritesAreAtomicAcrossManagerInstances(t *testing.T) {
 	errs := make(chan error, total)
 	var wg sync.WaitGroup
 	for i := 0; i < total; i++ {
-		i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -123,7 +122,6 @@ func TestModelOverrideWritesAreAtomicAcrossJSONLStoreInstances(t *testing.T) {
 	errs := make(chan error, total)
 	var wg sync.WaitGroup
 	for i := 0; i < total; i++ {
-		i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

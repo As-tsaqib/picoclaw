@@ -7,11 +7,33 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/As-tsaqib/picoclaw/pkg/config"
 	"github.com/As-tsaqib/picoclaw/pkg/providers"
 	"github.com/As-tsaqib/picoclaw/pkg/session"
 )
 
 var ownedSessionModelProviders sync.Map // map[*turnExecution]providers.StatefulProvider
+
+func loadSessionModelOverrideFailSoft(
+	store session.ModelOverrideStore,
+	sessionKey string,
+) (session.ModelOverride, bool) {
+	override, found, err := store.GetModelOverride(sessionKey)
+	return override, found && err == nil
+}
+
+func createSessionModelProviderFailSoft(
+	agent *AgentInstance,
+	factory func(*config.ModelConfig) (providers.LLMProvider, string, error),
+	modelCfg *config.ModelConfig,
+) providers.LLMProvider {
+	provider, _, err := factory(modelCfg)
+	if err != nil {
+		closeSessionModelProviderIfOwned(agent, provider)
+		return nil
+	}
+	return provider
+}
 
 // applySessionModelOverride resolves a durable session override into turn-local
 // provider/model state. AgentInstance is never mutated, so concurrent sessions
@@ -24,13 +46,10 @@ func (al *AgentLoop) applySessionModelOverride(ctx context.Context, ts *turnStat
 	if !ok {
 		return nil
 	}
-	override, found, err := store.GetModelOverride(ts.sessionKey)
-	if err != nil {
-		// A corrupt or temporarily unavailable preference must not make the
-		// configured agent unusable. Keep the durable state intact so it can be
-		// repaired, but run this turn on the already-resolved default provider.
-		return nil
-	}
+	// A corrupt or temporarily unavailable preference must not make the
+	// configured agent unusable. Keep the durable state intact so it can be
+	// repaired, but run this turn on the already-resolved default provider.
+	override, found := loadSessionModelOverrideFailSoft(store, ts.sessionKey)
 	if !found {
 		return nil
 	}
@@ -55,9 +74,8 @@ func (al *AgentLoop) applySessionModelOverride(ctx context.Context, ts *turnStat
 	if factory == nil {
 		factory = providers.CreateProviderFromConfig
 	}
-	provider, _, err := factory(&modelCfg)
-	if err != nil {
-		closeSessionModelProviderIfOwned(ts.agent, provider)
+	provider := createSessionModelProviderFailSoft(ts.agent, factory, &modelCfg)
+	if provider == nil {
 		// Credentials and provider availability can change after an override was
 		// persisted. Treat that as stale runtime state and fail soft to default.
 		return nil
