@@ -20,7 +20,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Apply exact lint hardening patch
+      - name: Apply guarded lint hardening
         shell: bash
         env:
           EXPECTED_MAIN: 31d584912e0d9cac5b3701ea0df210f5d86db23a
@@ -28,7 +28,6 @@ jobs:
           TARGET_BRANCH: feat/personal-agent-memory-spec-v1
         run: |
           set -euo pipefail
-          cp .github/personal-memory-spec-v1/lint-fix.patch /tmp/lint-fix.patch
           git fetch origin \
             "+refs/heads/main:refs/remotes/origin/main" \
             "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
@@ -36,8 +35,66 @@ jobs:
           test "$(git rev-parse "origin/${TARGET_BRANCH}")" = "${EXPECTED_TARGET}"
           git switch --detach "${EXPECTED_TARGET}"
           git switch -c personal-memory-lint-hardening
-          git apply --check /tmp/lint-fix.patch
-          git apply /tmp/lint-fix.patch
+          python3 <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              "pkg/memory/curated_store.go": [
+                  (
+                      '\t\treturn CuratedBatchResult{Pending: &pending, Conflicts: conflicts, Outcomes: repeatedCuratedOutcome("pending", len(mutations))}, nil\n',
+                      '\t\treturn CuratedBatchResult{\n\t\t\tPending: &pending, Conflicts: conflicts,\n\t\t\tOutcomes: repeatedCuratedOutcome("pending", len(mutations)),\n\t\t}, nil\n',
+                  ),
+                  (
+                      '\t\tif target == CuratedTargetWorkspace && mutation.Visibility != "" && mutation.Visibility != CuratedVisibilityShared {\n',
+                      '\t\tif target == CuratedTargetWorkspace && mutation.Visibility != "" &&\n\t\t\tmutation.Visibility != CuratedVisibilityShared {\n',
+                  ),
+              ],
+              "pkg/memory/curated_store_test.go": [
+                  (
+                      '\tif _, err := store.Inspect(CuratedTargetCurrentUser, caller, private.Applied[0].ID); !errors.Is(err, ErrCuratedEntryNotFound) {\n\t\tt.Fatalf("shared group inspected private entry: %v", err)\n\t}\n',
+                      '\t_, inspectErr := store.Inspect(CuratedTargetCurrentUser, caller, private.Applied[0].ID)\n\tif !errors.Is(inspectErr, ErrCuratedEntryNotFound) {\n\t\tt.Fatalf("shared group inspected private entry: %v", inspectErr)\n\t}\n',
+                  ),
+                  (
+                      '\tif _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{\n\t\tAction: CuratedActionReplace, ID: private.Applied[0].ID, Content: "attempt private rewrite",\n\t}}, false); !errors.Is(err, ErrCuratedEntryNotFound) {\n\t\tt.Fatalf("shared group private rewrite error = %v, want ErrCuratedEntryNotFound", err)\n\t}\n',
+                      '\t_, replaceErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{\n\t\tAction: CuratedActionReplace, ID: private.Applied[0].ID, Content: "attempt private rewrite",\n\t}}, false)\n\tif !errors.Is(replaceErr, ErrCuratedEntryNotFound) {\n\t\tt.Fatalf("shared group private rewrite error = %v, want ErrCuratedEntryNotFound", replaceErr)\n\t}\n',
+                  ),
+                  (
+                      '\tif _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{\n\t\tAction: CuratedActionAdd, Content: "attempt private supersede",\n\t\tType: CuratedTypeIdentity, EvidenceKind: CuratedEvidenceExplicit,\n\t\tVisibility: CuratedVisibilityPrivate, Supersedes: private.Applied[0].ID,\n\t}}, false); !errors.Is(err, ErrCuratedEntryNotFound) {\n\t\tt.Fatalf("shared group private supersedes error = %v, want ErrCuratedEntryNotFound", err)\n\t}\n',
+                      '\t_, supersedeErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{\n\t\tAction: CuratedActionAdd, Content: "attempt private supersede",\n\t\tType: CuratedTypeIdentity, EvidenceKind: CuratedEvidenceExplicit,\n\t\tVisibility: CuratedVisibilityPrivate, Supersedes: private.Applied[0].ID,\n\t}}, false)\n\tif !errors.Is(supersedeErr, ErrCuratedEntryNotFound) {\n\t\tt.Fatalf("shared group private supersedes error = %v, want ErrCuratedEntryNotFound", supersedeErr)\n\t}\n',
+                  ),
+                  (
+                      '\tif err != nil || len(profile.Communication) != 1 || profile.Communication[0].Key != "communication.verbosity" || profile.Communication[0].Value != "concise" {\n',
+                      '\tif err != nil || len(profile.Communication) != 1 ||\n\t\tprofile.Communication[0].Key != "communication.verbosity" ||\n\t\tprofile.Communication[0].Value != "concise" {\n',
+                  ),
+              ],
+              "pkg/memory/curated_typed_retrieval_test.go": [
+                  (
+                      '\tif err := os.WriteFile(path, data, 0o600); err != nil {\n\t\tt.Fatal(err)\n\t}\n',
+                      '\twriteErr := os.WriteFile(path, data, 0o600)\n\tif writeErr != nil {\n\t\tt.Fatal(writeErr)\n\t}\n',
+                  ),
+              ],
+              "pkg/tools/memory_manage.go": [
+                  (
+                      '\t\t"visibility": map[string]any{\n\t\t\t"type": "string", "enum": []string{"behavioral", "private", "shared"},\n\t\t\t"description": "For current_user use behavioral only for safe preferences that may silently shape shared-context responses; use private for personal facts. Workspace uses shared.",\n\t\t},\n',
+                      '\t\t"visibility": map[string]any{\n\t\t\t"type": "string",\n\t\t\t"enum": []string{"behavioral", "private", "shared"},\n\t\t\t"description": "For current_user use behavioral only for safe preferences that may silently shape " +\n\t\t\t\t"shared-context responses; use private for personal facts. Workspace uses shared.",\n\t\t},\n',
+                  ),
+                  (
+                      '\t\t\tif memory.NormalizeCuratedVisibility(pending.Mutations[i].Visibility) == memory.CuratedVisibilityBehavioral {\n',
+                      '\t\t\tif memory.NormalizeCuratedVisibility(pending.Mutations[i].Visibility) ==\n\t\t\t\tmemory.CuratedVisibilityBehavioral {\n',
+                  ),
+              ],
+          }
+
+          for filename, pairs in replacements.items():
+              path = Path(filename)
+              text = path.read_text()
+              for old, new in pairs:
+                  count = text.count(old)
+                  if count != 1:
+                      raise SystemExit(f"guard failed for {filename}: expected one match, got {count}: {old!r}")
+                  text = text.replace(old, new, 1)
+              path.write_text(text)
+          PY
           gofmt -w \
             pkg/memory/curated_store.go \
             pkg/memory/curated_store_test.go \
