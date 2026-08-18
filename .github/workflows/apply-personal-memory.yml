@@ -1,98 +1,47 @@
 name: Apply personal-memory implementation
 
 on:
-  push:
+  pull_request:
     branches:
-      - automation/personal-memory-apply-20260818
+      - feat/personal-agent-memory
 
 permissions:
   contents: write
 
 jobs:
   apply:
+    if: github.event.pull_request.head.ref == 'automation/personal-memory-pr-trigger-20260818'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout bootstrap commit
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Verify and publish exact implementation
         shell: bash
         env:
           EXPECTED_BASE: 31d584912e0d9cac5b3701ea0df210f5d86db23a
           TARGET_BRANCH: feat/personal-agent-memory
-          BOOTSTRAP_BRANCH: automation/personal-memory-apply-20260818
           PATCH_SHA256: 6036398da17c297f8540348c49c0b4b4d449e01c7dec7226b072ce94a0c8848c
         run: |
           set -euo pipefail
-
           cat .github/personal-memory-bootstrap/patch.part.* > /tmp/personal-memory.patch
           echo "${PATCH_SHA256}  /tmp/personal-memory.patch" | sha256sum -c -
-
-          git fetch origin \
-            "+refs/heads/main:refs/remotes/origin/main" \
-            "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+          git fetch origin "+refs/heads/main:refs/remotes/origin/main" "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
           test "$(git rev-parse origin/main)" = "${EXPECTED_BASE}"
           test "$(git rev-parse "origin/${TARGET_BRANCH}")" = "${EXPECTED_BASE}"
-
           git switch --detach "${EXPECTED_BASE}"
           git switch -c personal-memory-apply
           git apply --check -p4 /tmp/personal-memory.patch
           git apply -p4 /tmp/personal-memory.patch
-
-          changed_go=(
-            pkg/agent/agent.go
-            pkg/agent/memory_commands.go
-            pkg/agent/memory_delivery.go
-            pkg/agent/memory_notifications.go
-            pkg/agent/memory_prompt.go
-            pkg/agent/memory_prompt_test.go
-            pkg/agent/memory_reviewer.go
-            pkg/agent/memory_reviewer_test.go
-            pkg/memory/curated_schema.go
-            pkg/memory/curated_store.go
-            pkg/memory/curated_store_test.go
-            pkg/memory/curated_types.go
-            pkg/memory/personal_memory_invariants_test.go
-            pkg/memory/user_profile.go
-            pkg/memory/user_profile_test.go
-            pkg/tools/memory_manage.go
-            pkg/tools/memory_tools_test.go
-          )
-          gofmt -l "${changed_go[@]}" > /tmp/gofmt-dirty
-          test ! -s /tmp/gofmt-dirty
+          changed_go=(pkg/agent/agent.go pkg/agent/memory_commands.go pkg/agent/memory_delivery.go pkg/agent/memory_notifications.go pkg/agent/memory_prompt.go pkg/agent/memory_prompt_test.go pkg/agent/memory_reviewer.go pkg/agent/memory_reviewer_test.go pkg/memory/curated_schema.go pkg/memory/curated_store.go pkg/memory/curated_store_test.go pkg/memory/curated_types.go pkg/memory/personal_memory_invariants_test.go pkg/memory/user_profile.go pkg/memory/user_profile_test.go pkg/tools/memory_manage.go pkg/tools/memory_tools_test.go)
+          test -z "$(gofmt -l "${changed_go[@]}")"
           git diff --check
-
-          cat > /tmp/expected-files <<'EOF'
-          docs/guides/curated-memory.md
-          pkg/agent/agent.go
-          pkg/agent/memory_commands.go
-          pkg/agent/memory_delivery.go
-          pkg/agent/memory_notifications.go
-          pkg/agent/memory_prompt.go
-          pkg/agent/memory_prompt_test.go
-          pkg/agent/memory_reviewer.go
-          pkg/agent/memory_reviewer_test.go
-          pkg/memory/curated_schema.go
-          pkg/memory/curated_store.go
-          pkg/memory/curated_store_test.go
-          pkg/memory/curated_types.go
-          pkg/memory/personal_memory_invariants_test.go
-          pkg/memory/user_profile.go
-          pkg/memory/user_profile_test.go
-          pkg/tools/memory_manage.go
-          pkg/tools/memory_tools_test.go
-          EOF
-          sed -i 's/^          //' /tmp/expected-files
+          printf '%s\n' docs/guides/curated-memory.md pkg/agent/agent.go pkg/agent/memory_commands.go pkg/agent/memory_delivery.go pkg/agent/memory_notifications.go pkg/agent/memory_prompt.go pkg/agent/memory_prompt_test.go pkg/agent/memory_reviewer.go pkg/agent/memory_reviewer_test.go pkg/memory/curated_schema.go pkg/memory/curated_store.go pkg/memory/curated_store_test.go pkg/memory/curated_types.go pkg/memory/personal_memory_invariants_test.go pkg/memory/user_profile.go pkg/memory/user_profile_test.go pkg/tools/memory_manage.go pkg/tools/memory_tools_test.go | sort > /tmp/expected-files
           git diff --name-only | sort > /tmp/actual-files
-          sort -o /tmp/expected-files /tmp/expected-files
           diff -u /tmp/expected-files /tmp/actual-files
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- $(cat /tmp/expected-files)
           git diff --cached --check
           git commit -m "feat: add durable personal agent memory"
           git push origin HEAD:"refs/heads/${TARGET_BRANCH}"
-          git push origin --delete "${BOOTSTRAP_BRANCH}"
