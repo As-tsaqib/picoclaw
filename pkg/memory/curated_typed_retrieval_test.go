@@ -105,8 +105,9 @@ func TestCuratedStoreV2PersonalEntriesMigrateVisibilityConservatively(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
+	writeErr := os.WriteFile(path, data, 0o600)
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	entries, err := store.List(CuratedTargetCurrentUser, caller)
 	if err != nil || len(entries) != 2 {

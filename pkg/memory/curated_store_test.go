@@ -160,20 +160,23 @@ func TestCuratedStoreSharedGroupUsesOnlyBehavioralCurrentUserMemory(t *testing.T
 	if err != nil || len(entries) != 1 || entries[0].ID != behavioral.Applied[0].ID {
 		t.Fatalf("shared group visible entries = %#v, %v", entries, err)
 	}
-	if _, err := store.Inspect(CuratedTargetCurrentUser, caller, private.Applied[0].ID); !errors.Is(err, ErrCuratedEntryNotFound) {
-		t.Fatalf("shared group inspected private entry: %v", err)
+	_, inspectErr := store.Inspect(CuratedTargetCurrentUser, caller, private.Applied[0].ID)
+	if !errors.Is(inspectErr, ErrCuratedEntryNotFound) {
+		t.Fatalf("shared group inspected private entry: %v", inspectErr)
 	}
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+	_, replaceErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
 		Action: CuratedActionReplace, ID: private.Applied[0].ID, Content: "attempt private rewrite",
-	}}, false); !errors.Is(err, ErrCuratedEntryNotFound) {
-		t.Fatalf("shared group private rewrite error = %v, want ErrCuratedEntryNotFound", err)
+	}}, false)
+	if !errors.Is(replaceErr, ErrCuratedEntryNotFound) {
+		t.Fatalf("shared group private rewrite error = %v, want ErrCuratedEntryNotFound", replaceErr)
 	}
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+	_, supersedeErr := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
 		Action: CuratedActionAdd, Content: "attempt private supersede",
 		Type: CuratedTypeIdentity, EvidenceKind: CuratedEvidenceExplicit,
 		Visibility: CuratedVisibilityPrivate, Supersedes: private.Applied[0].ID,
-	}}, false); !errors.Is(err, ErrCuratedEntryNotFound) {
-		t.Fatalf("shared group private supersedes error = %v, want ErrCuratedEntryNotFound", err)
+	}}, false)
+	if !errors.Is(supersedeErr, ErrCuratedEntryNotFound) {
+		t.Fatalf("shared group private supersedes error = %v, want ErrCuratedEntryNotFound", supersedeErr)
 	}
 
 	direct := caller
@@ -235,7 +238,9 @@ func TestCuratedCurrentUserMemorySurvivesSessionSwitch(t *testing.T) {
 		t.Fatalf("session switch lost durable current_user memory: %#v, %v", entries, err)
 	}
 	profile, err := store.CompileUserProfile(secondSession, UserProfileOptions{MaxChars: 1_000})
-	if err != nil || len(profile.Communication) != 1 || profile.Communication[0].Key != "communication.verbosity" || profile.Communication[0].Value != "concise" {
+	if err != nil || len(profile.Communication) != 1 ||
+		profile.Communication[0].Key != "communication.verbosity" ||
+		profile.Communication[0].Value != "concise" {
 		t.Fatalf("session switch profile = %#v, %v", profile, err)
 	}
 }
@@ -263,7 +268,8 @@ func TestCuratedPreferenceSameKeyValueIsIdempotent(t *testing.T) {
 		t.Fatalf("reaffirmation mutated logical state = %#v", second)
 	}
 	entries, err := store.List(CuratedTargetCurrentUser, caller)
-	if err != nil || len(entries) != 1 || entries[0].ID != first.Applied[0].ID || entries[0].EffectiveStatus() != CuratedStatusActive {
+	if err != nil || len(entries) != 1 || entries[0].ID != first.Applied[0].ID ||
+		entries[0].EffectiveStatus() != CuratedStatusActive {
 		t.Fatalf("idempotent preference entries = %#v, %v", entries, err)
 	}
 }

@@ -333,7 +333,10 @@ func (s *CuratedStore) ApplyBatch(
 		if writeErr := s.writeDocument(path, doc); writeErr != nil {
 			return CuratedBatchResult{}, writeErr
 		}
-		return CuratedBatchResult{Pending: &pending, Conflicts: conflicts, Outcomes: repeatedCuratedOutcome("pending", len(mutations))}, nil
+		return CuratedBatchResult{
+			Pending: &pending, Conflicts: conflicts,
+			Outcomes: repeatedCuratedOutcome("pending", len(mutations)),
+		}, nil
 	}
 
 	// Re-apply only the requested batch to the actual entries. Pending batches
@@ -410,7 +413,8 @@ func (s *CuratedStore) prepareMutations(
 		if mutation.EvidenceKind != "" && !ValidEvidenceKind(mutation.EvidenceKind) {
 			return nil, nil, ErrCuratedInvalidEvidence
 		}
-		if target == CuratedTargetWorkspace && mutation.Visibility != "" && mutation.Visibility != CuratedVisibilityShared {
+		if target == CuratedTargetWorkspace && mutation.Visibility != "" &&
+			mutation.Visibility != CuratedVisibilityShared {
 			return nil, nil, ErrCuratedInvalidTarget
 		}
 		if target == CuratedTargetCurrentUser && mutation.Visibility == CuratedVisibilityShared {

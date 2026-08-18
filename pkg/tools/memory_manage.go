@@ -93,8 +93,10 @@ func (t *MemoryManageTool) Parameters() map[string]any {
 			"description": "How the information was learned. Use explicit only for direct user statements/corrections.",
 		},
 		"visibility": map[string]any{
-			"type": "string", "enum": []string{"behavioral", "private", "shared"},
-			"description": "For current_user use behavioral only for safe preferences that may silently shape shared-context responses; use private for personal facts. Workspace uses shared.",
+			"type": "string",
+			"enum": []string{"behavioral", "private", "shared"},
+			"description": "For current_user use behavioral only for safe preferences that may silently shape " +
+				"shared-context responses; use private for personal facts. Workspace uses shared.",
 		},
 		"evidence_count":    map[string]any{"type": "integer", "minimum": 1, "maximum": 1000},
 		"observation_count": map[string]any{"type": "integer", "minimum": 0, "maximum": 1000},
@@ -262,7 +264,8 @@ func memoryBatchResultForTool(
 		pending := *result.Pending
 		pending.Mutations = append([]memory.CuratedMutation(nil), result.Pending.Mutations...)
 		for i := range pending.Mutations {
-			if memory.NormalizeCuratedVisibility(pending.Mutations[i].Visibility) == memory.CuratedVisibilityBehavioral {
+			if memory.NormalizeCuratedVisibility(pending.Mutations[i].Visibility) ==
+				memory.CuratedVisibilityBehavioral {
 				continue
 			}
 			pending.Mutations[i].Content = ""
