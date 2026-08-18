@@ -13,6 +13,19 @@ diff --git a/pkg/memory/curated_store.go b/pkg/memory/curated_store.go
  	}
  
  	// Re-apply only the requested batch to the actual entries. Pending batches
+diff --git a/pkg/memory/curated_store.go b/pkg/memory/curated_store.go
+--- a/pkg/memory/curated_store.go
++++ b/pkg/memory/curated_store.go
+@@ -413,7 +413,8 @@ func (s *CuratedStore) prepareMutations(
+ 		if mutation.EvidenceKind != "" && !ValidEvidenceKind(mutation.EvidenceKind) {
+ 			return nil, nil, ErrCuratedInvalidEvidence
+ 		}
+-		if target == CuratedTargetWorkspace && mutation.Visibility != "" && mutation.Visibility != CuratedVisibilityShared {
++		if target == CuratedTargetWorkspace && mutation.Visibility != "" &&
++			mutation.Visibility != CuratedVisibilityShared {
+ 			return nil, nil, ErrCuratedInvalidTarget
+ 		}
+ 		if target == CuratedTargetCurrentUser && mutation.Visibility == CuratedVisibilityShared {
 diff --git a/pkg/memory/curated_store_test.go b/pkg/memory/curated_store_test.go
 --- a/pkg/memory/curated_store_test.go
 +++ b/pkg/memory/curated_store_test.go
@@ -48,6 +61,20 @@ diff --git a/pkg/memory/curated_store_test.go b/pkg/memory/curated_store_test.go
  	}
  
  	direct := caller
+diff --git a/pkg/memory/curated_store_test.go b/pkg/memory/curated_store_test.go
+--- a/pkg/memory/curated_store_test.go
++++ b/pkg/memory/curated_store_test.go
+@@ -238,7 +241,10 @@ func TestCuratedStoreCurrentUserSurvivesSessionSwitch(t *testing.T) {
+ 		t.Fatalf("session switch lost durable current_user memory: %#v, %v", entries, err)
+ 	}
+ 	profile, err := store.CompileUserProfile(secondSession, UserProfileOptions{MaxChars: 1_000})
+-	if err != nil || len(profile.Communication) != 1 || profile.Communication[0].Key != "communication.verbosity" || profile.Communication[0].Value != "concise" {
++	if err != nil || len(profile.Communication) != 1 ||
++		profile.Communication[0].Key != "communication.verbosity" ||
++		profile.Communication[0].Value != "concise" {
+ 		t.Fatalf("session switch profile = %#v, %v", profile, err)
+ 	}
+ }
 diff --git a/pkg/memory/curated_typed_retrieval_test.go b/pkg/memory/curated_typed_retrieval_test.go
 --- a/pkg/memory/curated_typed_retrieval_test.go
 +++ b/pkg/memory/curated_typed_retrieval_test.go
@@ -79,3 +106,16 @@ diff --git a/pkg/tools/memory_manage.go b/pkg/tools/memory_manage.go
  		},
  		"evidence_count":    map[string]any{"type": "integer", "minimum": 1, "maximum": 1000},
  		"observation_count": map[string]any{"type": "integer", "minimum": 0, "maximum": 1000},
+diff --git a/pkg/tools/memory_manage.go b/pkg/tools/memory_manage.go
+--- a/pkg/tools/memory_manage.go
++++ b/pkg/tools/memory_manage.go
+@@ -264,7 +266,8 @@ func memoryBatchResultForTool(
+ 		pending := *result.Pending
+ 		pending.Mutations = append([]memory.CuratedMutation(nil), result.Pending.Mutations...)
+ 		for i := range pending.Mutations {
+-			if memory.NormalizeCuratedVisibility(pending.Mutations[i].Visibility) == memory.CuratedVisibilityBehavioral {
++			if memory.NormalizeCuratedVisibility(pending.Mutations[i].Visibility) ==
++				memory.CuratedVisibilityBehavioral {
+ 				continue
+ 			}
+ 			pending.Mutations[i].Content = ""
