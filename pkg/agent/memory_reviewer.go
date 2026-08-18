@@ -21,6 +21,7 @@ Decide whether it contains compact durable information worth saving. If not, ret
 Save stable user preferences, explicit corrections, name/timezone/role, and persistent personal workflows to current_user. Save only non-personal project conventions, durable environment facts, build policy, and reliable workflow lessons to workspace.
 
 Evidence matters: set evidence_kind=explicit only when the user directly stated/confirmed the fact or preference; use observed for repeated behavior supported by multiple observations; use inferred for a cautious useful conclusion. Never mark an inference as verified or give it explicit authority. For stable preferences use a compact preference_key/value when practical; a newer explicit value for the same key should replace the effective older value while preserving provenance.
+For current_user, set visibility=behavioral only for interaction/workflow preferences that are safe to apply silently in shared chats; use visibility=private for identity, relationship, episodic, or otherwise personal facts. Never use visibility=shared for current_user. Workspace memory uses visibility=shared.
 
 Learn actionable interaction preferences, not unsupported psychological or sensitive labels. Do not infer that the user is impatient, stubborn, introverted, emotional, politically/religiously affiliated, medically defined, or similar merely from conversation style.
 
@@ -99,7 +100,7 @@ func (al *AgentLoop) flushMemoryReview(ctx context.Context, agent *AgentInstance
 	if al == nil || agent == nil || al.cfg == nil || !al.cfg.Memory.Enabled ||
 		agent.CuratedMemory == nil || agent.RecallMemory == nil ||
 		agent.MemoryReviewState == nil || agent.memoryReviewer == nil || strings.TrimSpace(caller.UserKey) == "" ||
-		strings.TrimSpace(caller.SessionRef) == "" || !memory.AllowsPrivateUserMemory(caller) {
+		strings.TrimSpace(caller.SessionRef) == "" || !memory.HasCanonicalUserMemoryScope(caller) {
 		return nil
 	}
 	if strings.TrimSpace(caller.AgentID) == "" ||
@@ -131,7 +132,7 @@ func (al *AgentLoop) flushMemoryReview(ctx context.Context, agent *AgentInstance
 
 func (al *AgentLoop) rememberMemoryCallerScope(caller memory.CallerScope) {
 	if al == nil || strings.TrimSpace(caller.SessionKey) == "" ||
-		strings.TrimSpace(caller.SessionRef) == "" || !memory.AllowsPrivateUserMemory(caller) {
+		strings.TrimSpace(caller.SessionRef) == "" || !memory.HasCanonicalUserMemoryScope(caller) {
 		return
 	}
 	al.memoryCallerScopesMu.Lock()
@@ -293,8 +294,8 @@ func (al *AgentLoop) startMemoryReview(
 	if strings.TrimSpace(caller.SessionRef) == "" || strings.TrimSpace(caller.UserKey) == "" {
 		return false, fmt.Errorf("trusted user/session scope is unavailable")
 	}
-	if !memory.AllowsPrivateUserMemory(caller) {
-		return false, fmt.Errorf("private memory review requires a trusted direct-user scope")
+	if !memory.HasCanonicalUserMemoryScope(caller) {
+		return false, fmt.Errorf("memory review requires a trusted canonical-user scope")
 	}
 	if strings.TrimSpace(caller.AgentID) == "" ||
 		!strings.EqualFold(strings.TrimSpace(caller.AgentID), strings.TrimSpace(agent.ID)) {
@@ -341,12 +342,15 @@ func (al *AgentLoop) cancelMemoryReviewForLiveTurn(agent *AgentInstance, opts pr
 	if agent.memoryReviewer == nil {
 		return
 	}
+	// Hold the same barrier used by reviewer mutations while canceling. If a
+	// mutation is already in flight, it finishes first and the live turn writes
+	// afterward. Otherwise cancellation becomes visible before a reviewer can
+	// enter the mutation critical section.
 	agent.memoryReviewer.mu.Lock()
-	cancel := agent.memoryReviewer.cancel
-	agent.memoryReviewer.mu.Unlock()
-	if cancel != nil {
+	if cancel := agent.memoryReviewer.cancel; cancel != nil {
 		cancel()
 	}
+	agent.memoryReviewer.mu.Unlock()
 }
 
 func (al *AgentLoop) runMemoryReview(
@@ -360,8 +364,8 @@ func (al *AgentLoop) runMemoryReview(
 		return fmt.Errorf("memory reviewer is unavailable")
 	}
 	if ctx == nil || strings.TrimSpace(caller.UserKey) == "" ||
-		strings.TrimSpace(caller.SessionRef) == "" || !memory.AllowsPrivateUserMemory(caller) {
-		return fmt.Errorf("private memory review requires a trusted direct-user scope")
+		strings.TrimSpace(caller.SessionRef) == "" || !memory.HasCanonicalUserMemoryScope(caller) {
+		return fmt.Errorf("memory review requires a trusted canonical-user scope")
 	}
 	if strings.TrimSpace(caller.AgentID) == "" ||
 		!strings.EqualFold(strings.TrimSpace(caller.AgentID), strings.TrimSpace(agent.ID)) {
@@ -460,14 +464,20 @@ func (al *AgentLoop) runMemoryReview(
 			toolCtx := tools.WithToolCallerScope(ctx, caller)
 			toolCtx = tools.WithToolTurnID(toolCtx, "")
 			toolCtx = tools.WithBackgroundMemoryReview(toolCtx, true)
-			result := restricted.ExecuteWithContext(
-				toolCtx,
-				call.Name,
-				call.Arguments,
-				caller.Channel,
-				caller.ChatID,
-				nil,
-			)
+			var result *tools.ToolResult
+			mutationErr := agent.memoryReviewer.withMutationBarrier(ctx, func() {
+				result = restricted.ExecuteWithContext(
+					toolCtx,
+					call.Name,
+					call.Arguments,
+					caller.Channel,
+					caller.ChatID,
+					nil,
+				)
+			})
+			if mutationErr != nil {
+				return mutationErr
+			}
 			messages = append(messages, providers.Message{
 				Role: "tool", ToolCallID: callID, Content: result.ContentForLLM(),
 			})

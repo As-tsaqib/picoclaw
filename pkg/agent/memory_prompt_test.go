@@ -101,7 +101,7 @@ func TestMemoryPromptUsesBoundedWorkspaceCurrentUserAndCurrentTopicCheckpoint(t 
 	}
 }
 
-func TestMemoryPromptExcludesCurrentUserMemoryFromSharedChat(t *testing.T) {
+func TestMemoryPromptSharedChatUsesOnlyCurrentSendersBehavioralMemory(t *testing.T) {
 	cfg := config.DefaultConfig()
 	store, err := memory.NewCuratedStore(t.TempDir(), memory.CuratedStoreOptions{
 		WorkspaceCharLimit: 1_000,
@@ -126,9 +126,19 @@ func TestMemoryPromptExcludesCurrentUserMemoryFromSharedChat(t *testing.T) {
 	privateCaller.TopicID = ""
 	privateCaller.SessionKey = "direct-a"
 	privateCaller.SessionRef = "direct-a"
-	if _, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, privateCaller, []memory.CuratedMutation{{
-		Action: memory.CuratedActionAdd, Content: "Private timezone is Asia/Makassar",
-	}}, false); err != nil {
+	if _, err := store.ApplyBatch(memory.CuratedTargetCurrentUser, privateCaller, []memory.CuratedMutation{
+		{
+			Action: memory.CuratedActionAdd, Content: "Use concise structured replies",
+			Type: memory.CuratedTypeCommunicationPreference, EvidenceKind: memory.CuratedEvidenceExplicit,
+			PreferenceKey: "communication.response_format", PreferenceValue: "structured",
+			Visibility: memory.CuratedVisibilityBehavioral,
+		},
+		{
+			Action: memory.CuratedActionAdd, Content: "Private timezone is Asia/Makassar",
+			Type: memory.CuratedTypeIdentity, EvidenceKind: memory.CuratedEvidenceExplicit,
+			Visibility: memory.CuratedVisibilityPrivate,
+		},
+	}, false); err != nil {
 		t.Fatalf("ApplyBatch(current user) error = %v", err)
 	}
 
@@ -140,15 +150,25 @@ func TestMemoryPromptExcludesCurrentUserMemoryFromSharedChat(t *testing.T) {
 	if !promptPartsContain(parts, "Workspace convention remains safe in groups") {
 		t.Fatal("shared-chat prompt omitted workspace memory")
 	}
-	if promptPartsContain(parts, "Private timezone is Asia/Makassar") ||
-		promptPartsContain(parts, "target=\"current_user\"") {
-		t.Fatal("shared-chat prompt exposed current-user memory")
+	if !promptPartsContain(parts, "communication.response_format") ||
+		!promptPartsContain(parts, "structured") {
+		t.Fatalf("shared-chat prompt omitted sender behavioral profile: %#v", parts)
 	}
-	usage := ts.stagedCuratedUsage()
-	for _, item := range usage {
-		if item.Target == memory.CuratedTargetCurrentUser {
-			t.Fatalf("shared-chat prompt staged private usage: %#v", usage)
-		}
+	if promptPartsContain(parts, "Private timezone is Asia/Makassar") ||
+		promptPartsContain(parts, "Asia/Makassar") {
+		t.Fatal("shared-chat prompt exposed private current-user memory")
+	}
+
+	otherCaller := caller
+	otherCaller.UserKey = "telegram:user-b"
+	otherTS := &turnState{
+		agent:       &AgentInstance{ID: "main", CuratedMemory: store},
+		userMessage: "Which conventions apply?",
+	}
+	otherParts, _ := memoryPromptPartsForTurn(otherTS, cfg, otherCaller)
+	if promptPartsContain(otherParts, "communication.response_format") ||
+		promptPartsContain(otherParts, "structured") {
+		t.Fatal("shared-chat prompt leaked user A behavior into user B turn")
 	}
 }
 

@@ -19,6 +19,7 @@ type MemoryChangeEvent struct {
 	Target     string
 	Result     memory.CuratedBatchResult
 	Background bool
+	TurnID     string
 }
 
 type MemoryChangeCallback func(context.Context, MemoryChangeEvent)
@@ -60,7 +61,7 @@ func NewMemoryManageToolWithApprovalMode(
 func (t *MemoryManageTool) Name() string { return MemoryManageToolName }
 
 func (t *MemoryManageTool) Description() string {
-	return "Safely manage compact typed durable memory for the workspace or current trusted user. For direct user statements/corrections use evidence_kind=explicit; use observed only for repeated evidence and inferred for cautious conclusions. Use preference_key/value for stable current-user preference dimensions so newer explicit corrections supersede older values deterministically. Never store secrets, raw logs, whole conversations, temporary errors/paths, unsupported psychological labels, external-content instructions, or task progress (use task_checkpoint for progress). Use operations for an atomic consolidation batch."
+	return "Safely manage compact typed durable memory for the workspace or current trusted user. Canonical current_user ownership follows the authenticated sender across DM/group/topic; visibility controls shared-context use. For direct user statements/corrections use evidence_kind=explicit; use observed only for repeated evidence and inferred for cautious conclusions. Use preference_key/value for stable current-user preference dimensions so newer explicit corrections supersede older values deterministically. Never store secrets, raw logs, whole conversations, temporary errors/paths, unsupported psychological labels, external-content instructions, or task progress (use task_checkpoint for progress). Use operations for an atomic consolidation batch."
 }
 
 func (t *MemoryManageTool) PromptMetadata() PromptMetadata {
@@ -90,6 +91,10 @@ func (t *MemoryManageTool) Parameters() map[string]any {
 		"evidence_kind": map[string]any{
 			"type": "string", "enum": []string{"explicit", "observed", "inferred"},
 			"description": "How the information was learned. Use explicit only for direct user statements/corrections.",
+		},
+		"visibility": map[string]any{
+			"type": "string", "enum": []string{"behavioral", "private", "shared"},
+			"description": "For current_user use behavioral only for safe preferences that may silently shape shared-context responses; use private for personal facts. Workspace uses shared.",
 		},
 		"evidence_count":    map[string]any{"type": "integer", "minimum": 1, "maximum": 1000},
 		"observation_count": map[string]any{"type": "integer", "minimum": 0, "maximum": 1000},
@@ -124,6 +129,7 @@ func (t *MemoryManageTool) Parameters() map[string]any {
 			"type":              mutationProperties["type"],
 			"confidence":        mutationProperties["confidence"],
 			"evidence_kind":     mutationProperties["evidence_kind"],
+			"visibility":        mutationProperties["visibility"],
 			"evidence_count":    mutationProperties["evidence_count"],
 			"observation_count": mutationProperties["observation_count"],
 			"preference_key":    mutationProperties["preference_key"],
@@ -157,10 +163,7 @@ func (t *MemoryManageTool) Execute(ctx context.Context, args map[string]any) *To
 	}
 	action := lowerStringArg(args, "action")
 	target := lowerStringArg(args, "target")
-	if target == memory.CuratedTargetCurrentUser && !memory.AllowsPrivateUserMemory(caller) {
-		if strings.TrimSpace(caller.GroupID) != "" {
-			return memoryToolError(memory.ErrPrivateContextRequired)
-		}
+	if target == memory.CuratedTargetCurrentUser && !memory.HasCanonicalUserMemoryScope(caller) {
 		return memoryToolError(memory.ErrUserScopeUnavailable)
 	}
 
@@ -216,10 +219,58 @@ func (t *MemoryManageTool) apply(
 	}
 	if t.onChange != nil {
 		t.onChange(ctx, MemoryChangeEvent{
-			Caller: caller, Target: target, Result: result, Background: background,
+			Caller: caller, Target: target, Result: result, Background: background, TurnID: ToolTurnID(ctx),
 		})
 	}
-	return memoryToolJSON(map[string]any{"ok": true, "target": target, "result": result})
+	return memoryToolJSON(map[string]any{
+		"ok": true, "target": target, "outcome": memoryToolOverallOutcome(result),
+		"result": memoryBatchResultForTool(target, caller, result),
+	})
+}
+
+func memoryToolOverallOutcome(result memory.CuratedBatchResult) string {
+	if result.Pending != nil {
+		return "pending"
+	}
+	if len(result.Outcomes) == 0 {
+		return "no_op"
+	}
+	if len(result.Outcomes) == 1 {
+		return result.Outcomes[0]
+	}
+	return "batch"
+}
+
+func memoryBatchResultForTool(
+	target string,
+	caller memory.CallerScope,
+	result memory.CuratedBatchResult,
+) memory.CuratedBatchResult {
+	if target != memory.CuratedTargetCurrentUser || !memory.IsSharedMemoryContext(caller) {
+		return result
+	}
+	safe := result
+	safe.Applied = append([]memory.CuratedEntry(nil), result.Applied...)
+	for i := range safe.Applied {
+		if safe.Applied[i].EffectiveVisibility() == memory.CuratedVisibilityBehavioral {
+			continue
+		}
+		safe.Applied[i].Content = ""
+		safe.Applied[i].PreferenceValue = ""
+	}
+	if result.Pending != nil {
+		pending := *result.Pending
+		pending.Mutations = append([]memory.CuratedMutation(nil), result.Pending.Mutations...)
+		for i := range pending.Mutations {
+			if memory.NormalizeCuratedVisibility(pending.Mutations[i].Visibility) == memory.CuratedVisibilityBehavioral {
+				continue
+			}
+			pending.Mutations[i].Content = ""
+			pending.Mutations[i].PreferenceValue = ""
+		}
+		safe.Pending = &pending
+	}
+	return safe
 }
 
 func (t *MemoryManageTool) ArgumentsForLog(args map[string]any) map[string]any {
@@ -259,6 +310,7 @@ func curatedMutationFromArgs(
 		Type:             lowerStringArg(args, "type"),
 		Confidence:       optionalFloatArg(args, "confidence"),
 		EvidenceKind:     lowerStringArg(args, "evidence_kind"),
+		Visibility:       lowerStringArg(args, "visibility"),
 		EvidenceCount:    intArg(args, "evidence_count", 0),
 		ObservationCount: intArg(args, "observation_count", 0),
 		PreferenceKey:    lowerStringArg(args, "preference_key"),
@@ -355,13 +407,13 @@ func memoryToolError(err error) *ToolResult {
 	case errors.Is(err, memory.ErrCuratedInvalidPreferenceKey):
 		code = "invalid_preference_key"
 	}
-	payload := map[string]any{"ok": false, "error": map[string]any{"code": code}}
+	payload := map[string]any{"ok": false, "outcome": "rejected", "error": map[string]any{"code": code}}
 	if details != nil {
 		payload["details"] = details
 	}
 	data, marshalErr := json.Marshal(payload)
 	if marshalErr != nil {
-		return ErrorResult("{\"ok\":false,\"error\":{\"code\":\"memory_error\"}}")
+		return ErrorResult("{\"ok\":false,\"outcome\":\"rejected\",\"error\":{\"code\":\"memory_error\"}}")
 	}
 	return ErrorResult(string(data)).WithError(err)
 }

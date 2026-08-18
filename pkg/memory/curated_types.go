@@ -37,6 +37,10 @@ const (
 	CuratedEvidenceObserved = "observed"
 	CuratedEvidenceInferred = "inferred"
 	CuratedEvidenceLegacy   = "legacy"
+
+	CuratedVisibilityBehavioral = "behavioral"
+	CuratedVisibilityPrivate    = "private"
+	CuratedVisibilityShared     = "shared"
 )
 
 var (
@@ -107,6 +111,54 @@ func AllowsPrivateUserMemory(caller CallerScope) bool {
 	return strings.TrimSpace(caller.UserKey) != "" && strings.TrimSpace(caller.GroupID) == ""
 }
 
+// HasCanonicalUserMemoryScope reports whether the runtime resolved a stable
+// authenticated user identity. Group/topic location does not change ownership.
+func HasCanonicalUserMemoryScope(caller CallerScope) bool {
+	return strings.TrimSpace(caller.UserKey) != ""
+}
+
+// IsSharedMemoryContext reports whether a response is visible to other chat participants.
+func IsSharedMemoryContext(caller CallerScope) bool {
+	return strings.TrimSpace(caller.GroupID) != ""
+}
+
+func NormalizeCuratedVisibility(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case CuratedVisibilityBehavioral:
+		return CuratedVisibilityBehavioral
+	case CuratedVisibilityPrivate:
+		return CuratedVisibilityPrivate
+	case CuratedVisibilityShared:
+		return CuratedVisibilityShared
+	default:
+		return ""
+	}
+}
+
+func ValidCuratedVisibility(value string) bool {
+	return NormalizeCuratedVisibility(value) != ""
+}
+
+// EffectiveVisibility is deliberately conservative for legacy records. Stable
+// communication/workflow preferences are safe behavioral defaults; all other
+// personal entries default private until explicitly classified.
+func (entry CuratedEntry) EffectiveVisibility() string {
+	if visibility := NormalizeCuratedVisibility(entry.Visibility); visibility != "" {
+		return visibility
+	}
+	key := NormalizePreferenceKey(entry.PreferenceKey)
+	switch entry.EffectiveType() {
+	case CuratedTypeCommunicationPreference, CuratedTypeWorkflowPreference:
+		return CuratedVisibilityBehavioral
+	}
+	if strings.HasPrefix(key, "communication.") || strings.HasPrefix(key, "workflow.") ||
+		strings.HasPrefix(key, "formatting.") || strings.HasPrefix(key, "coding.") ||
+		strings.HasPrefix(key, "language.") || strings.HasPrefix(key, "tooling.") {
+		return CuratedVisibilityBehavioral
+	}
+	return CuratedVisibilityPrivate
+}
+
 // Provenance records where a curated fact came from without retaining a full
 // transcript. Source is a compact category such as user_request, agent, or
 // background_review.
@@ -129,6 +181,7 @@ type CuratedEntry struct {
 	Pinned           bool       `json:"pinned,omitempty"`
 	Confidence       float64    `json:"confidence,omitempty"`
 	EvidenceKind     string     `json:"evidence_kind,omitempty"`
+	Visibility       string     `json:"visibility,omitempty"`
 	EvidenceCount    int        `json:"evidence_count,omitempty"`
 	ObservationCount int        `json:"observation_count,omitempty"`
 	PreferenceKey    string     `json:"preference_key,omitempty"`
@@ -152,6 +205,7 @@ type CuratedMutation struct {
 	Type             string     `json:"type,omitempty"`
 	Confidence       *float64   `json:"confidence,omitempty"`
 	EvidenceKind     string     `json:"evidence_kind,omitempty"`
+	Visibility       string     `json:"visibility,omitempty"`
 	EvidenceCount    int        `json:"evidence_count,omitempty"`
 	ObservationCount int        `json:"observation_count,omitempty"`
 	PreferenceKey    string     `json:"preference_key,omitempty"`
@@ -173,6 +227,7 @@ type CuratedBatchResult struct {
 	Applied   []CuratedEntry        `json:"applied,omitempty"`
 	Pending   *PendingCuratedChange `json:"pending,omitempty"`
 	Conflicts []CuratedConflict     `json:"conflicts,omitempty"`
+	Outcomes  []string              `json:"outcomes,omitempty"`
 }
 
 // CuratedConflict is a bounded, non-destructive near-duplicate hint. It lets

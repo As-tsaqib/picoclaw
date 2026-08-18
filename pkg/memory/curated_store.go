@@ -19,7 +19,7 @@ import (
 	"github.com/As-tsaqib/picoclaw/pkg/fileutil"
 )
 
-const curatedDocumentVersion = 2
+const curatedDocumentVersion = 3
 
 const (
 	DefaultCuratedWorkspaceEntries = 512
@@ -141,7 +141,7 @@ func (s *CuratedStore) scopePath(target string, caller CallerScope) (string, str
 		return filepath.Join(s.root, "workspace.json"), "workspace", s.workspaceCharLimit, nil
 	case CuratedTargetCurrentUser:
 		userKey := strings.TrimSpace(caller.UserKey)
-		if userKey == "" || strings.TrimSpace(caller.GroupID) != "" {
+		if userKey == "" {
 			return "", "", 0, ErrUserScopeUnavailable
 		}
 		if len(userKey) > 1_024 || strings.ContainsRune(userKey, '\x00') {
@@ -213,6 +213,12 @@ func (s *CuratedStore) readDocument(path, digest string, migrate bool) (curatedD
 	}
 	for i := range doc.Entries {
 		doc.Entries[i] = normalizedCuratedEntry(doc.Entries[i])
+		if digest == "workspace" {
+			// Visibility is a personal-memory privacy classification. Legacy
+			// workspace entries are non-personal by definition and migrate to the
+			// explicit shared class instead of inheriting current-user defaults.
+			doc.Entries[i].Visibility = CuratedVisibilityShared
+		}
 	}
 	if version < curatedDocumentVersion && migrate {
 		doc.Version = curatedDocumentVersion
@@ -273,9 +279,12 @@ func (s *CuratedStore) ApplyBatch(
 		return CuratedBatchResult{}, readErr
 	}
 	now := s.now().UTC()
-	prepared, prepareErr := s.prepareMutations(target, doc, mutations, caller, now)
+	prepared, outcomes, prepareErr := s.prepareMutations(target, doc, mutations, caller, now)
 	if prepareErr != nil {
 		return CuratedBatchResult{}, prepareErr
+	}
+	if len(prepared) == 0 {
+		return CuratedBatchResult{Outcomes: outcomes}, nil
 	}
 	conflicts := findCuratedConflicts(doc.Entries, prepared)
 
@@ -324,7 +333,7 @@ func (s *CuratedStore) ApplyBatch(
 		if writeErr := s.writeDocument(path, doc); writeErr != nil {
 			return CuratedBatchResult{}, writeErr
 		}
-		return CuratedBatchResult{Pending: &pending, Conflicts: conflicts}, nil
+		return CuratedBatchResult{Pending: &pending, Conflicts: conflicts, Outcomes: repeatedCuratedOutcome("pending", len(mutations))}, nil
 	}
 
 	// Re-apply only the requested batch to the actual entries. Pending batches
@@ -353,7 +362,7 @@ func (s *CuratedStore) ApplyBatch(
 	if writeErr := s.writeDocument(path, doc); writeErr != nil {
 		return CuratedBatchResult{}, writeErr
 	}
-	return CuratedBatchResult{Applied: applied, Conflicts: conflicts}, nil
+	return CuratedBatchResult{Applied: applied, Conflicts: conflicts, Outcomes: outcomes}, nil
 }
 
 func (s *CuratedStore) prepareMutations(
@@ -362,27 +371,36 @@ func (s *CuratedStore) prepareMutations(
 	mutations []CuratedMutation,
 	caller CallerScope,
 	now time.Time,
-) ([]CuratedMutation, error) {
+) ([]CuratedMutation, []string, error) {
 	known := make(map[string]struct{}, len(doc.Entries)+len(mutations))
 	knownStatus := make(map[string]string, len(doc.Entries)+len(mutations))
 	knownPreferenceKey := make(map[string]string, len(doc.Entries)+len(mutations))
+	knownVisibility := make(map[string]string, len(doc.Entries)+len(mutations))
 	for _, entry := range doc.Entries {
 		known[entry.ID] = struct{}{}
 		knownStatus[entry.ID] = entry.EffectiveStatus()
 		knownPreferenceKey[entry.ID] = NormalizePreferenceKey(entry.PreferenceKey)
+		knownVisibility[entry.ID] = entry.EffectiveVisibility()
 	}
 	prepared := make([]CuratedMutation, 0, len(mutations))
+	outcomes := make([]string, 0, len(mutations))
 	for _, mutation := range mutations {
+		outcome := "updated"
 		mutation.Action = strings.ToLower(strings.TrimSpace(mutation.Action))
 		mutation.ID = strings.TrimSpace(mutation.ID)
 		mutation.Type = strings.ToLower(strings.TrimSpace(mutation.Type))
 		mutation.EvidenceKind = NormalizeEvidenceKind(mutation.EvidenceKind)
+		rawVisibility := strings.TrimSpace(mutation.Visibility)
+		if rawVisibility != "" && !ValidCuratedVisibility(rawVisibility) {
+			return nil, nil, ErrCuratedInvalidAction
+		}
+		mutation.Visibility = NormalizeCuratedVisibility(rawVisibility)
 		mutation.PreferenceKey = NormalizePreferenceKey(mutation.PreferenceKey)
 		mutation.PreferenceValue = strings.TrimSpace(mutation.PreferenceValue)
 		mutation.Supersedes = strings.TrimSpace(mutation.Supersedes)
 		if utf8.RuneCountInString(mutation.Content) > MaxCuratedEntryChars ||
 			!validCuratedProvenanceBounds(mutation.Provenance) {
-			return nil, ErrCuratedInvalidAction
+			return nil, nil, ErrCuratedInvalidAction
 		}
 		if mutation.Action == CuratedActionAdd && mutation.EvidenceKind == "" {
 			// Missing evidence is deliberately conservative. Old callers and the
@@ -390,98 +408,174 @@ func (s *CuratedStore) prepareMutations(
 			mutation.EvidenceKind = CuratedEvidenceInferred
 		}
 		if mutation.EvidenceKind != "" && !ValidEvidenceKind(mutation.EvidenceKind) {
-			return nil, ErrCuratedInvalidEvidence
+			return nil, nil, ErrCuratedInvalidEvidence
+		}
+		if target == CuratedTargetWorkspace && mutation.Visibility != "" && mutation.Visibility != CuratedVisibilityShared {
+			return nil, nil, ErrCuratedInvalidTarget
+		}
+		if target == CuratedTargetCurrentUser && mutation.Visibility == CuratedVisibilityShared {
+			return nil, nil, ErrCuratedInvalidTarget
 		}
 		if target == CuratedTargetCurrentUser &&
 			(mutation.Action == CuratedActionAdd || mutation.Action == CuratedActionReplace) &&
 			mutation.EvidenceKind != CuratedEvidenceExplicit &&
 			unsupportedSensitiveInference(mutation.Content, mutation.PreferenceKey) {
-			return nil, ErrCuratedSensitiveInference
+			return nil, nil, ErrCuratedSensitiveInference
 		}
 		if mutation.PreferenceKey != "" {
 			if !ValidPreferenceKey(mutation.PreferenceKey) ||
 				!preferenceKeyAllowedForTarget(target, mutation.PreferenceKey) {
-				return nil, ErrCuratedInvalidPreferenceKey
+				return nil, nil, ErrCuratedInvalidPreferenceKey
 			}
 			if mutation.PreferenceValue == "" || utf8.RuneCountInString(mutation.PreferenceValue) > 240 {
-				return nil, ErrCuratedInvalidPreferenceKey
+				return nil, nil, ErrCuratedInvalidPreferenceKey
 			}
 		}
 		if mutation.EvidenceCount < 0 || mutation.ObservationCount < 0 {
-			return nil, ErrCuratedInvalidAction
+			return nil, nil, ErrCuratedInvalidAction
+		}
+		// Validate add content before idempotency/reaffirmation handling. A no-op
+		// must never become a bypass for secret/sensitive-content validation.
+		if mutation.Action == CuratedActionAdd {
+			mutation.Content = strings.TrimSpace(mutation.Content)
+			if err := ValidateCuratedContent(mutation.Content); err != nil {
+				return nil, nil, err
+			}
+		}
+		if target == CuratedTargetCurrentUser && mutation.Action == CuratedActionAdd && mutation.PreferenceKey != "" {
+			for _, existing := range doc.Entries {
+				if existing.EffectiveStatus() != CuratedStatusActive ||
+					NormalizePreferenceKey(existing.PreferenceKey) != mutation.PreferenceKey ||
+					strings.TrimSpace(existing.PreferenceValue) != mutation.PreferenceValue {
+					continue
+				}
+				// Same logical preference/value is idempotent. Only a strictly stronger
+				// evidence class upgrades the existing record; equal/weaker reaffirmations
+				// are a no-op and therefore cannot create duplicate state or notifications.
+				if (CuratedEntry{EvidenceKind: mutation.EvidenceKind}).EvidenceAuthority() <= existing.EvidenceAuthority() {
+					mutation.Action = ""
+					outcome = "no_op"
+					break
+				}
+				outcome = "reaffirmed"
+				mutation.Action = CuratedActionReplace
+				mutation.ID = existing.ID
+				if mutation.Type == "" || mutation.Type == CuratedTypeOther {
+					mutation.Type = existing.EffectiveType()
+				}
+				if mutation.Visibility == "" {
+					mutation.Visibility = existing.EffectiveVisibility()
+				}
+				break
+			}
+			if mutation.Action == "" {
+				outcomes = append(outcomes, outcome)
+				continue
+			}
+		}
+		if target == CuratedTargetCurrentUser && IsSharedMemoryContext(caller) {
+			if mutation.Action != CuratedActionAdd && knownVisibility[mutation.ID] != "" &&
+				knownVisibility[mutation.ID] != CuratedVisibilityBehavioral {
+				return nil, nil, ErrCuratedEntryNotFound
+			}
+			// Adding a new entry must not turn supersedes into an existence oracle or
+			// management backdoor for private user memories from a shared context.
+			if mutation.Action == CuratedActionAdd && mutation.Supersedes != "" &&
+				knownVisibility[mutation.Supersedes] != "" &&
+				knownVisibility[mutation.Supersedes] != CuratedVisibilityBehavioral {
+				return nil, nil, ErrCuratedEntryNotFound
+			}
 		}
 		switch mutation.Action {
 		case CuratedActionAdd:
+			if outcome != "reaffirmed" {
+				if mutation.Supersedes != "" {
+					outcome = "superseded"
+				} else {
+					outcome = "added"
+				}
+			}
 			mutation.Content = strings.TrimSpace(mutation.Content)
 			if err := ValidateCuratedContent(mutation.Content); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if mutation.ID == "" {
 				id, err := s.newStableID("mem", known)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				mutation.ID = id
 			}
 			if !validStableEntryID(mutation.ID) {
-				return nil, ErrCuratedInvalidAction
+				return nil, nil, ErrCuratedInvalidAction
 			}
 			if _, exists := known[mutation.ID]; exists {
-				return nil, ErrCuratedDuplicate
+				return nil, nil, ErrCuratedDuplicate
 			}
 			if mutation.Type == "" {
 				mutation.Type = CuratedTypeOther
 			}
 			if !ValidCuratedType(mutation.Type) {
-				return nil, ErrCuratedInvalidType
+				return nil, nil, ErrCuratedInvalidType
 			}
 			if !curatedTypeAllowedForTarget(target, mutation.Type) {
-				return nil, ErrCuratedInvalidTarget
+				return nil, nil, ErrCuratedInvalidTarget
+			}
+			if mutation.Visibility == "" {
+				if target == CuratedTargetWorkspace {
+					mutation.Visibility = CuratedVisibilityShared
+				} else {
+					mutation.Visibility = (CuratedEntry{Type: mutation.Type, PreferenceKey: mutation.PreferenceKey}).EffectiveVisibility()
+				}
 			}
 			if err := validateCuratedTargetContent(target, mutation.Type, mutation.Content); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if mutation.Confidence != nil && (*mutation.Confidence <= 0 || *mutation.Confidence > 1) {
-				return nil, ErrCuratedInvalidAction
+				return nil, nil, ErrCuratedInvalidAction
 			}
 			if mutation.Supersedes != "" {
 				if !validStableEntryID(mutation.Supersedes) {
-					return nil, ErrCuratedInvalidAction
+					return nil, nil, ErrCuratedInvalidAction
 				}
 				if _, exists := known[mutation.Supersedes]; !exists {
-					return nil, ErrCuratedEntryNotFound
+					return nil, nil, ErrCuratedEntryNotFound
 				}
 				if status := knownStatus[mutation.Supersedes]; status != CuratedStatusActive {
-					return nil, ErrCuratedInvalidAction
+					return nil, nil, ErrCuratedInvalidAction
 				}
 				if priorKey := knownPreferenceKey[mutation.Supersedes]; mutation.PreferenceKey != "" &&
 					priorKey != "" && priorKey != mutation.PreferenceKey {
-					return nil, ErrCuratedInvalidPreferenceKey
+					return nil, nil, ErrCuratedInvalidPreferenceKey
 				}
 			}
 			if mutation.ExpiresAt != nil && !mutation.ExpiresAt.After(now) {
-				return nil, ErrCuratedInvalidAction
+				return nil, nil, ErrCuratedInvalidAction
 			}
 			known[mutation.ID] = struct{}{}
 			knownStatus[mutation.ID] = CuratedStatusActive
 			knownPreferenceKey[mutation.ID] = mutation.PreferenceKey
+			knownVisibility[mutation.ID] = mutation.Visibility
 			if mutation.Supersedes != "" {
 				knownStatus[mutation.Supersedes] = CuratedStatusSuperseded
 			}
 		case CuratedActionReplace:
+			if outcome != "reaffirmed" && mutation.Supersedes != "" && mutation.Supersedes != mutation.ID {
+				outcome = "superseded"
+			}
 			if !validStableEntryID(mutation.ID) {
-				return nil, ErrCuratedInvalidAction
+				return nil, nil, ErrCuratedInvalidAction
 			}
 			mutation.Content = strings.TrimSpace(mutation.Content)
 			if err := ValidateCuratedContent(mutation.Content); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if mutation.Type != "" {
 				if !ValidCuratedType(mutation.Type) {
-					return nil, ErrCuratedInvalidType
+					return nil, nil, ErrCuratedInvalidType
 				}
 				if !curatedTypeAllowedForTarget(target, mutation.Type) {
-					return nil, ErrCuratedInvalidTarget
+					return nil, nil, ErrCuratedInvalidTarget
 				}
 			}
 			effectiveType := mutation.Type
@@ -494,10 +588,10 @@ func (s *CuratedStore) prepareMutations(
 				}
 			}
 			if err := validateCuratedTargetContent(target, effectiveType, mutation.Content); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if mutation.Confidence != nil && (*mutation.Confidence <= 0 || *mutation.Confidence > 1) {
-				return nil, ErrCuratedInvalidAction
+				return nil, nil, ErrCuratedInvalidAction
 			}
 			effectivePreferenceKey := mutation.PreferenceKey
 			if effectivePreferenceKey == "" {
@@ -505,38 +599,41 @@ func (s *CuratedStore) prepareMutations(
 			}
 			if mutation.Supersedes != "" && mutation.Supersedes != mutation.ID {
 				if !validStableEntryID(mutation.Supersedes) {
-					return nil, ErrCuratedInvalidAction
+					return nil, nil, ErrCuratedInvalidAction
 				}
 				if _, exists := known[mutation.Supersedes]; !exists {
-					return nil, ErrCuratedEntryNotFound
+					return nil, nil, ErrCuratedEntryNotFound
 				}
 				if status := knownStatus[mutation.Supersedes]; status != CuratedStatusActive {
-					return nil, ErrCuratedInvalidAction
+					return nil, nil, ErrCuratedInvalidAction
 				}
 				if priorKey := knownPreferenceKey[mutation.Supersedes]; effectivePreferenceKey != "" &&
 					priorKey != "" && priorKey != effectivePreferenceKey {
-					return nil, ErrCuratedInvalidPreferenceKey
+					return nil, nil, ErrCuratedInvalidPreferenceKey
 				}
 				knownStatus[mutation.Supersedes] = CuratedStatusSuperseded
 			}
 			knownPreferenceKey[mutation.ID] = effectivePreferenceKey
+			if mutation.Visibility != "" {
+				knownVisibility[mutation.ID] = mutation.Visibility
+			}
 		case CuratedActionRemove,
 			CuratedActionPin,
 			CuratedActionUnpin,
 			CuratedActionArchive,
 			CuratedActionRestore:
 			if !validStableEntryID(mutation.ID) {
-				return nil, ErrCuratedInvalidAction
+				return nil, nil, ErrCuratedInvalidAction
 			}
 			status, exists := knownStatus[mutation.ID]
 			if !exists {
-				return nil, ErrCuratedEntryNotFound
+				return nil, nil, ErrCuratedEntryNotFound
 			}
 			if mutation.Action == CuratedActionPin && status != CuratedStatusActive {
-				return nil, ErrCuratedInvalidAction
+				return nil, nil, ErrCuratedInvalidAction
 			}
 			if mutation.Action == CuratedActionRestore && status != CuratedStatusArchived {
-				return nil, ErrCuratedInvalidAction
+				return nil, nil, ErrCuratedInvalidAction
 			}
 			switch mutation.Action {
 			case CuratedActionRemove:
@@ -548,7 +645,7 @@ func (s *CuratedStore) prepareMutations(
 			}
 			mutation.Content = ""
 		default:
-			return nil, ErrCuratedInvalidAction
+			return nil, nil, ErrCuratedInvalidAction
 		}
 		if mutation.Provenance.Source == "" {
 			mutation.Provenance.Source = "agent"
@@ -575,12 +672,24 @@ func (s *CuratedStore) prepareMutations(
 		// Validate again after applying those fallbacks so an oversized topic or
 		// message label cannot bypass the mutation-level checks above.
 		if !validCuratedProvenanceBounds(mutation.Provenance) {
-			return nil, ErrCuratedInvalidAction
+			return nil, nil, ErrCuratedInvalidAction
 		}
 		mutation.Provenance.RecordedAt = now
 		prepared = append(prepared, mutation)
+		outcomes = append(outcomes, outcome)
 	}
-	return prepared, nil
+	return prepared, outcomes, nil
+}
+
+func repeatedCuratedOutcome(outcome string, count int) []string {
+	if count <= 0 {
+		return nil
+	}
+	outcomes := make([]string, count)
+	for i := range outcomes {
+		outcomes[i] = outcome
+	}
+	return outcomes
 }
 
 func applyCuratedMutations(
@@ -613,6 +722,7 @@ func applyCuratedMutations(
 				Status:           CuratedStatusActive,
 				Confidence:       DefaultConfidenceForEvidence(evidence),
 				EvidenceKind:     evidence,
+				Visibility:       mutation.Visibility,
 				EvidenceCount:    mutation.EvidenceCount,
 				ObservationCount: mutation.ObservationCount,
 				PreferenceKey:    NormalizePreferenceKey(mutation.PreferenceKey),
@@ -663,6 +773,9 @@ func applyCuratedMutations(
 			}
 			if mutation.EvidenceKind != "" {
 				entries[idx].EvidenceKind = NormalizeEvidenceKind(mutation.EvidenceKind)
+			}
+			if mutation.Visibility != "" {
+				entries[idx].Visibility = NormalizeCuratedVisibility(mutation.Visibility)
 			}
 			if mutation.Confidence != nil {
 				entries[idx].Confidence = *mutation.Confidence
@@ -839,9 +952,16 @@ func (s *CuratedStore) List(target string, caller CallerScope) ([]CuratedEntry, 
 		return nil, err
 	}
 	entries := cloneCuratedEntries(doc.Entries)
+	visible := entries[:0]
 	for i := range entries {
 		entries[i] = normalizedCuratedEntry(entries[i])
+		if strings.EqualFold(strings.TrimSpace(target), CuratedTargetCurrentUser) &&
+			IsSharedMemoryContext(caller) && entries[i].EffectiveVisibility() != CuratedVisibilityBehavioral {
+			continue
+		}
+		visible = append(visible, entries[i])
 	}
+	entries = visible
 	sort.SliceStable(entries, func(i, j int) bool {
 		if !entries[i].UpdatedAt.Equal(entries[j].UpdatedAt) {
 			return entries[i].UpdatedAt.After(entries[j].UpdatedAt)
@@ -911,7 +1031,7 @@ func (s *CuratedStore) Confirm(caller CallerScope, id string, provenance Provena
 	}
 	confidence := 1.0
 	now := s.now().UTC()
-	prepared, err := s.prepareMutations(CuratedTargetCurrentUser, doc, []CuratedMutation{{
+	prepared, _, err := s.prepareMutations(CuratedTargetCurrentUser, doc, []CuratedMutation{{
 		Action:          CuratedActionReplace,
 		ID:              entry.ID,
 		Content:         entry.Content,

@@ -486,3 +486,45 @@ func TestExplicitRestoreReaffirmsArchivedPreference(t *testing.T) {
 		t.Fatalf("restore confirmation = %#v, want %s", oldEntry.LastConfirmedAt, reaffirmedAt)
 	}
 }
+
+func TestCompileUserProfileSharedContextFiltersPrivateButKeepsBehavioral(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
+	direct := testCaller("telegram:user-shared-profile")
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, direct, []CuratedMutation{
+		{
+			Action: CuratedActionAdd, Content: "Prefers structured answers",
+			Type: CuratedTypeCommunicationPreference, EvidenceKind: CuratedEvidenceExplicit,
+			PreferenceKey: "communication.response_format", PreferenceValue: "structured",
+			Visibility: CuratedVisibilityBehavioral,
+		},
+		{
+			Action: CuratedActionAdd, Content: "Private home address fact",
+			Type: CuratedTypeIdentity, EvidenceKind: CuratedEvidenceExplicit,
+			Visibility: CuratedVisibilityPrivate,
+		},
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	privateProfile, err := store.CompileUserProfile(direct, UserProfileOptions{MaxChars: 1_200, MinConfidence: 0.65})
+	if err != nil || len(privateProfile.Communication) != 1 || len(privateProfile.Identity) != 1 {
+		t.Fatalf("direct profile = %#v, %v", privateProfile, err)
+	}
+
+	shared := direct
+	shared.ChatID = "group-1/9"
+	shared.GroupID = "group-1"
+	shared.TopicID = "9"
+	shared.SessionKey = "group-topic-9"
+	shared.SessionRef = "group-topic-9"
+	groupProfile, err := store.CompileUserProfile(shared, UserProfileOptions{MaxChars: 1_200, MinConfidence: 0.65})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groupProfile.Communication) != 1 || groupProfile.Communication[0].Key != "communication.response_format" {
+		t.Fatalf("shared behavioral profile = %#v", groupProfile.Communication)
+	}
+	if len(groupProfile.Identity) != 0 {
+		t.Fatalf("shared profile leaked private identity = %#v", groupProfile.Identity)
+	}
+}

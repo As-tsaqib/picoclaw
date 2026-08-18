@@ -80,6 +80,19 @@ func TestCanonicalUserScopeKeyUsesAccountAndIdentityLinks(t *testing.T) {
 	}
 }
 
+func TestCanonicalUserScopeKeyFailsClosedOnAmbiguousIdentityLinks(t *testing.T) {
+	links := map[string][]string{
+		"alice": {"telegram:42"},
+		"bob":   {"telegram:42"},
+	}
+	if got := CanonicalUserScopeKey("telegram", "personal", "42", links); got != "" {
+		t.Fatalf("CanonicalUserScopeKey(ambiguous) = %q, want fail-closed empty scope", got)
+	}
+	if got := CanonicalSessionIdentityID("telegram", "42", links); got != "42" {
+		t.Fatalf("CanonicalSessionIdentityID(ambiguous) = %q, want raw identity fallback", got)
+	}
+}
+
 func TestBuildMainSessionKey(t *testing.T) {
 	got := BuildMainSessionKey("Main")
 	if !IsOpaqueSessionKey(got) {

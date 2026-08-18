@@ -132,18 +132,203 @@ func TestAllowsPrivateUserMemoryFailsClosed(t *testing.T) {
 	}
 }
 
-func TestCuratedStoreRejectsPrivateScopeFromSharedGroupAtStorageBoundary(t *testing.T) {
-	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 1_000, 1_000)
+func TestCuratedStoreSharedGroupUsesOnlyBehavioralCurrentUserMemory(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
 	caller := testCaller("telegram:user-a")
 	caller.ChatID = "group-1/11"
 	caller.GroupID = "group-1"
-	if _, err := store.List(CuratedTargetCurrentUser, caller); !errors.Is(err, ErrUserScopeUnavailable) {
-		t.Fatalf("shared group private list error = %v, want ErrUserScopeUnavailable", err)
+
+	behavioral, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Prefers structured replies",
+		Type: CuratedTypeCommunicationPreference, EvidenceKind: CuratedEvidenceExplicit,
+		PreferenceKey: "communication.response_format", PreferenceValue: "structured",
+		Visibility: CuratedVisibilityBehavioral,
+	}}, false)
+	if err != nil || len(behavioral.Applied) != 1 {
+		t.Fatalf("group behavioral write = %#v, %v", behavioral, err)
+	}
+	private, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Private contact detail",
+		Type: CuratedTypeIdentity, EvidenceKind: CuratedEvidenceExplicit,
+		Visibility: CuratedVisibilityPrivate,
+	}}, false)
+	if err != nil || len(private.Applied) != 1 {
+		t.Fatalf("group private capture = %#v, %v", private, err)
+	}
+
+	entries, err := store.List(CuratedTargetCurrentUser, caller)
+	if err != nil || len(entries) != 1 || entries[0].ID != behavioral.Applied[0].ID {
+		t.Fatalf("shared group visible entries = %#v, %v", entries, err)
+	}
+	if _, err := store.Inspect(CuratedTargetCurrentUser, caller, private.Applied[0].ID); !errors.Is(err, ErrCuratedEntryNotFound) {
+		t.Fatalf("shared group inspected private entry: %v", err)
 	}
 	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
-		Action: CuratedActionAdd, Content: "Private group-scoped preference",
-	}}, false); !errors.Is(err, ErrUserScopeUnavailable) {
-		t.Fatalf("shared group private write error = %v, want ErrUserScopeUnavailable", err)
+		Action: CuratedActionReplace, ID: private.Applied[0].ID, Content: "attempt private rewrite",
+	}}, false); !errors.Is(err, ErrCuratedEntryNotFound) {
+		t.Fatalf("shared group private rewrite error = %v, want ErrCuratedEntryNotFound", err)
+	}
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "attempt private supersede",
+		Type: CuratedTypeIdentity, EvidenceKind: CuratedEvidenceExplicit,
+		Visibility: CuratedVisibilityPrivate, Supersedes: private.Applied[0].ID,
+	}}, false); !errors.Is(err, ErrCuratedEntryNotFound) {
+		t.Fatalf("shared group private supersedes error = %v, want ErrCuratedEntryNotFound", err)
+	}
+
+	direct := caller
+	direct.ChatID = "user-a"
+	direct.GroupID = ""
+	direct.TopicID = ""
+	entries, err = store.List(CuratedTargetCurrentUser, direct)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("direct canonical-user list = %#v, %v", entries, err)
+	}
+
+	other := caller
+	other.UserKey = "telegram:user-b"
+	entries, err = store.List(CuratedTargetCurrentUser, other)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("other sender inherited group profile = %#v, %v", entries, err)
+	}
+}
+
+func TestCuratedVisibilityValidationAndConservativeLegacyDefaults(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
+	caller := testCaller("telegram:visibility-user")
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Prefers concise replies",
+		Type: CuratedTypeCommunicationPreference, EvidenceKind: CuratedEvidenceExplicit,
+		Visibility: "public",
+	}}, false); !errors.Is(err, ErrCuratedInvalidAction) {
+		t.Fatalf("invalid visibility error = %v, want ErrCuratedInvalidAction", err)
+	}
+	legacyCorrection := CuratedEntry{
+		Type: CuratedTypeCorrection, PreferenceKey: "identity.display_name",
+	}
+	if got := legacyCorrection.EffectiveVisibility(); got != CuratedVisibilityPrivate {
+		t.Fatalf("legacy correction visibility = %q, want private", got)
+	}
+}
+
+func TestCuratedCurrentUserMemorySurvivesSessionSwitch(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
+	firstSession := testCaller("telegram:stable-user")
+	firstSession.SessionKey = "agent:main:telegram:user:session-a"
+	firstSession.SessionRef = "session-a"
+	result, err := store.ApplyBatch(CuratedTargetCurrentUser, firstSession, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Prefers concise responses",
+		Type: CuratedTypeCommunicationPreference, EvidenceKind: CuratedEvidenceExplicit,
+		PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
+		Visibility: CuratedVisibilityBehavioral,
+	}}, false)
+	if err != nil || len(result.Applied) != 1 {
+		t.Fatalf("first-session write = %#v, %v", result, err)
+	}
+
+	secondSession := firstSession
+	secondSession.SessionKey = "agent:main:telegram:user:session-b"
+	secondSession.SessionRef = "session-b"
+	secondSession.TopicID = "22"
+	entries, err := store.List(CuratedTargetCurrentUser, secondSession)
+	if err != nil || len(entries) != 1 || entries[0].ID != result.Applied[0].ID {
+		t.Fatalf("session switch lost durable current_user memory: %#v, %v", entries, err)
+	}
+	profile, err := store.CompileUserProfile(secondSession, UserProfileOptions{MaxChars: 1_000})
+	if err != nil || len(profile.Communication) != 1 || profile.Communication[0].Key != "communication.verbosity" || profile.Communication[0].Value != "concise" {
+		t.Fatalf("session switch profile = %#v, %v", profile, err)
+	}
+}
+
+func TestCuratedPreferenceSameKeyValueIsIdempotent(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
+	caller := testCaller("telegram:user-idempotent")
+	first, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Prefers Telegram Native Quiz",
+		Type: CuratedTypeWorkflowPreference, EvidenceKind: CuratedEvidenceExplicit,
+		PreferenceKey: "workflow.quiz_format", PreferenceValue: "telegram_native_quiz",
+	}}, false)
+	if err != nil || len(first.Applied) != 1 || len(first.Outcomes) != 1 || first.Outcomes[0] != "added" {
+		t.Fatalf("first preference = %#v, %v", first, err)
+	}
+	second, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Still prefers Telegram Native Quiz",
+		Type: CuratedTypeWorkflowPreference, EvidenceKind: CuratedEvidenceExplicit,
+		PreferenceKey: "workflow.quiz_format", PreferenceValue: "telegram_native_quiz",
+	}}, false)
+	if err != nil {
+		t.Fatalf("reaffirmation error = %v", err)
+	}
+	if len(second.Applied) != 0 || second.Pending != nil || len(second.Outcomes) != 1 || second.Outcomes[0] != "no_op" {
+		t.Fatalf("reaffirmation mutated logical state = %#v", second)
+	}
+	entries, err := store.List(CuratedTargetCurrentUser, caller)
+	if err != nil || len(entries) != 1 || entries[0].ID != first.Applied[0].ID || entries[0].EffectiveStatus() != CuratedStatusActive {
+		t.Fatalf("idempotent preference entries = %#v, %v", entries, err)
+	}
+}
+
+func TestCuratedPreferenceStrongerEvidenceReportsReaffirmed(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
+	caller := testCaller("telegram:user-reaffirmed")
+	first, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "Usually prefers concise responses",
+		Type: CuratedTypeCommunicationPreference, EvidenceKind: CuratedEvidenceObserved,
+		PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
+	}}, false)
+	if err != nil || len(first.Applied) != 1 {
+		t.Fatalf("observed preference = %#v, %v", first, err)
+	}
+	confirmed, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action: CuratedActionAdd, Content: "I prefer concise responses",
+		Type: CuratedTypeCommunicationPreference, EvidenceKind: CuratedEvidenceExplicit,
+		PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
+	}}, false)
+	if err != nil || len(confirmed.Applied) != 1 || confirmed.Applied[0].ID != first.Applied[0].ID ||
+		len(confirmed.Outcomes) != 1 || confirmed.Outcomes[0] != "reaffirmed" {
+		t.Fatalf("explicit reaffirmation = %#v, %v", confirmed, err)
+	}
+}
+
+func TestCuratedStoreConcurrentSamePreferenceIsSingleLogicalState(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
+	caller := testCaller("telegram:concurrent-preference")
+	const writers = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, writers)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+				Action: CuratedActionAdd, Content: "Prefers concise responses",
+				Type: CuratedTypeCommunicationPreference, EvidenceKind: CuratedEvidenceExplicit,
+				PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
+				Visibility: CuratedVisibilityBehavioral,
+			}}, false)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent ApplyBatch() error = %v", err)
+		}
+	}
+	entries, err := store.List(CuratedTargetCurrentUser, caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := 0
+	for _, entry := range entries {
+		if entry.EffectiveStatus() == CuratedStatusActive &&
+			NormalizePreferenceKey(entry.PreferenceKey) == "communication.verbosity" {
+			active++
+		}
+	}
+	if len(entries) != 1 || active != 1 {
+		t.Fatalf("concurrent reaffirmations created duplicate logical state: %#v", entries)
 	}
 }
 

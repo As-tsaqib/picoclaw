@@ -78,7 +78,7 @@ func (s *CuratedStore) CompileUserProfile(
 	if opts.MinConfidence > 1 {
 		opts.MinConfidence = 1
 	}
-	useCache := opts.Now.IsZero()
+	useCache := opts.Now.IsZero() && !IsSharedMemoryContext(caller)
 	if opts.Now.IsZero() {
 		opts.Now = s.now()
 	}
@@ -123,6 +123,9 @@ func (s *CuratedStore) CompileUserProfile(
 	candidates := make([]profileCandidate, 0, len(doc.Entries))
 	for _, raw := range doc.Entries {
 		entry := normalizedCuratedEntry(raw)
+		if IsSharedMemoryContext(caller) && entry.EffectiveVisibility() != CuratedVisibilityBehavioral {
+			continue
+		}
 		if !entry.PromptEligible(now) || !profileEligibleEntry(entry, opts.MinConfidence) {
 			continue
 		}
@@ -318,7 +321,7 @@ func userProfileRevision(entries []CuratedEntry) uint64 {
 			continue
 		}
 		for _, value := range []string{
-			entry.ID, entry.Content, entry.Type, entry.Status, entry.EvidenceKind,
+			entry.ID, entry.Content, entry.Type, entry.Status, entry.EvidenceKind, entry.EffectiveVisibility(),
 			entry.PreferenceKey, entry.PreferenceValue, entry.Supersedes,
 			entry.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		} {

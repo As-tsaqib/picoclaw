@@ -41,7 +41,8 @@ func TestCuratedStoreLegacyEntriesMigrateAtomicallyWithTypedDefaults(t *testing.
 		t.Fatalf("List: %v", err)
 	}
 	if len(entries) != 1 || entries[0].EffectiveType() != CuratedTypeOther ||
-		entries[0].EffectiveStatus() != CuratedStatusActive || entries[0].EffectiveConfidence() != 1 {
+		entries[0].EffectiveStatus() != CuratedStatusActive || entries[0].EffectiveConfidence() != 1 ||
+		entries[0].Visibility != CuratedVisibilityShared {
 		t.Fatalf("legacy typed defaults = %#v", entries)
 	}
 	after, err := os.ReadFile(path)
@@ -69,6 +70,66 @@ func TestCuratedStoreLegacyEntriesMigrateAtomicallyWithTypedDefaults(t *testing.
 	afterRestart, err := os.ReadFile(path)
 	if err != nil || !reflect.DeepEqual(afterRestart, after) {
 		t.Fatalf("migration was not idempotent: err=%v", err)
+	}
+}
+
+func TestCuratedStoreV2PersonalEntriesMigrateVisibilityConservatively(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "curated")
+	store := newTestCuratedStore(t, root, 5_000, 5_000)
+	caller := testCaller("telegram:visibility-migration")
+	path, digest, _, err := store.scopePath(CuratedTargetCurrentUser, caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	document := curatedDocument{
+		Version: 2, ScopeDigest: digest, Entries: []CuratedEntry{
+			{
+				ID: "mem_0000000000000001", Content: "Prefers concise replies",
+				Type: CuratedTypeCommunicationPreference, Status: CuratedStatusActive,
+				EvidenceKind: CuratedEvidenceExplicit, Confidence: 1,
+				PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
+				Provenance: Provenance{Source: "legacy", RecordedAt: now},
+				CreatedAt:  now, UpdatedAt: now,
+			},
+			{
+				ID: "mem_0000000000000002", Content: "Private home address fact",
+				Type: CuratedTypeIdentity, Status: CuratedStatusActive,
+				EvidenceKind: CuratedEvidenceExplicit, Confidence: 1,
+				Provenance: Provenance{Source: "legacy", RecordedAt: now},
+				CreatedAt:  now, UpdatedAt: now,
+			},
+		},
+	}
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := store.List(CuratedTargetCurrentUser, caller)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("List migrated current_user = %#v, %v", entries, err)
+	}
+	visibility := map[string]string{}
+	for _, entry := range entries {
+		visibility[entry.ID] = entry.Visibility
+	}
+	if visibility["mem_0000000000000001"] != CuratedVisibilityBehavioral ||
+		visibility["mem_0000000000000002"] != CuratedVisibilityPrivate {
+		t.Fatalf("migrated visibility = %#v", visibility)
+	}
+	persisted, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var migrated curatedDocument
+	if err := json.Unmarshal(persisted, &migrated); err != nil {
+		t.Fatal(err)
+	}
+	if migrated.Version != 3 {
+		t.Fatalf("migrated version = %d, want 3", migrated.Version)
 	}
 }
 
