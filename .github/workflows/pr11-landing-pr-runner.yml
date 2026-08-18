@@ -1,0 +1,78 @@
+name: PR11 Landing PR Runner
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  land:
+    if: github.repository == 'As-tsaqib/picoclaw' && github.event.pull_request.head.ref == 'automation/pr11-landing-helper'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout landing branch
+        uses: actions/checkout@v4
+        with:
+          ref: automation/pr11-landing-helper
+
+      - name: Restore shipped PR Completion helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/prc
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('.github/workflows/pr11-landing-helper.yml').read_text()
+          marker = "cat > /tmp/prc.b64 <<'EOF'\n"
+          block = source.split(marker, 1)[1].split("\n          EOF", 1)[0]
+          payload = "\n".join(line.strip() for line in block.splitlines() if line.strip()) + "\n"
+          Path('/tmp/prc.b64').write_text(payload)
+          PY
+          base64 -d /tmp/prc.b64 > /tmp/prc.tgz
+          echo '5bb8bef99e29ce405f3afa92a21e5efc2adb0f6c04e3ce67db5252d6d17edff9  /tmp/prc.tgz' | sha256sum -c -
+          tar -xzf /tmp/prc.tgz -C /tmp/prc
+          python3 -m py_compile /tmp/prc/pr_land.py /tmp/prc/pr_watch.py
+
+      - name: Guarded exact-head landing and observation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PR='https://github.com/As-tsaqib/picoclaw/pull/11'
+          HEAD='72c4056502b1b5900de5971c7f93fe692324b1b1'
+          python3 /tmp/prc/pr_land.py \
+            --repo "$GITHUB_WORKSPACE" \
+            --pr "$PR" \
+            --head "$HEAD" \
+            --mode auto \
+            --method squash \
+            --pretty | tee /tmp/plan.json
+          DIGEST="$(python3 -c 'import json; print(json.load(open("/tmp/plan.json"))["readinessPolicyDigest"])')"
+          python3 /tmp/prc/pr_land.py \
+            --repo "$GITHUB_WORKSPACE" \
+            --pr "$PR" \
+            --head "$HEAD" \
+            --mode auto \
+            --method squash \
+            --policy-digest "$DIGEST" \
+            --confirm \
+            --pretty | tee /tmp/landing.json
+          REQUESTED_AT="$(python3 -c 'import json; print(json.load(open("/tmp/landing.json"))["requestedAt"])')"
+          python3 /tmp/prc/pr_watch.py \
+            --target "$GITHUB_WORKSPACE=$PR" \
+            --await-merge "$HEAD" \
+            --await-merge-mode auto \
+            --await-merge-since "$REQUESTED_AT" \
+            --mode until-actionable \
+            --interval 5 \
+            --max-interval 10 \
+            --timeout 180 \
+            --pretty
