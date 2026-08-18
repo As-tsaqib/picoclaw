@@ -1,0 +1,153 @@
+name: Apply personal-memory spec v1
+
+on:
+  pull_request:
+    branches:
+      - feat/personal-agent-memory-spec-v1
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.ref == 'automation/personal-memory-spec-v1-apply'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout bootstrap PR
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify and apply exact implementation
+        shell: bash
+        env:
+          EXPECTED_BASE: 31d584912e0d9cac5b3701ea0df210f5d86db23a
+          TARGET_BRANCH: feat/personal-agent-memory-spec-v1
+          PATCH_XZ_SHA256: 112f708832928e306febae221da9effcf9038384b3ae8e8867007fe457a99300
+          PATCH_SHA256: 3dd29eee6b34458901cc9f0be3f51dcdfc6e2f196e919f90fa4a2167cd5e63ed
+        run: |
+          set -euo pipefail
+
+          cat .github/personal-memory-spec-v1/patch.xz.part.* > /tmp/personal-memory.patch.xz
+          echo "${PATCH_XZ_SHA256}  /tmp/personal-memory.patch.xz" | sha256sum -c -
+          xz -dc /tmp/personal-memory.patch.xz > /tmp/personal-memory.patch
+          echo "${PATCH_SHA256}  /tmp/personal-memory.patch" | sha256sum -c -
+
+          git fetch origin \
+            "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+          test "$(git rev-parse origin/main)" = "${EXPECTED_BASE}"
+          test "$(git rev-parse "origin/${TARGET_BRANCH}")" = "${EXPECTED_BASE}"
+
+          git switch --detach "${EXPECTED_BASE}"
+          git switch -c personal-memory-apply
+          git apply --check -p1 /tmp/personal-memory.patch
+          git apply -p1 /tmp/personal-memory.patch
+
+          changed_go=(
+            pkg/agent/instance.go
+            pkg/agent/memory_delivery.go
+            pkg/agent/memory_notifications.go
+            pkg/agent/memory_prompt.go
+            pkg/agent/memory_prompt_test.go
+            pkg/agent/memory_reviewer.go
+            pkg/agent/memory_reviewer_test.go
+            pkg/memory/curated_schema.go
+            pkg/memory/curated_store.go
+            pkg/memory/curated_store_test.go
+            pkg/memory/curated_typed_retrieval_test.go
+            pkg/memory/curated_types.go
+            pkg/memory/user_profile.go
+            pkg/memory/user_profile_test.go
+            pkg/session/key.go
+            pkg/session/key_test.go
+            pkg/tools/memory_manage.go
+            pkg/tools/memory_tools_test.go
+          )
+          gofmt -l "${changed_go[@]}" > /tmp/gofmt-dirty
+          test ! -s /tmp/gofmt-dirty
+          git diff --check
+
+          cat > /tmp/expected-files <<'EOF'
+          .github/workflows/personal-memory-validation.yml
+          docs/guides/curated-memory.md
+          pkg/agent/instance.go
+          pkg/agent/memory_delivery.go
+          pkg/agent/memory_notifications.go
+          pkg/agent/memory_prompt.go
+          pkg/agent/memory_prompt_test.go
+          pkg/agent/memory_reviewer.go
+          pkg/agent/memory_reviewer_test.go
+          pkg/memory/curated_schema.go
+          pkg/memory/curated_store.go
+          pkg/memory/curated_store_test.go
+          pkg/memory/curated_typed_retrieval_test.go
+          pkg/memory/curated_types.go
+          pkg/memory/user_profile.go
+          pkg/memory/user_profile_test.go
+          pkg/session/key.go
+          pkg/session/key_test.go
+          pkg/tools/memory_manage.go
+          pkg/tools/memory_tools_test.go
+          EOF
+          sed -i 's/^          //' /tmp/expected-files
+          git diff --name-only | sort > /tmp/actual-files
+          sort -o /tmp/expected-files /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Generate and run full tagged tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          go generate ./...
+          git diff --check
+          go test -tags goolm,stdjson ./...
+
+      - name: Run exact race acceptance suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -tags goolm,stdjson ./pkg/memory/...
+          go test -race -tags goolm,stdjson ./pkg/agent/...
+          go test -race -tags goolm,stdjson ./pkg/session/...
+          go test -race -tags goolm,stdjson ./pkg/channels/telegram/...
+
+      - name: Publish validated implementation
+        shell: bash
+        env:
+          TARGET_BRANCH: feat/personal-agent-memory-spec-v1
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            .github/workflows/personal-memory-validation.yml \
+            docs/guides/curated-memory.md \
+            pkg/agent/instance.go \
+            pkg/agent/memory_delivery.go \
+            pkg/agent/memory_notifications.go \
+            pkg/agent/memory_prompt.go \
+            pkg/agent/memory_prompt_test.go \
+            pkg/agent/memory_reviewer.go \
+            pkg/agent/memory_reviewer_test.go \
+            pkg/memory/curated_schema.go \
+            pkg/memory/curated_store.go \
+            pkg/memory/curated_store_test.go \
+            pkg/memory/curated_typed_retrieval_test.go \
+            pkg/memory/curated_types.go \
+            pkg/memory/user_profile.go \
+            pkg/memory/user_profile_test.go \
+            pkg/session/key.go \
+            pkg/session/key_test.go \
+            pkg/tools/memory_manage.go \
+            pkg/tools/memory_tools_test.go
+          git diff --cached --check
+          git commit -m "feat(memory): add durable personal agent memory"
+          git push origin HEAD:"refs/heads/${TARGET_BRANCH}"
