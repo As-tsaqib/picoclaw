@@ -1,0 +1,96 @@
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/docs/guides/curated-memory.md /mnt/data/picoclaw-personal-memory-work/docs/guides/curated-memory.md
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/docs/guides/curated-memory.md	2026-08-16 14:15:52.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/docs/guides/curated-memory.md	2026-08-18 00:14:51.657254727 +0000
+@@ -8,7 +8,7 @@
+ | Immutable kernel | Which security/privacy/tool rules can never be weakened | Runtime-owned; higher authority than personality or memory |
+ | `SOUL.md` | Who the agent is and how it naturally communicates | Authoritative personality/identity when present; generic PicoClaw identity is fallback only |
+ | `AGENT.md` | What this workspace/agent should do | Stable operator/workspace instructions |
+-| Compiled user profile | Who the current trusted user is and how to interact with them | Small derived view of private `current_user` curated memory |
++| Compiled user profile | Who the canonical current user is and how to interact with them | Small derived view of `current_user`; shared chats receive behavioral fields only |
+ | Session history | What was said recently | One allocated session or Telegram topic |
+ | Session summary | What older context in this session means | The same session or topic only |
+ | Curated memory | Which selective facts remain useful | Non-personal workspace facts or one trusted canonical user |
+@@ -65,19 +65,22 @@
+ - `pinned`: whether a compact fact is eligible regardless of the current query;
+ - `confidence` from greater than zero through one;
+ - `evidence_kind`: `explicit`, `observed`, `inferred`, or the migration-only `legacy`;
++- `visibility`: `behavioral` or `private` for `current_user`, and `shared` for workspace memory;
+ - optional `evidence_count` / `observation_count`;
+ - optional stable `preference_key` / `preference_value` for deterministic preference changes;
+ - `supersedes` for corrections/history;
+ - confirmation, presentation, archive, and expiry timestamps.
+ 
+-The store schema is versioned. A v1 structured document is normalized and
+-rewritten once as v2 under the same process and cross-process write lock, using
+-the store's bounded atomic/private-permission write path. A malformed or newer
+-unsupported document fails closed instead of being partially migrated. Legacy
+-non-reviewer records retain compatibility authority; old background-review
+-records are conservatively treated as inferred rather than silently becoming
+-user-confirmed facts. Manual `MEMORY.md` and daily notes are outside this
+-migration and are never rewritten.
++The store schema is versioned. Existing v1/v2 structured documents are
++normalized and rewritten once as v3 under the same process and cross-process
++write lock, using the store's bounded atomic/private-permission write path.
++Legacy current-user interaction preferences receive a deterministic behavioral
++classification; other legacy personal entries default private. A malformed or
++newer unsupported document fails closed instead of being partially migrated.
++Legacy non-reviewer records retain compatibility authority; old
++background-review records are conservatively treated as inferred rather than
++silently becoming user-confirmed facts. Manual `MEMORY.md` and daily notes are
++outside this migration and are never rewritten.
+ 
+ Workspace memory is for non-personal facts shared by sessions in the same
+ agent workspace, such as project conventions, environment details, build
+@@ -85,25 +88,48 @@
+ preferences, relationships, and episodic user facts are rejected from this
+ scope.
+ 
+-Current-user memory contains a trusted sender's stable identity, preferences,
+-corrections, and personal workflow choices. The user key is derived in backend
+-code from channel, account, sender identity, and configured canonical identity
+-links. Neither model tools nor dashboard requests can select an arbitrary user
+-ID, agent ID, workspace, session key, or memory path.
+-
+-Different users and agents use different structured stores. The same canonical
+-Telegram user can use their profile across topics, while another Telegram user
+-cannot read or mutate it. Private current-user listing and mutation commands
+-are available only in a safe direct chat. Shared chats expose at most safe
+-workspace information and redacted status.
++Current-user memory contains an authenticated sender's stable identity,
++preferences, corrections, and personal workflow choices. The owner is the
++canonical user derived in backend code from channel, account, sender identity,
++and configured canonical identity links; it is never the chat ID, topic ID, or
++session key. Neither model tools nor dashboard requests can select an arbitrary
++user ID, agent ID, workspace, session key, or memory path.
++
++Trusted DM, group, and forum-topic turns can capture `current_user` memory for
++the active sender. Visibility controls use rather than ownership: behavioral
++preferences such as response format, language, quiz format, and command style
++may influence that same sender in a shared chat, while private personal facts
++are filtered from shared prompt, list/search/inspect results, and notification
++previews. Another sender in the same group resolves a different canonical user
++store and cannot inherit, read, mutate, or delete the first sender's memory.
+ 
+ ## Compiled current-user profile
+ 
+-For a trusted direct chat, PicoClaw compiles a bounded `UserProfileSnapshot` from active curated current-user memory. This profile is always available to prompt assembly, so stable interaction preferences do not depend on retrieval luck. It contains only profile-relevant identity/communication/workflow/interaction fields and source memory IDs; project and episodic details remain query-retrieved.
+-
+-The snapshot is a cache, **not another source of truth**. It is rebuilt automatically when the underlying structured memory revision changes and cache validity also stops at the earliest relevant memory expiry, so expired preferences cannot survive through a stale profile cache. The in-process cache is a fixed-size least-recently-used map, preventing unbounded growth as users are encountered. Low-confidence inference is excluded by default, while explicit user preferences remain eligible. The default profile budget is 1,200 serialized characters. Private profiles are never loaded into shared/group or unknown-identity prompts.
+-
+-Structured preference keys make corrections deterministic. For example, a newer explicit `communication.verbosity=detailed` supersedes an older active `communication.verbosity=concise`; a weak inferred value cannot displace an explicit preference.
++For every turn with an unambiguous canonical user, PicoClaw compiles a bounded
++`UserProfileSnapshot` from active curated current-user memory. This Tier 0 view
++is query-independent, so stable interaction preferences do not depend on
++retrieval luck. In a DM it may include allowed private profile data; in a
++group/topic it is compiled from behavioral entries only. Project and episodic
++details remain query-retrieved.
++
++The snapshot is a cache, **not another source of truth**. It is rebuilt
++automatically when the underlying structured memory revision changes and cache
++validity also stops at the earliest relevant memory expiry, so expired
++preferences cannot survive through a stale profile cache. Direct and shared
++views use separate cache keys. The in-process cache is a fixed-size
++least-recently-used map, preventing unbounded growth as users are encountered.
++Low-confidence inference is excluded by default, while explicit user
++preferences remain eligible. The default profile budget is 1,200 serialized
++characters and ordering/truncation are deterministic. Missing or ambiguous

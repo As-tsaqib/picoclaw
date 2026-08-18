@@ -1,0 +1,206 @@
++func outcomesForAppliedMutations(mutations []CuratedMutation, applied []CuratedEntry) []CuratedMutationOutcome {
++	outcomes := make([]CuratedMutationOutcome, 0, len(mutations))
++	for i, mutation := range mutations {
++		status := CuratedOutcomeUpdated
++		switch mutation.Action {
++		case CuratedActionAdd:
++			status = CuratedOutcomeAdded
++			if mutation.Supersedes != "" {
++				status = CuratedOutcomeSuperseded
++			}
++		case CuratedActionReplace:
++			status = CuratedOutcomeUpdated
++		case CuratedActionRemove:
++			status = CuratedOutcomeRemoved
++		case CuratedActionPin:
++			status = CuratedOutcomePinned
++		case CuratedActionUnpin:
++			status = CuratedOutcomeUnpinned
++		case CuratedActionArchive:
++			status = CuratedOutcomeArchived
++		case CuratedActionRestore:
++			status = CuratedOutcomeRestored
++		}
++		visibility := mutation.Visibility
++		if visibility == "" {
++			for _, entry := range applied {
++				if entry.ID == mutation.ID {
++					visibility = entry.Visibility
++					break
++				}
++			}
++		}
++		outcomes = append(outcomes, CuratedMutationOutcome{
++			MutationIndex: i, Status: status, EntryID: mutation.ID,
++			PreferenceKey: mutation.PreferenceKey, Visibility: visibility,
++		})
++	}
++	return outcomes
+ }
+ 
+ func (s *CuratedStore) prepareMutations(
+@@ -377,6 +527,7 @@
+ 		mutation.ID = strings.TrimSpace(mutation.ID)
+ 		mutation.Type = strings.ToLower(strings.TrimSpace(mutation.Type))
+ 		mutation.EvidenceKind = NormalizeEvidenceKind(mutation.EvidenceKind)
++		mutation.Visibility = NormalizeCuratedVisibility(mutation.Visibility)
+ 		mutation.PreferenceKey = NormalizePreferenceKey(mutation.PreferenceKey)
+ 		mutation.PreferenceValue = strings.TrimSpace(mutation.PreferenceValue)
+ 		mutation.Supersedes = strings.TrimSpace(mutation.Supersedes)
+@@ -438,6 +589,12 @@
+ 			if !curatedTypeAllowedForTarget(target, mutation.Type) {
+ 				return nil, ErrCuratedInvalidTarget
+ 			}
++			if mutation.Visibility == "" {
++				mutation.Visibility = defaultVisibilityForMutation(target, mutation)
++			}
++			if !visibilityAllowedForTarget(target, mutation.Visibility) {
++				return nil, ErrCuratedInvalidVisibility
++			}
+ 			if err := validateCuratedTargetContent(target, mutation.Type, mutation.Content); err != nil {
+ 				return nil, err
+ 			}
+@@ -485,14 +642,27 @@
+ 				}
+ 			}
+ 			effectiveType := mutation.Type
+-			if effectiveType == "" {
++			effectiveVisibility := mutation.Visibility
++			if effectiveType == "" || effectiveVisibility == "" {
+ 				for _, entry := range doc.Entries {
+ 					if entry.ID == mutation.ID {
+-						effectiveType = entry.EffectiveType()
++						if effectiveType == "" {
++							effectiveType = entry.EffectiveType()
++						}
++						if effectiveVisibility == "" {
++							effectiveVisibility = entry.EffectiveVisibility(target)
++						}
+ 						break
+ 					}
+ 				}
+ 			}
++			if effectiveVisibility == "" {
++				effectiveVisibility = defaultVisibilityForMutation(target, mutation)
++			}
++			if !visibilityAllowedForTarget(target, effectiveVisibility) {
++				return nil, ErrCuratedInvalidVisibility
++			}
++			mutation.Visibility = effectiveVisibility
+ 			if err := validateCuratedTargetContent(target, effectiveType, mutation.Content); err != nil {
+ 				return nil, err
+ 			}
+@@ -538,6 +708,14 @@
+ 			if mutation.Action == CuratedActionRestore && status != CuratedStatusArchived {
+ 				return nil, ErrCuratedInvalidAction
+ 			}
++			if mutation.Visibility == "" {
++				for _, entry := range doc.Entries {
++					if entry.ID == mutation.ID {
++						mutation.Visibility = entry.EffectiveVisibility(target)
++						break
++					}
++				}
++			}
+ 			switch mutation.Action {
+ 			case CuratedActionRemove:
+ 				delete(knownStatus, mutation.ID)
+@@ -602,7 +780,8 @@
+ 			if idx >= 0 {
+ 				return nil, nil, ErrCuratedDuplicate
+ 			}
+-			if duplicateCuratedContent(entries, mutation.Content, "") {
++			if duplicateCuratedContent(entries, mutation.Content, "") &&
++				!duplicateHistoricalPreferenceValue(entries, mutation) {
+ 				return nil, nil, ErrCuratedDuplicate
+ 			}
+ 			evidence := NormalizeEvidenceKind(mutation.EvidenceKind)
+@@ -613,6 +792,7 @@
+ 				Status:           CuratedStatusActive,
+ 				Confidence:       DefaultConfidenceForEvidence(evidence),
+ 				EvidenceKind:     evidence,
++				Visibility:       mutation.Visibility,
+ 				EvidenceCount:    mutation.EvidenceCount,
+ 				ObservationCount: mutation.ObservationCount,
+ 				PreferenceKey:    NormalizePreferenceKey(mutation.PreferenceKey),
+@@ -664,6 +844,9 @@
+ 			if mutation.EvidenceKind != "" {
+ 				entries[idx].EvidenceKind = NormalizeEvidenceKind(mutation.EvidenceKind)
+ 			}
++			if mutation.Visibility != "" {
++				entries[idx].Visibility = mutation.Visibility
++			}
+ 			if mutation.Confidence != nil {
+ 				entries[idx].Confidence = *mutation.Confidence
+ 			} else if mutation.EvidenceKind != "" {
+@@ -839,9 +1022,14 @@
+ 		return nil, err
+ 	}
+ 	entries := cloneCuratedEntries(doc.Entries)
++	filtered := entries[:0]
+ 	for i := range entries {
+-		entries[i] = normalizedCuratedEntry(entries[i])
++		entries[i] = normalizedCuratedEntryForTarget(target, entries[i])
++		if CuratedEntryVisibleInContext(target, caller, entries[i]) {
++			filtered = append(filtered, entries[i])
++		}
+ 	}
++	entries = filtered
+ 	sort.SliceStable(entries, func(i, j int) bool {
+ 		if !entries[i].UpdatedAt.Equal(entries[j].UpdatedAt) {
+ 			return entries[i].UpdatedAt.After(entries[j].UpdatedAt)
+@@ -1280,6 +1468,33 @@
+ 	return false
+ }
+ 
++// duplicateHistoricalPreferenceValue permits a user to return to an older
++// structured preference value even when the compact human-readable content is
++// exactly the same as a superseded historical entry. Active same-value writes
++// are removed earlier by normalizePreferenceUpserts, so this exception cannot
++// create two effective states or bypass generic duplicate protection.
++func duplicateHistoricalPreferenceValue(entries []CuratedEntry, mutation CuratedMutation) bool {
++	key := NormalizePreferenceKey(mutation.PreferenceKey)
++	value := strings.TrimSpace(mutation.PreferenceValue)
++	if key == "" || value == "" {
++		return false
++	}
++	normalizedContent := normalizeCuratedContent(mutation.Content)
++	found := false
++	for _, entry := range entries {
++		if normalizeCuratedContent(entry.Content) != normalizedContent {
++			continue
++		}
++		found = true
++		if entry.EffectiveStatus() == CuratedStatusActive ||
++			NormalizePreferenceKey(entry.PreferenceKey) != key ||
++			strings.TrimSpace(entry.PreferenceValue) != value {
++			return false
++		}
++	}
++	return found
++}
++
+ func markCuratedSuperseded(entries []CuratedEntry, id string, now time.Time) {
+ 	for i := range entries {
+ 		if entries[i].ID != id {
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/memory/curated_store_test.go /mnt/data/picoclaw-personal-memory-work/pkg/memory/curated_store_test.go
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/memory/curated_store_test.go	2026-08-16 14:15:52.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/pkg/memory/curated_store_test.go	2026-08-18 00:03:59.042787425 +0000
+@@ -120,30 +120,51 @@
+ 	}
+ }
+ 
+-func TestAllowsPrivateUserMemoryFailsClosed(t *testing.T) {
+-	if !AllowsPrivateUserMemory(CallerScope{UserKey: "trusted-user"}) {
++func TestCanonicalUserMemoryAndPrivateContextPredicates(t *testing.T) {
++	direct := CallerScope{UserKey: "trusted-user"}
++	group := CallerScope{UserKey: "trusted-user", GroupID: "group-1"}
++	if !AllowsPrivateUserMemory(direct) || !HasCanonicalUserMemory(direct) {
+ 		t.Fatal("trusted direct user scope was rejected")
+ 	}
+-	if AllowsPrivateUserMemory(CallerScope{}) {
+-		t.Fatal("unknown user identity was allowed")
++	if AllowsPrivateUserMemory(group) {
++		t.Fatal("shared group scope was allowed to load private prompt data")
++	}
++	if !HasCanonicalUserMemory(group) {

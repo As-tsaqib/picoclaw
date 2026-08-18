@@ -1,0 +1,147 @@
++canonical identity fails closed.
++
++Structured preference keys are logical identities. A newer authoritative
++`communication.verbosity=detailed` supersedes the older active
++`communication.verbosity=concise` without requiring the caller to supply an ID.
++Repeating the same key/value is a no-op (or an in-place evidence upgrade), and a
++weaker inferred value cannot displace an explicit preference. Concurrent
++same-key writes are serialized under the document lock so exactly one effective
++active value remains.
+ 
+ Evidence authority is intentionally different: direct user statements are `explicit`, repeated behavioral evidence may be `observed`, and cautious model conclusions are `inferred`. `observed` requires at least two observations; a single observation is conservatively downgraded to inference. Inferred confidence is capped below profile eligibility, and neither observed nor inferred entries retain direct-user confirmation timestamps. An inferred entry is not automatically confirmed simply because the curator created it.
+ 
+@@ -129,11 +155,13 @@
+ 
+ ## Query-aware retrieval
+ 
+-Normal prompt assembly does not inject the whole structured store. For each turn, PicoClaw builds a compact retrieval query from the current message plus bounded session summary/recent user turns, then retrieves:
++Normal prompt assembly does not inject the whole structured store. Tier 0 is
++compiled independently first; Tier 1 then uses a compact retrieval query from
++the current message plus bounded session summary/recent user turns and retrieves:
+ 
+ 1. bounded active pinned entries;
+ 2. top query-relevant active workspace entries;
+-3. top query-relevant active current-user entries;
++3. top query-relevant active current-user entries, filtered to behavioral visibility in shared chats;
+ 4. only the configured recent fallback when the message has no meaningful
+    lexical tokens.
+ 
+@@ -199,7 +227,7 @@
+ current-session recall records, and its reviewer cursor. They discard
+ undelivered checkpoint mutations but preserve committed checkpoints, curated
+ memory, `MEMORY.md`, daily notes, and every unrelated session/topic. Starting
+-or switching Telegram topics selects a separate session and deletes nothing.
++or switching Telegram topics selects a separate session and deletes nothing. Durable current-user profile data therefore survives `/clear`, `/reset`, session creation/switch/removal, model changes, context compression, and process restart.
+ 
+ Context compression does not delete the durable recall store, so still-unreviewed delivered turns remain available to the curator after compaction. Recall and review-state stores are persisted as well, which means a process restart does not require a shutdown-time model call to preserve unreviewed turns; they can be curated after the process starts again.
+ 
+@@ -217,16 +245,21 @@
+ `off`, `true` maps to `background_only`, and an explicit `approval_mode` wins.
+ Existing config files are not rewritten merely because this enum exists.
+ 
+-Notification modes are `off`, `on` (`💾 Memory updated`), and `verbose`. Verbose
+-notifications contain at most a compact defense-in-depth redacted preview;
+-private shared-chat operations never reveal their content.
++Notification modes are `off`, `on` (`💾 Memory updated`), and `verbose`.
++Mutations are accumulated by logical turn, so one user turn produces at most one
++visible memory notification even if foreground handling performs several writes
++or the bounded reviewer revisits the same turn. Same-value/no-op updates stay
++quiet. Verbose notifications contain at most a compact defense-in-depth
++redacted preview; shared-chat notifications are generic and never reveal
++private memory content. Notification messages are marked internal and are not
++used as recall or reviewer evidence.
+ 
+ ## Commands and dashboard
+ 
+ Memory commands are:
+ 
+ - `/memory status`
+-- `/memory profile` (trusted direct chat only)
++- `/memory profile` (canonical user; shared chats show behavioral profile fields only)
+ - `/memory list`
+ - `/memory search QUERY`
+ - `/memory edit ID CONTENT`
+@@ -258,8 +291,8 @@
+ actions. That API is deliberately fixed to the authenticated dashboard's
+ canonical Pico-channel user identity; request fields and query parameters
+ cannot select another user. It does **not** enumerate Telegram or arbitrary
+-private stores. Telegram profiles remain manageable only from that trusted
+-user's direct chat commands.
++private stores. Channel-side commands remain scoped to the authenticated sender;
++in group/topic contexts the store and command views filter private entries.
+ 
+ ## Personal Telegram-bot preset
+ 
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/agent/agent.go /mnt/data/picoclaw-personal-memory-work/pkg/agent/agent.go
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/agent/agent.go	2026-08-16 14:15:52.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/pkg/agent/agent.go	2026-08-18 00:02:34.618110698 +0000
+@@ -64,6 +64,9 @@
+ 	memoryCallerScopes      sync.Map // session key -> memoryCallerScopeRecord for lifecycle flushes
+ 	memoryCallerScopeClock  atomic.Uint64
+ 	memoryCallerScopesMu    sync.Mutex
++	memoryNotifications     sync.Map // turn ID -> *memoryTurnNotificationState
++	memoryNotificationClock atomic.Uint64
++	memoryNotificationsMu   sync.Mutex
+ 	mu                      sync.RWMutex
+ 
+ 	// workerSem limits concurrent turn processing workers.
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/agent/memory_commands.go /mnt/data/picoclaw-personal-memory-work/pkg/agent/memory_commands.go
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/agent/memory_commands.go	2026-08-16 14:15:52.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/pkg/agent/memory_commands.go	2026-08-18 00:03:26.151922538 +0000
+@@ -61,8 +61,8 @@
+ 			return strings.Join(lines, "\n")
+ 		}
+ 		rt.MemoryProfile = func() (string, error) {
+-			if !memory.AllowsPrivateUserMemory(caller) {
+-				return "", memory.ErrPrivateContextRequired
++			if !memory.HasCanonicalUserMemory(caller) {
++				return "", memory.ErrUserScopeUnavailable
+ 			}
+ 			if !rt.Config.Memory.Profile.Enabled {
+ 				return "Compiled user profile is disabled.", nil
+@@ -81,9 +81,9 @@
+ 			if err != nil {
+ 				return "", err
+ 			}
+-			if !memory.AllowsPrivateUserMemory(caller) {
++			if !memory.HasCanonicalUserMemory(caller) {
+ 				return formatMemoryEntries(workspace, nil) +
+-					"\nCurrent-user memory is hidden in shared chats; use a direct chat to list it.", nil
++					"\nCurrent-user memory scope is unavailable on this request.", nil
+ 			}
+ 			user, userErr := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
+ 			if userErr != nil && !errors.Is(userErr, memory.ErrUserScopeUnavailable) {
+@@ -96,9 +96,9 @@
+ 			if err != nil {
+ 				return "", err
+ 			}
+-			if !memory.AllowsPrivateUserMemory(caller) {
++			if !memory.HasCanonicalUserMemory(caller) {
+ 				return formatMemoryEntries(workspace, nil) +
+-					"\nCurrent-user memory search is available only in a direct chat.", nil
++					"\nCurrent-user memory scope is unavailable on this request.", nil
+ 			}
+ 			user, userErr := agent.CuratedMemory.Search(memory.CuratedTargetCurrentUser, caller, query, 20)
+ 			if userErr != nil && !errors.Is(userErr, memory.ErrUserScopeUnavailable) {
+@@ -111,7 +111,7 @@
+ 				agent.CuratedMemory,
+ 				caller,
+ 				id,
+-				memory.AllowsPrivateUserMemory(caller),
++				memory.HasCanonicalUserMemory(caller),
+ 			)
+ 			if err != nil {
+ 				return "", err
+@@ -131,7 +131,7 @@
+ 				agent.CuratedMemory,
+ 				caller,
+ 				id,
+-				memory.AllowsPrivateUserMemory(caller),
++				memory.HasCanonicalUserMemory(caller),
+ 			)
+ 			if err != nil {
+ 				return "", err
+@@ -168,7 +168,7 @@
+ 				agent.CuratedMemory,
+ 				caller,
+ 				id,

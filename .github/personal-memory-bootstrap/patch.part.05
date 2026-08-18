@@ -1,0 +1,140 @@
++			if inspectErr != nil || entry.EffectiveVisibility(memory.CuratedTargetCurrentUser) != memory.CuratedVisibilityBehavioral {
++				t.Fatalf("shared-chat staged non-behavioral usage: %#v, err=%v", usage, inspectErr)
++			}
+ 		}
+ 	}
+ }
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/agent/memory_reviewer.go /mnt/data/picoclaw-personal-memory-work/pkg/agent/memory_reviewer.go
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/agent/memory_reviewer.go	2026-08-16 14:15:52.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/pkg/agent/memory_reviewer.go	2026-08-18 00:02:00.462988959 +0000
+@@ -20,6 +20,8 @@
+ 
+ Save stable user preferences, explicit corrections, name/timezone/role, and persistent personal workflows to current_user. Save only non-personal project conventions, durable environment facts, build policy, and reliable workflow lessons to workspace.
+ 
++current_user is owned by the canonical authenticated sender even when the source turn came from a trusted group/topic. Use visibility=behavioral only for interaction preferences safe to apply for that same sender in shared contexts. Use visibility=private for identity/personal facts that must remain unavailable to a shared prompt. Never expose private current_user entries through tool output or final text in a group/topic.
++
+ Evidence matters: set evidence_kind=explicit only when the user directly stated/confirmed the fact or preference; use observed for repeated behavior supported by multiple observations; use inferred for a cautious useful conclusion. Never mark an inference as verified or give it explicit authority. For stable preferences use a compact preference_key/value when practical; a newer explicit value for the same key should replace the effective older value while preserving provenance.
+ 
+ Learn actionable interaction preferences, not unsupported psychological or sensitive labels. Do not infer that the user is impatient, stubborn, introverted, emotional, politically/religiously affiliated, medically defined, or similar merely from conversation style.
+@@ -35,6 +37,7 @@
+ 
+ type memoryReviewRecord struct {
+ 	Sequence  uint64 `json:"sequence"`
++	TurnID    string `json:"turn_id,omitempty"`
+ 	Timestamp string `json:"timestamp"`
+ 	Role      string `json:"role"`
+ 	TopicID   string `json:"topic_id,omitempty"`
+@@ -99,7 +102,7 @@
+ 	if al == nil || agent == nil || al.cfg == nil || !al.cfg.Memory.Enabled ||
+ 		agent.CuratedMemory == nil || agent.RecallMemory == nil ||
+ 		agent.MemoryReviewState == nil || agent.memoryReviewer == nil || strings.TrimSpace(caller.UserKey) == "" ||
+-		strings.TrimSpace(caller.SessionRef) == "" || !memory.AllowsPrivateUserMemory(caller) {
++		strings.TrimSpace(caller.SessionRef) == "" || !memory.HasCanonicalUserMemory(caller) {
+ 		return nil
+ 	}
+ 	if strings.TrimSpace(caller.AgentID) == "" ||
+@@ -131,7 +134,7 @@
+ 
+ func (al *AgentLoop) rememberMemoryCallerScope(caller memory.CallerScope) {
+ 	if al == nil || strings.TrimSpace(caller.SessionKey) == "" ||
+-		strings.TrimSpace(caller.SessionRef) == "" || !memory.AllowsPrivateUserMemory(caller) {
++		strings.TrimSpace(caller.SessionRef) == "" || !memory.HasCanonicalUserMemory(caller) {
+ 		return
+ 	}
+ 	al.memoryCallerScopesMu.Lock()
+@@ -293,8 +296,8 @@
+ 	if strings.TrimSpace(caller.SessionRef) == "" || strings.TrimSpace(caller.UserKey) == "" {
+ 		return false, fmt.Errorf("trusted user/session scope is unavailable")
+ 	}
+-	if !memory.AllowsPrivateUserMemory(caller) {
+-		return false, fmt.Errorf("private memory review requires a trusted direct-user scope")
++	if !memory.HasCanonicalUserMemory(caller) {
++		return false, fmt.Errorf("memory review requires a canonical authenticated user scope")
+ 	}
+ 	if strings.TrimSpace(caller.AgentID) == "" ||
+ 		!strings.EqualFold(strings.TrimSpace(caller.AgentID), strings.TrimSpace(agent.ID)) {
+@@ -360,8 +363,8 @@
+ 		return fmt.Errorf("memory reviewer is unavailable")
+ 	}
+ 	if ctx == nil || strings.TrimSpace(caller.UserKey) == "" ||
+-		strings.TrimSpace(caller.SessionRef) == "" || !memory.AllowsPrivateUserMemory(caller) {
+-		return fmt.Errorf("private memory review requires a trusted direct-user scope")
++		strings.TrimSpace(caller.SessionRef) == "" || !memory.HasCanonicalUserMemory(caller) {
++		return fmt.Errorf("memory review requires a canonical authenticated user scope")
+ 	}
+ 	if strings.TrimSpace(caller.AgentID) == "" ||
+ 		!strings.EqualFold(strings.TrimSpace(caller.AgentID), strings.TrimSpace(agent.ID)) {
+@@ -394,14 +397,26 @@
+ 
+ 	snapshot := make([]memoryReviewRecord, 0, len(records))
+ 	reviewedSequences := make(map[uint64]struct{})
++	reviewTurnID := ""
++	multipleTurnIDs := false
+ 	for _, record := range records {
+ 		reviewedSequences[record.Sequence] = struct{}{}
++		if turnID := strings.TrimSpace(record.TurnID); turnID != "" {
++			if reviewTurnID == "" {
++				reviewTurnID = turnID
++			} else if reviewTurnID != turnID {
++				multipleTurnIDs = true
++			}
++		}
+ 		snapshot = append(snapshot, memoryReviewRecord{
+-			Sequence: record.Sequence, Timestamp: record.Timestamp.UTC().Format(time.RFC3339),
++			Sequence: record.Sequence, TurnID: record.TurnID, Timestamp: record.Timestamp.UTC().Format(time.RFC3339),
+ 			Role: record.Role, TopicID: record.TopicID, TopicName: record.TopicName,
+ 			Content: record.Content,
+ 		})
+ 	}
++	if multipleTurnIDs || reviewTurnID == "" {
++		reviewTurnID = fmt.Sprintf("memory-review:%s:%d", strings.TrimSpace(caller.SessionRef), latest)
++	}
+ 	data, err := json.Marshal(snapshot)
+ 	if err != nil {
+ 		return fmt.Errorf("encode memory review snapshot: %w", err)
+@@ -458,7 +473,7 @@
+ 				callID = fmt.Sprintf("memory_review_%d_%d", iteration, callIndex)
+ 			}
+ 			toolCtx := tools.WithToolCallerScope(ctx, caller)
+-			toolCtx = tools.WithToolTurnID(toolCtx, "")
++			toolCtx = tools.WithToolTurnID(toolCtx, reviewTurnID)
+ 			toolCtx = tools.WithBackgroundMemoryReview(toolCtx, true)
+ 			result := restricted.ExecuteWithContext(
+ 				toolCtx,
+@@ -484,6 +499,7 @@
+ 	if !completed {
+ 		return fmt.Errorf("memory review did not complete within iteration limit")
+ 	}
++	al.flushMemoryTurnNotification(reviewTurnID)
+ 	return agent.MemoryReviewState.MarkSuccessfulReview(caller, latest, len(reviewedSequences))
+ }
+ 
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/agent/memory_reviewer_test.go /mnt/data/picoclaw-personal-memory-work/pkg/agent/memory_reviewer_test.go
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/agent/memory_reviewer_test.go	2026-08-16 14:15:52.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/pkg/agent/memory_reviewer_test.go	2026-08-18 00:13:49.666098257 +0000
+@@ -235,29 +235,31 @@
+ 	}
+ }
+ 
+-func TestRunMemoryReviewerRejectsDeepScopeBypass(t *testing.T) {
++func TestRunMemoryReviewerAcceptsCanonicalGroupSenderAndRejectsAgentMismatch(t *testing.T) {
+ 	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+-		"action": "add", "target": "workspace", "content": "must not be reviewed",
++		"action": "add", "target": "workspace", "content": "durable project convention",
+ 	}}
+ 	al, agent, caller := newMemoryReviewerHarness(t, provider)
+-	appendReviewerTurn(t, agent, caller, "private-turn")
++	appendReviewerTurn(t, agent, caller, "group-originated durable preference")
+ 	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 
+ 	groupCaller := caller
+ 	groupCaller.GroupID = "group-1"
+-	if err := al.runMemoryReview(context.Background(), agent, groupCaller); err == nil {
+-		t.Fatal("deep reviewer accepted a shared group scope")
++	groupCaller.ChatID = "group-1/10"
++	groupCaller.TopicID = "10"
++	if err := al.runMemoryReview(context.Background(), agent, groupCaller); err != nil {
++		t.Fatalf("canonical group reviewer failed: %v", err)
++	}

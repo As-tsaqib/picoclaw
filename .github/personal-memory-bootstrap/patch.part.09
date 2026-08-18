@@ -1,0 +1,156 @@
++		t.Fatal("shared group sender lost canonical user ownership")
+ 	}
+-	if AllowsPrivateUserMemory(CallerScope{UserKey: "trusted-user", GroupID: "group-1"}) {
+-		t.Fatal("shared group scope was allowed to load private memory")
++	if HasCanonicalUserMemory(CallerScope{}) {
++		t.Fatal("unknown user identity was allowed")
+ 	}
+ }
+ 
+-func TestCuratedStoreRejectsPrivateScopeFromSharedGroupAtStorageBoundary(t *testing.T) {
++func TestCuratedStoreSharedGroupUsesCanonicalOwnerWithVisibilityFilter(t *testing.T) {
+ 	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 1_000, 1_000)
+-	caller := testCaller("telegram:user-a")
+-	caller.ChatID = "group-1/11"
+-	caller.GroupID = "group-1"
+-	if _, err := store.List(CuratedTargetCurrentUser, caller); !errors.Is(err, ErrUserScopeUnavailable) {
+-		t.Fatalf("shared group private list error = %v, want ErrUserScopeUnavailable", err)
+-	}
+-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+-		Action: CuratedActionAdd, Content: "Private group-scoped preference",
+-	}}, false); !errors.Is(err, ErrUserScopeUnavailable) {
+-		t.Fatalf("shared group private write error = %v, want ErrUserScopeUnavailable", err)
++	group := testCaller("telegram:user-a")
++	group.ChatID = "group-1/11"
++	group.GroupID = "group-1"
++	behavioral, err := store.ApplyBatch(CuratedTargetCurrentUser, group, []CuratedMutation{{
++		Action: CuratedActionAdd, Content: "Prefers concise replies", Type: CuratedTypeCommunicationPreference,
++		PreferenceKey: "communication.verbosity", PreferenceValue: "concise", EvidenceKind: CuratedEvidenceExplicit,
++		Visibility: CuratedVisibilityBehavioral,
++	}}, false)
++	if err != nil || len(behavioral.Applied) != 1 {
++		t.Fatalf("shared group behavioral write = %#v, %v", behavioral, err)
++	}
++	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, group, []CuratedMutation{{
++		Action: CuratedActionAdd, Content: "Timezone is Asia/Makassar", Type: CuratedTypeIdentity,
++		EvidenceKind: CuratedEvidenceExplicit, Visibility: CuratedVisibilityPrivate,
++	}}, false); err != nil {
++		t.Fatalf("shared group private capture error = %v", err)
++	}
++	groupEntries, err := store.List(CuratedTargetCurrentUser, group)
++	if err != nil || len(groupEntries) != 1 || groupEntries[0].PreferenceKey != "communication.verbosity" {
++		t.Fatalf("shared group visible entries = %#v, %v", groupEntries, err)
++	}
++	direct := group
++	direct.GroupID, direct.ChatID, direct.TopicID = "", "user-a", ""
++	directEntries, err := store.List(CuratedTargetCurrentUser, direct)
++	if err != nil || len(directEntries) != 2 {
++		t.Fatalf("direct canonical owner entries = %#v, %v", directEntries, err)
+ 	}
+ }
+ 
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/memory/curated_types.go /mnt/data/picoclaw-personal-memory-work/pkg/memory/curated_types.go
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/memory/curated_types.go	2026-08-16 14:15:52.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/pkg/memory/curated_types.go	2026-08-18 00:04:49.526666967 +0000
+@@ -37,6 +37,22 @@
+ 	CuratedEvidenceObserved = "observed"
+ 	CuratedEvidenceInferred = "inferred"
+ 	CuratedEvidenceLegacy   = "legacy"
++
++	CuratedVisibilityBehavioral = "behavioral"
++	CuratedVisibilityPrivate    = "private"
++	CuratedVisibilityShared     = "shared"
++
++	CuratedOutcomeAdded      = "added"
++	CuratedOutcomeUpdated    = "updated"
++	CuratedOutcomeSuperseded = "superseded"
++	CuratedOutcomeReaffirmed = "reaffirmed"
++	CuratedOutcomeNoOp       = "no_op"
++	CuratedOutcomeRemoved    = "removed"
++	CuratedOutcomePinned     = "pinned"
++	CuratedOutcomeUnpinned   = "unpinned"
++	CuratedOutcomeArchived   = "archived"
++	CuratedOutcomeRestored   = "restored"
++	CuratedOutcomePending    = "pending"
+ )
+ 
+ var (
+@@ -51,6 +67,7 @@
+ 	ErrCuratedInvalidType          = errors.New("invalid curated memory type")
+ 	ErrCuratedInvalidStatus        = errors.New("invalid curated memory status")
+ 	ErrCuratedInvalidEvidence      = errors.New("invalid curated memory evidence kind")
++	ErrCuratedInvalidVisibility    = errors.New("invalid curated memory visibility")
+ 	ErrCuratedInvalidPreferenceKey = errors.New("invalid curated memory preference key")
+ 	ErrCuratedInvalidPending       = errors.New("pending memory change not found")
+ 	ErrCuratedSensitiveInference   = errors.New("unsupported sensitive or psychological inference")
+@@ -107,6 +124,22 @@
+ 	return strings.TrimSpace(caller.UserKey) != "" && strings.TrimSpace(caller.GroupID) == ""
+ }
+ 
++// HasCanonicalUserMemory reports whether the runtime resolved a canonical
++// authenticated user. Unlike AllowsPrivateUserMemory, it remains true in a
++// trusted group/topic context: the owner is still the sender, while visibility
++// policy controls which entries may enter that shared model context.
++func HasCanonicalUserMemory(caller CallerScope) bool {
++	return strings.TrimSpace(caller.UserKey) != ""
++}
++
++// IsSharedMemoryContext reports whether output for this turn is visible to
++// other participants. GroupID deliberately represents the enclosing shared
++// conversation independently from UserKey, which continues to identify the
++// sender who owns current_user memory.
++func IsSharedMemoryContext(caller CallerScope) bool {
++	return strings.TrimSpace(caller.GroupID) != ""
++}
++
+ // Provenance records where a curated fact came from without retaining a full
+ // transcript. Source is a compact category such as user_request, agent, or
+ // background_review.
+@@ -129,6 +162,7 @@
+ 	Pinned           bool       `json:"pinned,omitempty"`
+ 	Confidence       float64    `json:"confidence,omitempty"`
+ 	EvidenceKind     string     `json:"evidence_kind,omitempty"`
++	Visibility       string     `json:"visibility,omitempty"`
+ 	EvidenceCount    int        `json:"evidence_count,omitempty"`
+ 	ObservationCount int        `json:"observation_count,omitempty"`
+ 	PreferenceKey    string     `json:"preference_key,omitempty"`
+@@ -152,6 +186,7 @@
+ 	Type             string     `json:"type,omitempty"`
+ 	Confidence       *float64   `json:"confidence,omitempty"`
+ 	EvidenceKind     string     `json:"evidence_kind,omitempty"`
++	Visibility       string     `json:"visibility,omitempty"`
+ 	EvidenceCount    int        `json:"evidence_count,omitempty"`
+ 	ObservationCount int        `json:"observation_count,omitempty"`
+ 	PreferenceKey    string     `json:"preference_key,omitempty"`
+@@ -170,9 +205,87 @@
+ }
+ 
+ type CuratedBatchResult struct {
+-	Applied   []CuratedEntry        `json:"applied,omitempty"`
+-	Pending   *PendingCuratedChange `json:"pending,omitempty"`
+-	Conflicts []CuratedConflict     `json:"conflicts,omitempty"`
++	Applied   []CuratedEntry           `json:"applied,omitempty"`
++	Pending   *PendingCuratedChange    `json:"pending,omitempty"`
++	Conflicts []CuratedConflict        `json:"conflicts,omitempty"`
++	Outcomes  []CuratedMutationOutcome `json:"outcomes,omitempty"`
++}
++
++// CuratedMutationOutcome exposes deterministic mutation semantics without
++// requiring callers to infer them from entry counts. Visibility is retained
++// internally so shared-context tool output can redact private mutation detail.
++type CuratedMutationOutcome struct {
++	MutationIndex int    `json:"mutation_index"`
++	Status        string `json:"status"`
++	EntryID       string `json:"entry_id,omitempty"`
++	PreferenceKey string `json:"preference_key,omitempty"`
++	Visibility    string `json:"visibility,omitempty"`
++}
++
++// Changed reports whether the result persisted a logical state mutation.
++// Reaffirming an identical effective preference and a no-op are intentionally
++// excluded so foreground/reviewer duplicate attempts do not create visible
++// notification spam.
++func (r CuratedBatchResult) Changed() bool {
++	if r.Pending != nil {
++		return true
++	}

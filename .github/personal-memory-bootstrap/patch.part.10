@@ -1,0 +1,173 @@
++	if len(r.Applied) > 0 && len(r.Outcomes) == 0 {
++		// Backward-compatible structural result from non-upgraded internal callers.
++		return true
++	}
++	for _, outcome := range r.Outcomes {
++		switch outcome.Status {
++		case CuratedOutcomeAdded, CuratedOutcomeUpdated, CuratedOutcomeSuperseded,
++			CuratedOutcomeRemoved, CuratedOutcomePinned, CuratedOutcomeUnpinned,
++			CuratedOutcomeArchived, CuratedOutcomeRestored:
++			return true
++		}
++	}
++	return false
++}
++
++// VisibleToCaller returns a model-safe result. A shared group/topic may write
++// private current-user memory for its authenticated sender, but write/read
++// results must not re-inject that private content into the shared model prompt.
++func (r CuratedBatchResult) VisibleToCaller(target string, caller CallerScope) CuratedBatchResult {
++	if !strings.EqualFold(strings.TrimSpace(target), CuratedTargetCurrentUser) ||
++		!IsSharedMemoryContext(caller) {
++		return r
++	}
++	out := r
++	out.Applied = make([]CuratedEntry, 0, len(r.Applied))
++	for _, entry := range r.Applied {
++		if entry.EffectiveVisibility(CuratedTargetCurrentUser) == CuratedVisibilityBehavioral {
++			out.Applied = append(out.Applied, entry)
++		}
++	}
++	if r.Pending != nil {
++		pending := *r.Pending
++		pending.Mutations = append([]CuratedMutation(nil), r.Pending.Mutations...)
++		for i := range pending.Mutations {
++			if NormalizeCuratedVisibility(pending.Mutations[i].Visibility) == CuratedVisibilityBehavioral {
++				continue
++			}
++			pending.Mutations[i].ID = ""
++			pending.Mutations[i].Content = ""
++			pending.Mutations[i].PreferenceKey = ""
++			pending.Mutations[i].PreferenceValue = ""
++			pending.Mutations[i].Supersedes = ""
++			pending.Mutations[i].Provenance = Provenance{}
++		}
++		out.Pending = &pending
++	}
++	out.Conflicts = nil
++	out.Outcomes = append([]CuratedMutationOutcome(nil), r.Outcomes...)
++	for i := range out.Outcomes {
++		if NormalizeCuratedVisibility(out.Outcomes[i].Visibility) == CuratedVisibilityBehavioral {
++			continue
++		}
++		out.Outcomes[i].EntryID = ""
++		out.Outcomes[i].PreferenceKey = ""
++	}
++	return out
+ }
+ 
+ // CuratedConflict is a bounded, non-destructive near-duplicate hint. It lets
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/memory/personal_memory_invariants_test.go /mnt/data/picoclaw-personal-memory-work/pkg/memory/personal_memory_invariants_test.go
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/memory/personal_memory_invariants_test.go	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/pkg/memory/personal_memory_invariants_test.go	2026-08-18 00:14:20.829879557 +0000
+@@ -0,0 +1,173 @@
++package memory
++
++import (
++	"path/filepath"
++	"sync"
++	"testing"
++)
++
++func TestStructuredPreferenceSameValueIsDeterministicNoOp(t *testing.T) {
++	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
++	caller := testCaller("telegram:user-noop")
++	first, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
++		Action: CuratedActionAdd, Content: "Prefers concise answers", Type: CuratedTypeCommunicationPreference,
++		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
++	}}, false)
++	if err != nil || len(first.Applied) != 1 {
++		t.Fatalf("initial preference = %#v, %v", first, err)
++	}
++
++	second, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
++		Action: CuratedActionAdd, Content: "Still prefers concise technical answers", Type: CuratedTypeCommunicationPreference,
++		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
++	}}, false)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(second.Applied) != 0 || len(second.Outcomes) != 1 || second.Outcomes[0].Status != CuratedOutcomeNoOp {
++		t.Fatalf("same logical preference should be a no-op: %#v", second)
++	}
++	entries, err := store.List(CuratedTargetCurrentUser, caller)
++	if err != nil || len(entries) != 1 || entries[0].ID != first.Applied[0].ID {
++		t.Fatalf("same-value upsert created duplicate state: %#v, %v", entries, err)
++	}
++}
++
++func TestStructuredPreferenceHigherAuthorityReaffirmsInPlace(t *testing.T) {
++	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
++	caller := testCaller("telegram:user-reaffirm")
++	observed, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
++		Action: CuratedActionAdd, Content: "Repeatedly prefers copy-ready commands", Type: CuratedTypeWorkflowPreference,
++		EvidenceKind: CuratedEvidenceObserved, EvidenceCount: 2, ObservationCount: 2,
++		PreferenceKey: "workflow.command_style", PreferenceValue: "copy_paste_ready",
++	}}, false)
++	if err != nil || len(observed.Applied) != 1 {
++		t.Fatalf("observed preference = %#v, %v", observed, err)
++	}
++	id := observed.Applied[0].ID
++
++	explicit, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
++		Action: CuratedActionAdd, Content: "I prefer copy-paste-ready commands", Type: CuratedTypeWorkflowPreference,
++		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "workflow.command_style", PreferenceValue: "copy_paste_ready",
++	}}, false)
++	if err != nil || len(explicit.Applied) != 1 || len(explicit.Outcomes) != 1 {
++		t.Fatalf("explicit reaffirmation = %#v, %v", explicit, err)
++	}
++	if explicit.Applied[0].ID != id || explicit.Outcomes[0].Status != CuratedOutcomeUpdated {
++		t.Fatalf("explicit reaffirmation did not update in place: %#v", explicit)
++	}
++	entries, err := store.List(CuratedTargetCurrentUser, caller)
++	if err != nil || len(entries) != 1 || entries[0].EffectiveEvidenceKind() != CuratedEvidenceExplicit {
++		t.Fatalf("reaffirmed state = %#v, %v", entries, err)
++	}
++}
++
++func TestStructuredPreferenceCanReturnToHistoricalValue(t *testing.T) {
++	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
++	caller := testCaller("telegram:user-return")
++	concise := CuratedMutation{
++		Action: CuratedActionAdd, Content: "Prefers concise answers", Type: CuratedTypeCommunicationPreference,
++		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
++	}
++	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{concise}, false); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
++		Action: CuratedActionAdd, Content: "Prefers detailed answers", Type: CuratedTypeCommunicationPreference,
++		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "communication.verbosity", PreferenceValue: "detailed",
++	}}, false); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{concise}, false); err != nil {
++		t.Fatalf("returning to historical value failed: %v", err)
++	}
++	entries, err := store.List(CuratedTargetCurrentUser, caller)
++	if err != nil {
++		t.Fatal(err)
++	}
++	active := 0
++	for _, entry := range entries {
++		if entry.PreferenceKey == "communication.verbosity" && entry.EffectiveStatus() == CuratedStatusActive {
++			active++
++			if entry.PreferenceValue != "concise" {
++				t.Fatalf("active value = %q, want concise", entry.PreferenceValue)
++			}
++		}
++	}
++	if active != 1 {
++		t.Fatalf("effective same-key states = %d, want 1; entries=%#v", active, entries)
++	}
++}
++
++func TestConcurrentSamePreferenceKeyLeavesExactlyOneEffectiveState(t *testing.T) {
++	root := filepath.Join(t.TempDir(), "curated")
++	first := newTestCuratedStore(t, root, 100_000, 100_000)
++	second := newTestCuratedStore(t, root, 100_000, 100_000)
++	caller := testCaller("telegram:user-race")
++
++	const workers = 32
++	start := make(chan struct{})
++	errs := make(chan error, workers)

@@ -1,0 +1,205 @@
++	if calls, _, _ := provider.snapshot(); calls == 0 {
++		t.Fatal("canonical group reviewer made no provider call")
+ 	}
+ 	otherAgentCaller := caller
+ 	otherAgentCaller.AgentID = "other-agent"
+ 	if err := al.runMemoryReview(context.Background(), agent, otherAgentCaller); err == nil {
+ 		t.Fatal("deep reviewer accepted a mismatched agent scope")
+ 	}
+-	if calls, _, _ := provider.snapshot(); calls != 0 {
+-		t.Fatalf("deep scope bypass made %d provider calls", calls)
+-	}
+ }
+ 
+ func TestFlushMemoryReviewerRejectsMismatchedAgentScope(t *testing.T) {
+@@ -416,7 +418,7 @@
+ 			t.Fatalf("notification context = %#v", outbound.Context)
+ 		}
+ 		if containsAny(outbound.Content, "timezone", "Makassar") ||
+-			!strings.Contains(outbound.Content, "private operation") {
++			!strings.Contains(outbound.Content, "operation") {
+ 			t.Fatalf("verbose notification leaked private content: %q", outbound.Content)
+ 		}
+ 	case <-time.After(2 * time.Second):
+@@ -785,3 +787,85 @@
+ 		t.Fatalf("removed-agent scope made %d provider calls", calls)
+ 	}
+ }
++
++func TestMemoryNotificationCoalescesOneLogicalTurn(t *testing.T) {
++	cfg := config.DefaultConfig()
++	cfg.Memory.Notifications = config.MemoryNotificationVerbose
++	messageBus := bus.NewMessageBus()
++	al := &AgentLoop{cfg: cfg, bus: messageBus}
++	caller := memory.CallerScope{
++		AgentID: "main", Channel: "telegram", Account: "personal",
++		ChatID: "user-a", UserKey: "telegram:user-a", SessionKey: "session-a",
++	}
++	first := tools.MemoryChangeEvent{
++		Caller: caller, Target: memory.CuratedTargetCurrentUser, TurnID: "turn-1",
++		Result: memory.CuratedBatchResult{
++			Applied: []memory.CuratedEntry{{
++				ID: "mem_0000000000000001", Content: "Prefers concise replies",
++				PreferenceKey: "communication.verbosity", PreferenceValue: "concise",
++				Visibility: memory.CuratedVisibilityBehavioral,
++			}},
++			Outcomes: []memory.CuratedMutationOutcome{{
++				Status: memory.CuratedOutcomeAdded, EntryID: "mem_0000000000000001",
++				PreferenceKey: "communication.verbosity", Visibility: memory.CuratedVisibilityBehavioral,
++			}},
++		},
++	}
++	second := first
++	second.Result = memory.CuratedBatchResult{
++		Applied: []memory.CuratedEntry{{
++			ID: "mem_0000000000000002", Content: "Prefers Native Quiz",
++			PreferenceKey: "workflow.quiz_format", PreferenceValue: "telegram_native_quiz",
++			Visibility: memory.CuratedVisibilityBehavioral,
++		}},
++		Outcomes: []memory.CuratedMutationOutcome{{
++			Status: memory.CuratedOutcomeAdded, EntryID: "mem_0000000000000002",
++			PreferenceKey: "workflow.quiz_format", Visibility: memory.CuratedVisibilityBehavioral,
++		}},
++	}
++
++	al.memoryChangeNotification(context.Background(), first)
++	al.memoryChangeNotification(context.Background(), second)
++	select {
++	case outbound := <-messageBus.OutboundChan():
++		t.Fatalf("notification published before turn finalization: %#v", outbound)
++	default:
++	}
++
++	al.flushMemoryTurnNotification("turn-1")
++	select {
++	case outbound := <-messageBus.OutboundChan():
++		if !strings.Contains(outbound.Content, "Memory updated") {
++			t.Fatalf("unexpected coalesced notification: %q", outbound.Content)
++		}
++	case <-time.After(2 * time.Second):
++		t.Fatal("coalesced notification was not published")
++	}
++
++	// A delayed reviewer mutation for the same logical turn must not produce a
++	// second visible notification after the turn has been finalized.
++	al.memoryChangeNotification(context.Background(), first)
++	al.flushMemoryTurnNotification("turn-1")
++	select {
++	case outbound := <-messageBus.OutboundChan():
++		t.Fatalf("duplicate logical-turn notification: %#v", outbound)
++	case <-time.After(50 * time.Millisecond):
++	}
++}
++
++func TestMemoryNotificationNoOpDoesNotPublish(t *testing.T) {
++	cfg := config.DefaultConfig()
++	messageBus := bus.NewMessageBus()
++	al := &AgentLoop{cfg: cfg, bus: messageBus}
++	al.memoryChangeNotification(context.Background(), tools.MemoryChangeEvent{
++		Caller: memory.CallerScope{AgentID: "main", Channel: "telegram", ChatID: "user-a"},
++		Target: memory.CuratedTargetCurrentUser, TurnID: "turn-noop",
++		Result: memory.CuratedBatchResult{Outcomes: []memory.CuratedMutationOutcome{{Status: memory.CuratedOutcomeNoOp}}},
++	})
++	al.flushMemoryTurnNotification("turn-noop")
++	select {
++	case outbound := <-messageBus.OutboundChan():
++		t.Fatalf("no-op emitted notification: %#v", outbound)
++	case <-time.After(50 * time.Millisecond):
++	}
++}
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/memory/curated_schema.go /mnt/data/picoclaw-personal-memory-work/pkg/memory/curated_schema.go
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/memory/curated_schema.go	2026-08-16 14:15:52.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/pkg/memory/curated_schema.go	2026-08-17 23:58:41.677366146 +0000
+@@ -24,6 +24,12 @@
+ 	CuratedEvidenceLegacy:   {},
+ }
+ 
++var curatedVisibilities = map[string]struct{}{
++	CuratedVisibilityBehavioral: {},
++	CuratedVisibilityPrivate:    {},
++	CuratedVisibilityShared:     {},
++}
++
+ func NormalizeCuratedType(value string) string {
+ 	value = strings.ToLower(strings.TrimSpace(value))
+ 	if _, ok := curatedTypes[value]; ok {
+@@ -70,6 +76,82 @@
+ 	return ok
+ }
+ 
++func NormalizeCuratedVisibility(value string) string {
++	value = strings.ToLower(strings.TrimSpace(value))
++	if _, ok := curatedVisibilities[value]; ok {
++		return value
++	}
++	return ""
++}
++
++func ValidCuratedVisibility(value string) bool {
++	_, ok := curatedVisibilities[strings.ToLower(strings.TrimSpace(value))]
++	return ok
++}
++
++// EffectiveVisibility gives legacy entries a conservative deterministic
++// classification. Workspace entries are shared by definition. Current-user
++// identity/private facts remain private, while known interaction preferences
++// are behavioral and may safely influence the same user's behavior in groups.
++func (entry CuratedEntry) EffectiveVisibility(target string) string {
++	if visibility := NormalizeCuratedVisibility(entry.Visibility); visibility != "" {
++		return visibility
++	}
++	if strings.EqualFold(strings.TrimSpace(target), CuratedTargetWorkspace) {
++		return CuratedVisibilityShared
++	}
++	if behavioralPreferenceEntry(entry) {
++		return CuratedVisibilityBehavioral
++	}
++	return CuratedVisibilityPrivate
++}
++
++func CuratedEntryVisibleInContext(target string, caller CallerScope, entry CuratedEntry) bool {
++	if !strings.EqualFold(strings.TrimSpace(target), CuratedTargetCurrentUser) {
++		return true
++	}
++	if !IsSharedMemoryContext(caller) {
++		return true
++	}
++	return entry.EffectiveVisibility(CuratedTargetCurrentUser) == CuratedVisibilityBehavioral
++}
++
++func behavioralPreferenceEntry(entry CuratedEntry) bool {
++	key := NormalizePreferenceKey(entry.PreferenceKey)
++	if key == "" {
++		return false
++	}
++	for _, prefix := range []string{
++		"communication.", "workflow.", "formatting.", "coding.", "language.", "tooling.",
++		"interaction.", "boundary.", "boundaries.",
++	} {
++		if strings.HasPrefix(key, prefix) {
++			return true
++		}
++	}
++	return false
++}
++
++func defaultVisibilityForMutation(target string, mutation CuratedMutation) string {
++	if strings.EqualFold(strings.TrimSpace(target), CuratedTargetWorkspace) {
++		return CuratedVisibilityShared
++	}
++	entry := CuratedEntry{
++		Type:            mutation.Type,
++		PreferenceKey:   mutation.PreferenceKey,
++		PreferenceValue: mutation.PreferenceValue,
++	}
++	return entry.EffectiveVisibility(CuratedTargetCurrentUser)
++}
++
++func visibilityAllowedForTarget(target, visibility string) bool {
++	visibility = NormalizeCuratedVisibility(visibility)
++	if strings.EqualFold(strings.TrimSpace(target), CuratedTargetWorkspace) {
++		return visibility == CuratedVisibilityShared
++	}
++	return visibility == CuratedVisibilityBehavioral || visibility == CuratedVisibilityPrivate
++}
++

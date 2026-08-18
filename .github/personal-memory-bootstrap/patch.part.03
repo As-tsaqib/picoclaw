@@ -1,0 +1,226 @@
+-				memory.AllowsPrivateUserMemory(caller),
++				memory.HasCanonicalUserMemory(caller),
+ 			)
+ 			if err != nil {
+ 				return "", err
+@@ -336,10 +336,11 @@
+ 			lines = append(
+ 				lines,
+ 				fmt.Sprintf(
+-					"- `%s` [%s/%s%s] — %s",
++					"- `%s` [%s/%s/%s%s] — %s",
+ 					entry.ID,
+ 					entry.EffectiveType(),
+ 					entry.EffectiveStatus(),
++					entry.EffectiveVisibility(memory.CuratedTargetCurrentUser),
+ 					map[bool]string{true: ", pinned"}[entry.Pinned],
+ 					content,
+ 				),
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/agent/memory_delivery.go /mnt/data/picoclaw-personal-memory-work/pkg/agent/memory_delivery.go
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/agent/memory_delivery.go	2026-08-16 14:15:52.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/pkg/agent/memory_delivery.go	2026-08-18 00:02:01.038743958 +0000
+@@ -101,6 +101,7 @@
+ 		return
+ 	}
+ 	al.acknowledgeEvolutionTurn(delivery.turnID, delivered)
++	defer al.flushMemoryTurnNotification(delivery.turnID)
+ 	if !delivered {
+ 		if agent.Checkpoints != nil {
+ 			agent.Checkpoints.DiscardTurn(delivery.turnID)
+@@ -176,7 +177,7 @@
+ 
+ func memoryReviewEligible(ts *turnState, caller memory.CallerScope) bool {
+ 	if ts == nil || ts.opts.NoHistory || ts.opts.SuppressMemoryReview || ts.depth > 0 ||
+-		!memory.AllowsPrivateUserMemory(caller) || constants.IsInternalChannel(caller.Channel) {
++		!memory.HasCanonicalUserMemory(caller) || constants.IsInternalChannel(caller.Channel) {
+ 		return false
+ 	}
+ 	sender := strings.ToLower(strings.TrimSpace(ts.opts.Dispatch.SenderID()))
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/agent/memory_notifications.go /mnt/data/picoclaw-personal-memory-work/pkg/agent/memory_notifications.go
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/agent/memory_notifications.go	2026-08-16 14:15:52.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/pkg/agent/memory_notifications.go	2026-08-18 00:04:50.078117160 +0000
+@@ -4,6 +4,7 @@
+ 	"context"
+ 	"fmt"
+ 	"strings"
++	"sync"
+ 	"time"
+ 	"unicode/utf8"
+ 
+@@ -13,7 +14,130 @@
+ 	"github.com/As-tsaqib/picoclaw/pkg/tools"
+ )
+ 
+-func (al *AgentLoop) memoryChangeNotification(ctx context.Context, event tools.MemoryChangeEvent) {
++const maxRememberedMemoryNotifications = 512
++
++type memoryTurnNotificationState struct {
++	mu         sync.Mutex
++	caller     memory.CallerScope
++	target     string
++	result     memory.CuratedBatchResult
++	finalized  bool
++	lastAccess uint64
++}
++
++// memoryChangeNotification accumulates successful logical changes by turn.
++// Foreground delivery and the bounded reviewer explicitly flush the turn, so
++// multiple memory_manage calls can never emit multiple visible notifications.
++func (al *AgentLoop) memoryChangeNotification(_ context.Context, event tools.MemoryChangeEvent) {
++	if al == nil || !event.Result.Changed() {
++		return
++	}
++	turnID := strings.TrimSpace(event.TurnID)
++	if turnID == "" {
++		// Non-turn callers cannot participate in logical-turn coalescing. Keep
++		// backward-compatible notification behavior without retaining orphaned
++		// transaction state. Live turns and the reviewer always provide TurnID.
++		al.publishMemoryChangeNotification(event)
++		return
++	}
++	access := al.memoryNotificationClock.Add(1)
++	value, _ := al.memoryNotifications.LoadOrStore(turnID, &memoryTurnNotificationState{
++		caller: event.Caller, target: event.Target, lastAccess: access,
++	})
++	state, ok := value.(*memoryTurnNotificationState)
++	if !ok || state == nil {
++		return
++	}
++	state.mu.Lock()
++	if state.finalized {
++		state.lastAccess = access
++		state.mu.Unlock()
++		return
++	}
++	state.lastAccess = access
++	if state.caller.Channel == "" {
++		state.caller = event.Caller
++	}
++	if state.target == "" {
++		state.target = event.Target
++	} else if state.target != event.Target {
++		state.target = "mixed"
++	}
++	state.result.Applied = append(state.result.Applied, event.Result.Applied...)
++	state.result.Outcomes = append(state.result.Outcomes, event.Result.Outcomes...)
++	if event.Result.Pending != nil {
++		if state.result.Pending == nil {
++			copyPending := *event.Result.Pending
++			copyPending.Mutations = append([]memory.CuratedMutation(nil), event.Result.Pending.Mutations...)
++			state.result.Pending = &copyPending
++		} else {
++			state.result.Pending.Mutations = append(state.result.Pending.Mutations, event.Result.Pending.Mutations...)
++		}
++	}
++	state.mu.Unlock()
++	al.trimMemoryNotificationStates()
++}
++
++func (al *AgentLoop) flushMemoryTurnNotification(turnID string) {
++	if al == nil {
++		return
++	}
++	turnID = strings.TrimSpace(turnID)
++	if turnID == "" {
++		return
++	}
++	value, ok := al.memoryNotifications.Load(turnID)
++	if !ok {
++		return
++	}
++	state, ok := value.(*memoryTurnNotificationState)
++	if !ok || state == nil {
++		return
++	}
++	state.mu.Lock()
++	if state.finalized {
++		state.mu.Unlock()
++		return
++	}
++	state.finalized = true
++	state.lastAccess = al.memoryNotificationClock.Add(1)
++	event := tools.MemoryChangeEvent{Caller: state.caller, Target: state.target, Result: state.result, TurnID: turnID}
++	state.mu.Unlock()
++	al.publishMemoryChangeNotification(event)
++	al.trimMemoryNotificationStates()
++}
++
++func (al *AgentLoop) trimMemoryNotificationStates() {
++	if al == nil {
++		return
++	}
++	al.memoryNotificationsMu.Lock()
++	defer al.memoryNotificationsMu.Unlock()
++	count := 0
++	oldestKey := ""
++	oldestAccess := ^uint64(0)
++	al.memoryNotifications.Range(func(key, value any) bool {
++		count++
++		state, ok := value.(*memoryTurnNotificationState)
++		if !ok || state == nil {
++			return true
++		}
++		state.mu.Lock()
++		access := state.lastAccess
++		finalized := state.finalized
++		state.mu.Unlock()
++		if finalized && access < oldestAccess {
++			oldestAccess = access
++			oldestKey, _ = key.(string)
++		}
++		return true
++	})
++	if count > maxRememberedMemoryNotifications && oldestKey != "" {
++		al.memoryNotifications.Delete(oldestKey)
++	}
++}
++
++func (al *AgentLoop) publishMemoryChangeNotification(event tools.MemoryChangeEvent) {
+ 	if al == nil || al.bus == nil || al.cfg == nil {
+ 		return
+ 	}
+@@ -34,18 +158,16 @@
+ 		Account: event.Caller.Account,
+ 		ChatID:  event.Caller.ChatID,
+ 		TopicID: event.Caller.TopicID,
+-		Raw:     map[string]string{"memory_notification": "true"},
++		Raw:     map[string]string{"memory_notification": "true", "internal": "true"},
+ 	}
+-	go func() {
+-		pubCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+-		defer cancel()
+-		_ = al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
+-			Context:    outboundCtx,
+-			AgentID:    event.Caller.AgentID,
+-			SessionKey: event.Caller.SessionKey,
+-			Content:    message,
+-		})
+-	}()
++	pubCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++	defer cancel()
++	_ = al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
++		Context:    outboundCtx,
++		AgentID:    event.Caller.AgentID,
++		SessionKey: event.Caller.SessionKey,
++		Content:    message,
++	})
+ }
+ 
+ func formatMemoryChangePreview(event tools.MemoryChangeEvent) string {
+@@ -57,8 +179,14 @@
+ 	if len(entries) == 0 {
+ 		return ""
+ 	}
+-	if event.Target == memory.CuratedTargetCurrentUser && strings.TrimSpace(event.Caller.GroupID) != "" {
+-		return fmt.Sprintf(" (%d private operation(s))", len(entries))
++	// Shared contexts deliberately stay generic even for behavioral changes so
++	// a mixed behavioral/private transaction cannot reveal hidden memory detail.
++	if memory.IsSharedMemoryContext(event.Caller) {
++		count := len(result.Outcomes)
++		if count == 0 {
++			count = len(entries)
++		}
++		return fmt.Sprintf(" (%d operation(s))", count)
+ 	}
+ 	parts := make([]string, 0, minInt(len(entries), 3))
+ 	for _, entry := range entries {

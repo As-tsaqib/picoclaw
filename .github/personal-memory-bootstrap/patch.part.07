@@ -1,0 +1,186 @@
+ func NormalizePreferenceKey(value string) string {
+ 	return strings.ToLower(strings.TrimSpace(value))
+ }
+@@ -216,6 +298,7 @@
+ 	legacyBackgroundInference := rawEvidence == "" &&
+ 		strings.EqualFold(strings.TrimSpace(entry.Provenance.Source), "background_review")
+ 	entry.EvidenceKind = entry.EffectiveEvidenceKind()
++	entry.Visibility = NormalizeCuratedVisibility(entry.Visibility)
+ 	entry.PreferenceKey = NormalizePreferenceKey(entry.PreferenceKey)
+ 	entry.PreferenceValue = strings.TrimSpace(entry.PreferenceValue)
+ 	if entry.EvidenceCount < 0 {
+@@ -251,3 +334,9 @@
+ 	}
+ 	return entry
+ }
++
++func normalizedCuratedEntryForTarget(target string, entry CuratedEntry) CuratedEntry {
++	entry = normalizedCuratedEntry(entry)
++	entry.Visibility = entry.EffectiveVisibility(target)
++	return entry
++}
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/memory/curated_store.go /mnt/data/picoclaw-personal-memory-work/pkg/memory/curated_store.go
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/memory/curated_store.go	2026-08-16 14:15:52.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/pkg/memory/curated_store.go	2026-08-18 00:14:20.829727511 +0000
+@@ -19,7 +19,7 @@
+ 	"github.com/As-tsaqib/picoclaw/pkg/fileutil"
+ )
+ 
+-const curatedDocumentVersion = 2
++const curatedDocumentVersion = 3
+ 
+ const (
+ 	DefaultCuratedWorkspaceEntries = 512
+@@ -141,7 +141,7 @@
+ 		return filepath.Join(s.root, "workspace.json"), "workspace", s.workspaceCharLimit, nil
+ 	case CuratedTargetCurrentUser:
+ 		userKey := strings.TrimSpace(caller.UserKey)
+-		if userKey == "" || strings.TrimSpace(caller.GroupID) != "" {
++		if userKey == "" {
+ 			return "", "", 0, ErrUserScopeUnavailable
+ 		}
+ 		if len(userKey) > 1_024 || strings.ContainsRune(userKey, '\x00') {
+@@ -211,8 +211,21 @@
+ 	if doc.Entries == nil {
+ 		doc.Entries = []CuratedEntry{}
+ 	}
++	target := CuratedTargetCurrentUser
++	if digest == "workspace" {
++		target = CuratedTargetWorkspace
++	}
+ 	for i := range doc.Entries {
+-		doc.Entries[i] = normalizedCuratedEntry(doc.Entries[i])
++		doc.Entries[i] = normalizedCuratedEntryForTarget(target, doc.Entries[i])
++	}
++	for pendingIndex := range doc.Pending {
++		for mutationIndex := range doc.Pending[pendingIndex].Mutations {
++			mutation := &doc.Pending[pendingIndex].Mutations[mutationIndex]
++			mutation.Visibility = NormalizeCuratedVisibility(mutation.Visibility)
++			if mutation.Visibility == "" && mutation.Action == CuratedActionAdd {
++				mutation.Visibility = defaultVisibilityForMutation(target, *mutation)
++			}
++		}
+ 	}
+ 	if version < curatedDocumentVersion && migrate {
+ 		doc.Version = curatedDocumentVersion
+@@ -277,6 +290,10 @@
+ 	if prepareErr != nil {
+ 		return CuratedBatchResult{}, prepareErr
+ 	}
++	prepared, normalizedOutcomes := normalizePreferenceUpserts(doc.Entries, prepared)
++	if len(prepared) == 0 {
++		return CuratedBatchResult{Outcomes: normalizedOutcomes}, nil
++	}
+ 	conflicts := findCuratedConflicts(doc.Entries, prepared)
+ 
+ 	projected := cloneCuratedEntries(doc.Entries)
+@@ -324,7 +341,14 @@
+ 		if writeErr := s.writeDocument(path, doc); writeErr != nil {
+ 			return CuratedBatchResult{}, writeErr
+ 		}
+-		return CuratedBatchResult{Pending: &pending, Conflicts: conflicts}, nil
++		outcomes := append([]CuratedMutationOutcome(nil), normalizedOutcomes...)
++		for i, mutation := range prepared {
++			outcomes = append(outcomes, CuratedMutationOutcome{
++				MutationIndex: i, Status: CuratedOutcomePending, EntryID: mutation.ID,
++				PreferenceKey: mutation.PreferenceKey, Visibility: mutation.Visibility,
++			})
++		}
++		return CuratedBatchResult{Pending: &pending, Conflicts: conflicts, Outcomes: outcomes}, nil
+ 	}
+ 
+ 	// Re-apply only the requested batch to the actual entries. Pending batches
+@@ -353,7 +377,133 @@
+ 	if writeErr := s.writeDocument(path, doc); writeErr != nil {
+ 		return CuratedBatchResult{}, writeErr
+ 	}
+-	return CuratedBatchResult{Applied: applied, Conflicts: conflicts}, nil
++	outcomes := append([]CuratedMutationOutcome(nil), normalizedOutcomes...)
++	outcomes = append(outcomes, outcomesForAppliedMutations(prepared, applied)...)
++	return CuratedBatchResult{Applied: applied, Conflicts: conflicts, Outcomes: outcomes}, nil
++}
++
++// normalizePreferenceUpserts enforces one effective structured preference per
++// key before capacity projection and write. The caller already owns the
++// cross-instance document lock, so concurrent foreground/reviewer attempts are
++// serialized against the latest persisted state.
++func normalizePreferenceUpserts(
++	entries []CuratedEntry,
++	mutations []CuratedMutation,
++) ([]CuratedMutation, []CuratedMutationOutcome) {
++	working := cloneCuratedEntries(entries)
++	effective := make([]CuratedMutation, 0, len(mutations))
++	outcomes := make([]CuratedMutationOutcome, 0)
++	for mutationIndex, mutation := range mutations {
++		if mutation.Action != CuratedActionAdd || NormalizePreferenceKey(mutation.PreferenceKey) == "" {
++			effective = append(effective, mutation)
++			continue
++		}
++		key := NormalizePreferenceKey(mutation.PreferenceKey)
++		idx := activePreferenceEntryIndex(working, key)
++		if idx < 0 {
++			effective = append(effective, mutation)
++			working = append(working, CuratedEntry{
++				ID: mutation.ID, Status: CuratedStatusActive, PreferenceKey: key,
++				PreferenceValue: strings.TrimSpace(mutation.PreferenceValue), EvidenceKind: mutation.EvidenceKind,
++			})
++			continue
++		}
++		existing := normalizedCuratedEntry(working[idx])
++		incomingAuthority := evidenceAuthorityForKind(mutation.EvidenceKind)
++		if strings.TrimSpace(existing.PreferenceValue) == strings.TrimSpace(mutation.PreferenceValue) {
++			if incomingAuthority > existing.EvidenceAuthority() {
++				// Upgrade evidence in place instead of creating a duplicate logical
++				// preference. Preserve the established compact content/ID.
++				mutation.Action = CuratedActionReplace
++				mutation.ID = existing.ID
++				mutation.Content = existing.Content
++				mutation.Type = existing.EffectiveType()
++				mutation.Visibility = existing.EffectiveVisibility(CuratedTargetCurrentUser)
++				mutation.PreferenceKey = key
++				mutation.PreferenceValue = existing.PreferenceValue
++				effective = append(effective, mutation)
++				working[idx].EvidenceKind = mutation.EvidenceKind
++				continue
++			}
++			outcomes = append(outcomes, CuratedMutationOutcome{
++				MutationIndex: mutationIndex, Status: CuratedOutcomeNoOp, EntryID: existing.ID,
++				PreferenceKey: key, Visibility: existing.EffectiveVisibility(CuratedTargetCurrentUser),
++			})
++			continue
++		}
++		if incomingAuthority < existing.EvidenceAuthority() {
++			outcomes = append(outcomes, CuratedMutationOutcome{
++				MutationIndex: mutationIndex, Status: CuratedOutcomeNoOp, EntryID: existing.ID,
++				PreferenceKey: key, Visibility: existing.EffectiveVisibility(CuratedTargetCurrentUser),
++			})
++			continue
++		}
++		if mutation.Supersedes == "" {
++			mutation.Supersedes = existing.ID
++		}
++		effective = append(effective, mutation)
++		working[idx].Status = CuratedStatusSuperseded
++		working = append(working, CuratedEntry{
++			ID: mutation.ID, Status: CuratedStatusActive, PreferenceKey: key,
++			PreferenceValue: mutation.PreferenceValue, EvidenceKind: mutation.EvidenceKind,
++		})
++	}
++	return effective, outcomes
++}
++
++func activePreferenceEntryIndex(entries []CuratedEntry, key string) int {
++	key = NormalizePreferenceKey(key)
++	for i := range entries {
++		if entries[i].EffectiveStatus() == CuratedStatusActive &&
++			NormalizePreferenceKey(entries[i].PreferenceKey) == key {
++			return i
++		}
++	}
++	return -1
++}
++
++func evidenceAuthorityForKind(kind string) int {
++	return (CuratedEntry{EvidenceKind: NormalizeEvidenceKind(kind)}).EvidenceAuthority()
++}
++

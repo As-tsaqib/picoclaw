@@ -1,0 +1,62 @@
++		Visibility:       lowerStringArg(args, "visibility"),
+ 		EvidenceCount:    intArg(args, "evidence_count", 0),
+ 		ObservationCount: intArg(args, "observation_count", 0),
+ 		PreferenceKey:    lowerStringArg(args, "preference_key"),
+@@ -352,6 +358,8 @@
+ 		code = "invalid_type"
+ 	case errors.Is(err, memory.ErrCuratedInvalidEvidence):
+ 		code = "invalid_evidence"
++	case errors.Is(err, memory.ErrCuratedInvalidVisibility):
++		code = "invalid_visibility"
+ 	case errors.Is(err, memory.ErrCuratedInvalidPreferenceKey):
+ 		code = "invalid_preference_key"
+ 	}
+diff -ruN /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/tools/memory_tools_test.go /mnt/data/picoclaw-personal-memory-work/pkg/tools/memory_tools_test.go
+--- /mnt/data/picoclaw-personal-memory-base/picoclaw-main/pkg/tools/memory_tools_test.go	2026-08-16 14:15:52.000000000 +0000
++++ /mnt/data/picoclaw-personal-memory-work/pkg/tools/memory_tools_test.go	2026-08-18 00:04:09.921351793 +0000
+@@ -190,7 +190,7 @@
+ 	}
+ }
+ 
+-func TestMemoryManageToolRejectsCurrentUserAccessFromSharedGroup(t *testing.T) {
++func TestMemoryManageToolSharedGroupCapturesCurrentUserAndRedactsPrivateResult(t *testing.T) {
+ 	store, err := memory.NewCuratedStore(filepath.Join(t.TempDir(), "curated"), memory.CuratedStoreOptions{
+ 		WorkspaceCharLimit: 1_000,
+ 		PerUserCharLimit:   1_000,
+@@ -200,17 +200,27 @@
+ 	}
+ 	caller := toolMemoryCaller("session-a", "user-a", "group-1", "10")
+ 	tool := NewMemoryManageToolWithApprovalMode(store, config.MemoryApprovalOff, nil)
+-	result := tool.Execute(toolContext(caller, "turn-a"), map[string]any{
+-		"action": "add", "target": "current_user",
+-		"content": "Prefers concise replies",
++	privateResult := tool.Execute(toolContext(caller, "turn-a"), map[string]any{
++		"action": "add", "target": "current_user", "content": "Timezone is Asia/Makassar",
++		"type": "identity", "evidence_kind": "explicit", "visibility": "private",
+ 	})
+-	if !result.IsError {
+-		t.Fatalf("shared-group current-user mutation succeeded: %s", result.ContentForLLM())
++	if privateResult.IsError {
++		t.Fatalf("shared-group private capture failed: %s", privateResult.ContentForLLM())
+ 	}
+-	payload := decodeToolResult(t, result)
+-	errorPayload, _ := payload["error"].(map[string]any)
+-	if errorPayload["code"] != "private_context_required" {
+-		t.Fatalf("shared-group error payload = %#v", payload)
++	if strings.Contains(privateResult.ContentForLLM(), "Makassar") {
++		t.Fatalf("shared-group private tool result leaked content: %s", privateResult.ContentForLLM())
++	}
++	behavioralResult := tool.Execute(toolContext(caller, "turn-b"), map[string]any{
++		"action": "add", "target": "current_user", "content": "Prefers concise replies",
++		"type": "communication_preference", "preference_key": "communication.verbosity",
++		"preference_value": "concise", "evidence_kind": "explicit", "visibility": "behavioral",
++	})
++	if behavioralResult.IsError || !strings.Contains(behavioralResult.ContentForLLM(), "concise") {
++		t.Fatalf("shared-group behavioral result = %s", behavioralResult.ContentForLLM())
++	}
++	entries, err := store.List(memory.CuratedTargetCurrentUser, caller)
++	if err != nil || len(entries) != 1 || entries[0].PreferenceKey != "communication.verbosity" {
++		t.Fatalf("group-visible current-user entries = %#v, %v", entries, err)
+ 	}
+ }
+ 
