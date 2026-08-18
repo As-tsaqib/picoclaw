@@ -126,10 +126,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # go generate intentionally refreshes generated mirrors for validation,
-          # but those mirrors are not part of this feature patch. Restore them
-          # before commit so repository hooks see a clean, coherent source tree.
-          git restore --worktree -- pkg/beads/beads.go pkg/hooks/hooks.go
+          # go generate creates untracked embedded mirrors used only to validate
+          # generation. They are not part of this feature patch, so remove them
+          # before commit and verify the tree has returned to the exact 20-file set.
+          rm -f -- pkg/beads/beads.go pkg/hooks/hooks.go
           { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u > /tmp/post-generate-files
           diff -u /tmp/expected-files /tmp/post-generate-files
 
