@@ -25,8 +25,8 @@ jobs:
         env:
           EXPECTED_BASE: 31d584912e0d9cac5b3701ea0df210f5d86db23a
           TARGET_BRANCH: feat/personal-agent-memory-spec-v1
-          PATCH_XZ_SHA256: 112f708832928e306febae221da9effcf9038384b3ae8e8867007fe457a99300
-          PATCH_SHA256: 3dd29eee6b34458901cc9f0be3f51dcdfc6e2f196e919f90fa4a2167cd5e63ed
+          PATCH_XZ_SHA256: f6caa6f3ff4a875a169d4cf4f1b42726a885c5b8baf2a781dfccf902037fd7cb
+          PATCH_SHA256: 7a0ce85b3dd17c14b146245b71db4d78685902581b386d2390d73dd3b4f28395
         run: |
           set -euo pipefail
 
