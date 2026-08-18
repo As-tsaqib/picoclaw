@@ -1,0 +1,50 @@
+name: Personal Memory Acceptance
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/personal-memory-validation.yml"
+      - "docs/guides/curated-memory.md"
+      - "pkg/agent/**"
+      - "pkg/channels/telegram/**"
+      - "pkg/memory/**"
+      - "pkg/session/**"
+      - "pkg/tools/memory*.go"
+      - "pkg/tools/*memory*_test.go"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personal-memory-acceptance-${{ github.event.pull_request.number }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  race:
+    name: Personal memory race acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Race test memory
+        run: go test -race -tags goolm,stdjson ./pkg/memory/...
+
+      - name: Race test agent
+        run: go test -race -tags goolm,stdjson ./pkg/agent/...
+
+      - name: Race test session
+        run: go test -race -tags goolm,stdjson ./pkg/session/...
+
+      - name: Race test Telegram
+        run: go test -race -tags goolm,stdjson ./pkg/channels/telegram/...
