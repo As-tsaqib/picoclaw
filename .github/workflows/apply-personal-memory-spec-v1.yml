@@ -12,145 +12,73 @@ jobs:
   apply:
     if: github.event.pull_request.head.ref == 'automation/personal-memory-spec-v1-apply-v2'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
-      - name: Checkout bootstrap PR
+      - name: Checkout transport PR
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify and apply exact implementation
+      - name: Apply exact lint hardening patch
         shell: bash
         env:
-          EXPECTED_BASE: 31d584912e0d9cac5b3701ea0df210f5d86db23a
-          EXPECTED_TARGET_BASE: f8ec0e29acf26dfe080a938cab530a6029063412
+          EXPECTED_MAIN: 31d584912e0d9cac5b3701ea0df210f5d86db23a
+          EXPECTED_TARGET: 907f3c673909a14e079606c38f30c48c1bf64d44
           TARGET_BRANCH: feat/personal-agent-memory-spec-v1
-          PATCH_XZ_SHA256: f6caa6f3ff4a875a169d4cf4f1b42726a885c5b8baf2a781dfccf902037fd7cb
-          PATCH_SHA256: 7a0ce85b3dd17c14b146245b71db4d78685902581b386d2390d73dd3b4f28395
         run: |
           set -euo pipefail
-
-          cat .github/personal-memory-spec-v1/patch.xz.part.* > /tmp/personal-memory.patch.xz
-          echo "${PATCH_XZ_SHA256}  /tmp/personal-memory.patch.xz" | sha256sum -c -
-          xz -dc /tmp/personal-memory.patch.xz > /tmp/personal-memory.patch
-          echo "${PATCH_SHA256}  /tmp/personal-memory.patch" | sha256sum -c -
-
           git fetch origin \
             "+refs/heads/main:refs/remotes/origin/main" \
             "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
-          test "$(git rev-parse origin/main)" = "${EXPECTED_BASE}"
-          test "$(git rev-parse "origin/${TARGET_BRANCH}")" = "${EXPECTED_TARGET_BASE}"
-
-          git switch --detach "${EXPECTED_TARGET_BASE}"
-          git switch -c personal-memory-apply
-          git apply --check -p1 --exclude=.github/workflows/personal-memory-validation.yml /tmp/personal-memory.patch
-          git apply -p1 --exclude=.github/workflows/personal-memory-validation.yml /tmp/personal-memory.patch
-
-          changed_go=(
-            pkg/agent/instance.go
-            pkg/agent/memory_delivery.go
-            pkg/agent/memory_notifications.go
-            pkg/agent/memory_prompt.go
-            pkg/agent/memory_prompt_test.go
-            pkg/agent/memory_reviewer.go
-            pkg/agent/memory_reviewer_test.go
-            pkg/memory/curated_schema.go
-            pkg/memory/curated_store.go
-            pkg/memory/curated_store_test.go
-            pkg/memory/curated_typed_retrieval_test.go
-            pkg/memory/curated_types.go
-            pkg/memory/user_profile.go
-            pkg/memory/user_profile_test.go
-            pkg/session/key.go
-            pkg/session/key_test.go
+          test "$(git rev-parse origin/main)" = "${EXPECTED_MAIN}"
+          test "$(git rev-parse "origin/${TARGET_BRANCH}")" = "${EXPECTED_TARGET}"
+          git switch --detach "${EXPECTED_TARGET}"
+          git switch -c personal-memory-lint-hardening
+          git apply --check .github/personal-memory-spec-v1/lint-fix.patch
+          git apply .github/personal-memory-spec-v1/lint-fix.patch
+          gofmt -w \
+            pkg/memory/curated_store.go \
+            pkg/memory/curated_store_test.go \
+            pkg/memory/curated_typed_retrieval_test.go \
             pkg/tools/memory_manage.go
-            pkg/tools/memory_tools_test.go
-          )
-          gofmt -l "${changed_go[@]}" > /tmp/gofmt-dirty
-          test ! -s /tmp/gofmt-dirty
           git diff --check
-
-          cat > /tmp/expected-files <<'EOF'
-          docs/guides/curated-memory.md
-          pkg/agent/instance.go
-          pkg/agent/memory_delivery.go
-          pkg/agent/memory_notifications.go
-          pkg/agent/memory_prompt.go
-          pkg/agent/memory_prompt_test.go
-          pkg/agent/memory_reviewer.go
-          pkg/agent/memory_reviewer_test.go
-          pkg/memory/curated_schema.go
-          pkg/memory/curated_store.go
-          pkg/memory/curated_store_test.go
-          pkg/memory/curated_typed_retrieval_test.go
-          pkg/memory/curated_types.go
-          pkg/memory/user_profile.go
-          pkg/memory/user_profile_test.go
-          pkg/session/key.go
-          pkg/session/key_test.go
-          pkg/tools/memory_manage.go
-          pkg/tools/memory_tools_test.go
-          EOF
-          sed -i 's/^          //' /tmp/expected-files
-          { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u > /tmp/actual-files
-          sort -o /tmp/expected-files /tmp/expected-files
-          diff -u /tmp/expected-files /tmp/actual-files
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = "pkg/memory/curated_store.go pkg/memory/curated_store_test.go pkg/memory/curated_typed_retrieval_test.go pkg/tools/memory_manage.go "
 
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
-      - name: Generate and run full tagged tests
+      - name: Generate and focused regression tests
         shell: bash
         run: |
           set -euo pipefail
           go generate ./...
           git diff --check
-          go test -tags goolm,stdjson ./...
+          go test -tags goolm,stdjson ./pkg/memory/... ./pkg/tools/...
 
-      - name: Run exact race acceptance suites
-        shell: bash
-        run: |
-          set -euo pipefail
-          go test -race -tags goolm,stdjson ./pkg/memory/...
-          go test -race -tags goolm,stdjson ./pkg/agent/...
-          go test -race -tags goolm,stdjson ./pkg/session/...
-          go test -race -tags goolm,stdjson ./pkg/channels/telegram/...
+      - name: Golangci lint exact patched tree
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.10.1
+          args: --build-tags=goolm,stdjson
 
-      - name: Publish validated implementation
+      - name: Publish lint hardening commit
         shell: bash
         env:
           TARGET_BRANCH: feat/personal-agent-memory-spec-v1
         run: |
           set -euo pipefail
           rm -f -- pkg/beads/beads.go pkg/hooks/hooks.go
-          { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u > /tmp/post-generate-files
-          diff -u /tmp/expected-files /tmp/post-generate-files
-
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = "pkg/memory/curated_store.go pkg/memory/curated_store_test.go pkg/memory/curated_typed_retrieval_test.go pkg/tools/memory_manage.go "
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- \
-            docs/guides/curated-memory.md \
-            pkg/agent/instance.go \
-            pkg/agent/memory_delivery.go \
-            pkg/agent/memory_notifications.go \
-            pkg/agent/memory_prompt.go \
-            pkg/agent/memory_prompt_test.go \
-            pkg/agent/memory_reviewer.go \
-            pkg/agent/memory_reviewer_test.go \
-            pkg/memory/curated_schema.go \
             pkg/memory/curated_store.go \
             pkg/memory/curated_store_test.go \
             pkg/memory/curated_typed_retrieval_test.go \
-            pkg/memory/curated_types.go \
-            pkg/memory/user_profile.go \
-            pkg/memory/user_profile_test.go \
-            pkg/session/key.go \
-            pkg/session/key_test.go \
-            pkg/tools/memory_manage.go \
-            pkg/tools/memory_tools_test.go
+            pkg/tools/memory_manage.go
           git diff --cached --check
-          git commit -m "feat(memory): add durable personal agent memory"
+          git commit -m "fix(memory): satisfy static analysis"
           git push origin HEAD:"refs/heads/${TARGET_BRANCH}"
