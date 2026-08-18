@@ -125,6 +125,14 @@ jobs:
           TARGET_BRANCH: feat/personal-agent-memory-spec-v1
         run: |
           set -euo pipefail
+
+          # go generate intentionally refreshes generated mirrors for validation,
+          # but those mirrors are not part of this feature patch. Restore them
+          # before commit so repository hooks see a clean, coherent source tree.
+          git restore --worktree -- pkg/beads/beads.go pkg/hooks/hooks.go
+          { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u > /tmp/post-generate-files
+          diff -u /tmp/expected-files /tmp/post-generate-files
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- \
