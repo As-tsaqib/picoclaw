@@ -28,6 +28,7 @@ jobs:
           TARGET_BRANCH: feat/personal-agent-memory-spec-v1
         run: |
           set -euo pipefail
+          cp .github/personal-memory-spec-v1/lint-fix.patch /tmp/lint-fix.patch
           git fetch origin \
             "+refs/heads/main:refs/remotes/origin/main" \
             "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
@@ -35,8 +36,8 @@ jobs:
           test "$(git rev-parse "origin/${TARGET_BRANCH}")" = "${EXPECTED_TARGET}"
           git switch --detach "${EXPECTED_TARGET}"
           git switch -c personal-memory-lint-hardening
-          git apply --check .github/personal-memory-spec-v1/lint-fix.patch
-          git apply .github/personal-memory-spec-v1/lint-fix.patch
+          git apply --check /tmp/lint-fix.patch
+          git apply /tmp/lint-fix.patch
           gofmt -w \
             pkg/memory/curated_store.go \
             pkg/memory/curated_store_test.go \
