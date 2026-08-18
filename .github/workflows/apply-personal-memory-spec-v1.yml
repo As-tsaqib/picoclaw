@@ -66,6 +66,10 @@ jobs:
                       '\tif err != nil || len(profile.Communication) != 1 || profile.Communication[0].Key != "communication.verbosity" || profile.Communication[0].Value != "concise" {\n',
                       '\tif err != nil || len(profile.Communication) != 1 ||\n\t\tprofile.Communication[0].Key != "communication.verbosity" ||\n\t\tprofile.Communication[0].Value != "concise" {\n',
                   ),
+                  (
+                      '\tif err != nil || len(entries) != 1 || entries[0].ID != first.Applied[0].ID || entries[0].EffectiveStatus() != CuratedStatusActive {\n',
+                      '\tif err != nil || len(entries) != 1 || entries[0].ID != first.Applied[0].ID ||\n\t\tentries[0].EffectiveStatus() != CuratedStatusActive {\n',
+                  ),
               ],
               "pkg/memory/curated_typed_retrieval_test.go": [
                   (
