@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   apply:
-    if: github.event.pull_request.head.ref == 'automation/personal-memory-spec-v1-apply'
+    if: github.event.pull_request.head.ref == 'automation/personal-memory-spec-v1-apply-v2'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
