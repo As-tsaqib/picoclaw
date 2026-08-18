@@ -8,7 +8,7 @@ and correctness boundary, not only an implementation detail.
 | Immutable kernel | Which security/privacy/tool rules can never be weakened | Runtime-owned; higher authority than personality or memory |
 | `SOUL.md` | Who the agent is and how it naturally communicates | Authoritative personality/identity when present; generic PicoClaw identity is fallback only |
 | `AGENT.md` | What this workspace/agent should do | Stable operator/workspace instructions |
-| Compiled user profile | Who the current trusted user is and how to interact with them | Small derived view of private `current_user` curated memory |
+| Compiled user profile | Who the current trusted user is and how to interact with them | Small derived view of canonical `current_user` memory; shared contexts include behavioral fields only |
 | Session history | What was said recently | One allocated session or Telegram topic |
 | Session summary | What older context in this session means | The same session or topic only |
 | Curated memory | Which selective facts remain useful | Non-personal workspace facts or one trusted canonical user |
@@ -65,14 +65,17 @@ update timestamps, and these lifecycle fields:
 - `pinned`: whether a compact fact is eligible regardless of the current query;
 - `confidence` from greater than zero through one;
 - `evidence_kind`: `explicit`, `observed`, `inferred`, or the migration-only `legacy`;
+- `visibility`: `behavioral`, `private`, or `shared` (`shared` is workspace-only);
 - optional `evidence_count` / `observation_count`;
 - optional stable `preference_key` / `preference_value` for deterministic preference changes;
 - `supersedes` for corrections/history;
 - confirmation, presentation, archive, and expiry timestamps.
 
-The store schema is versioned. A v1 structured document is normalized and
-rewritten once as v2 under the same process and cross-process write lock, using
-the store's bounded atomic/private-permission write path. A malformed or newer
+The store schema is versioned. Older structured documents are normalized and
+rewritten as schema v3 under the same process and cross-process write lock, using
+the store's bounded atomic/private-permission write path. Legacy current-user
+communication/workflow preferences migrate conservatively to `behavioral`; other
+personal entries default to `private`. A malformed or newer
 unsupported document fails closed instead of being partially migrated. Legacy
 non-reviewer records retain compatibility authority; old background-review
 records are conservatively treated as inferred rather than silently becoming
@@ -92,14 +95,21 @@ links. Neither model tools nor dashboard requests can select an arbitrary user
 ID, agent ID, workspace, session key, or memory path.
 
 Different users and agents use different structured stores. The same canonical
-Telegram user can use their profile across topics, while another Telegram user
-cannot read or mutate it. Private current-user listing and mutation commands
-are available only in a safe direct chat. Shared chats expose at most safe
-workspace information and redacted status.
+Telegram user uses the same durable owner store across direct chats, groups, topics,
+and `/session` switches; ChatID, TopicID, SessionKey, and SessionRef never become
+the owner identity. Another Telegram user cannot read or mutate that store.
+
+Trusted group/topic turns may capture current-user memory. `behavioral` entries
+(for example communication/workflow preferences safe to apply silently) may be
+listed/retrieved and influence only that sender in shared context. `private`
+entries may be captured there but are filtered from shared prompt, retrieval,
+list/search/inspect output, tool-result payloads, and notification previews.
+Management of an existing private entry requires a private context and shared
+lookups fail closed without revealing whether the private ID exists.
 
 ## Compiled current-user profile
 
-For a trusted direct chat, PicoClaw compiles a bounded `UserProfileSnapshot` from active curated current-user memory. This profile is always available to prompt assembly, so stable interaction preferences do not depend on retrieval luck. It contains only profile-relevant identity/communication/workflow/interaction fields and source memory IDs; project and episodic details remain query-retrieved.
+For any trusted canonical-user turn, PicoClaw compiles a bounded `UserProfileSnapshot` from active curated current-user memory. In direct chat it may include eligible private profile fields; in group/topic context it is rebuilt from `behavioral` entries only. This profile is always available to prompt assembly, so stable interaction preferences do not depend on retrieval luck. It contains only profile-relevant identity/communication/workflow/interaction fields and source memory IDs; project and episodic details remain query-retrieved.
 
 The snapshot is a cache, **not another source of truth**. It is rebuilt automatically when the underlying structured memory revision changes and cache validity also stops at the earliest relevant memory expiry, so expired preferences cannot survive through a stale profile cache. The in-process cache is a fixed-size least-recently-used map, preventing unbounded growth as users are encountered. Low-confidence inference is excluded by default, while explicit user preferences remain eligible. The default profile budget is 1,200 serialized characters. Private profiles are never loaded into shared/group or unknown-identity prompts.
 
@@ -122,7 +132,10 @@ It must not save:
 
 Secret patterns, prompt-injection shapes, forged delimiters, invalid UTF-8,
 hidden bidirectional text, and unsafe controls are rejected before persistence.
-Exact normalized duplicates are rejected. Likely conflicts are returned as
+Exact normalized content duplicates are rejected. Reaffirming the same active
+`preference_key`/`preference_value` is an idempotent no-op (or an evidence upgrade
+when authority strictly increases), so foreground/background capture cannot create
+a second effective preference. Likely conflicts are returned as
 non-destructive hints so the caller can clarify, archive, replace, or explicitly
 supersede the old entry. Batch consolidation is atomic, capacity-limited, and
 written with owner-only permissions.
@@ -217,9 +230,14 @@ operation directly. For compatibility, legacy `write_approval: false` maps to
 `off`, `true` maps to `background_only`, and an explicit `approval_mode` wins.
 Existing config files are not rewritten merely because this enum exists.
 
-Notification modes are `off`, `on` (`💾 Memory updated`), and `verbose`. Verbose
-notifications contain at most a compact defense-in-depth redacted preview;
-private shared-chat operations never reveal their content.
+Notification modes are `off`, `on` (`💾 Memory updated`), and `verbose`. Foreground
+and reviewer writes for the same inbound message/turn share a bounded race-safe
+claim, so at most one visible memory notification is emitted. No-op/failed writes
+do not claim success. Model-facing writes expose deterministic outcomes
+(`added`, `updated`, `superseded`, `reaffirmed`, `no_op`, `pending`, or `rejected`)
+so the assistant can distinguish durable mutation from reaffirmation, staging,
+no-op, or failure. Verbose notifications contain at most a compact defense-in-depth
+redacted preview; private shared-chat operations never reveal their content.
 
 ## Commands and dashboard
 

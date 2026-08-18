@@ -216,6 +216,7 @@ func normalizedCuratedEntry(entry CuratedEntry) CuratedEntry {
 	legacyBackgroundInference := rawEvidence == "" &&
 		strings.EqualFold(strings.TrimSpace(entry.Provenance.Source), "background_review")
 	entry.EvidenceKind = entry.EffectiveEvidenceKind()
+	entry.Visibility = entry.EffectiveVisibility()
 	entry.PreferenceKey = NormalizePreferenceKey(entry.PreferenceKey)
 	entry.PreferenceValue = strings.TrimSpace(entry.PreferenceValue)
 	if entry.EvidenceCount < 0 {

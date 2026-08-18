@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -13,8 +14,55 @@ import (
 	"github.com/As-tsaqib/picoclaw/pkg/tools"
 )
 
+const maxMemoryNotificationClaims = 1024
+
+var memoryNotificationClaims = struct {
+	sync.Mutex
+	items map[string]time.Time
+}{items: make(map[string]time.Time)}
+
+func claimMemoryNotification(event tools.MemoryChangeEvent) bool {
+	if event.Result.Pending == nil && len(event.Result.Applied) == 0 {
+		return false
+	}
+	identity := strings.TrimSpace(event.Caller.MessageRef)
+	if identity == "" {
+		identity = strings.TrimSpace(event.TurnID)
+	}
+	if identity == "" {
+		return true
+	}
+	key := strings.Join([]string{event.Caller.AgentID, event.Caller.UserKey, event.Caller.SessionRef, identity}, "|")
+	now := time.Now().UTC()
+	memoryNotificationClaims.Lock()
+	defer memoryNotificationClaims.Unlock()
+	if _, exists := memoryNotificationClaims.items[key]; exists {
+		return false
+	}
+	if len(memoryNotificationClaims.items) >= maxMemoryNotificationClaims {
+		cutoff := now.Add(-time.Hour)
+		for candidate, seen := range memoryNotificationClaims.items {
+			if seen.Before(cutoff) {
+				delete(memoryNotificationClaims.items, candidate)
+			}
+		}
+		if len(memoryNotificationClaims.items) >= maxMemoryNotificationClaims {
+			var oldestKey string
+			var oldest time.Time
+			for candidate, seen := range memoryNotificationClaims.items {
+				if oldestKey == "" || seen.Before(oldest) {
+					oldestKey, oldest = candidate, seen
+				}
+			}
+			delete(memoryNotificationClaims.items, oldestKey)
+		}
+	}
+	memoryNotificationClaims.items[key] = now
+	return true
+}
+
 func (al *AgentLoop) memoryChangeNotification(ctx context.Context, event tools.MemoryChangeEvent) {
-	if al == nil || al.bus == nil || al.cfg == nil {
+	if al == nil || al.bus == nil || al.cfg == nil || !claimMemoryNotification(event) {
 		return
 	}
 	mode := al.cfg.Memory.EffectiveNotificationMode()
@@ -58,7 +106,7 @@ func formatMemoryChangePreview(event tools.MemoryChangeEvent) string {
 		return ""
 	}
 	if event.Target == memory.CuratedTargetCurrentUser && strings.TrimSpace(event.Caller.GroupID) != "" {
-		return fmt.Sprintf(" (%d private operation(s))", len(entries))
+		return fmt.Sprintf(" (%d personal operation(s))", len(entries))
 	}
 	parts := make([]string, 0, minInt(len(entries), 3))
 	for _, entry := range entries {

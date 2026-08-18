@@ -158,17 +158,25 @@ func CanonicalSessionIdentityID(channel, rawID string, identityLinks map[string]
 	if normalizedID == "" {
 		return ""
 	}
-	if linked := resolveLinkedPeerID(identityLinks, channel, normalizedID); linked != "" {
+	linked, ambiguous := resolveLinkedPeerID(identityLinks, channel, normalizedID)
+	if linked != "" && !ambiguous {
 		normalizedID = linked
 	}
+	// An ambiguous operator mapping must never collapse two identities into one
+	// session. Keep the verified raw platform ID as the safe session fallback;
+	// personal-memory ownership is stricter and fails closed below.
 	return strings.ToLower(normalizedID)
 }
 
 // CanonicalUserScopeKey returns the stable channel/account/canonical-user key
 // used by private per-user stores. Callers must supply a raw identity obtained
 // from trusted runtime authentication metadata; this helper deliberately does
-// not accept request- or model-selected scope information.
+// not accept request- or model-selected scope information. Ambiguous identity
+// links fail closed instead of picking a canonical owner by Go map iteration.
 func CanonicalUserScopeKey(channel, account, rawID string, identityLinks map[string][]string) string {
+	if _, ambiguous := resolveLinkedPeerID(identityLinks, channel, rawID); ambiguous {
+		return ""
+	}
 	canonical := CanonicalSessionIdentityID(channel, rawID, identityLinks)
 	if canonical == "" {
 		return ""
@@ -189,13 +197,13 @@ func normalizeLegacyChannel(channel string) string {
 	return channel
 }
 
-func resolveLinkedPeerID(identityLinks map[string][]string, channel, peerID string) string {
+func resolveLinkedPeerID(identityLinks map[string][]string, channel, peerID string) (string, bool) {
 	if len(identityLinks) == 0 {
-		return ""
+		return "", false
 	}
 	peerID = strings.TrimSpace(peerID)
 	if peerID == "" {
-		return ""
+		return "", false
 	}
 
 	candidates := make(map[string]bool)
@@ -211,19 +219,30 @@ func resolveLinkedPeerID(identityLinks map[string][]string, channel, peerID stri
 		candidates[rawCandidate[idx+1:]] = true
 	}
 
+	matches := make(map[string]struct{}, 1)
 	for canonical, ids := range identityLinks {
-		canonicalName := strings.TrimSpace(canonical)
+		canonicalName := strings.ToLower(strings.TrimSpace(canonical))
 		if canonicalName == "" {
 			continue
 		}
 		for _, id := range ids {
 			normalized := strings.ToLower(strings.TrimSpace(id))
 			if normalized != "" && candidates[normalized] {
-				return canonicalName
+				matches[canonicalName] = struct{}{}
+				break
 			}
 		}
 	}
-	return ""
+	if len(matches) == 0 {
+		return "", false
+	}
+	if len(matches) > 1 {
+		return "", true
+	}
+	for canonical := range matches {
+		return canonical, false
+	}
+	return "", false
 }
 
 // CanonicalScopeSignature returns a stable serialized representation of scope.

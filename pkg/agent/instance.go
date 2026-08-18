@@ -97,6 +97,26 @@ func (c *memoryReviewController) acquire(ctx context.Context) (func(), error) {
 	}
 }
 
+// withMutationBarrier serializes a reviewer memory mutation against live-turn
+// cancellation. A mutation already inside the barrier finishes before the live
+// turn proceeds; a mutation that arrives after cancellation observes ctx.Err
+// and cannot stale-overwrite newer foreground state.
+func (c *memoryReviewController) withMutationBarrier(ctx context.Context, fn func()) error {
+	if c == nil {
+		return fmt.Errorf("memory reviewer controller is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	fn()
+	return nil
+}
+
 // NewAgentInstance creates an agent instance from config.
 func NewAgentInstance(
 	agentCfg *config.AgentConfig,

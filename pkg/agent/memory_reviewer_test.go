@@ -214,9 +214,15 @@ func TestMemoryReviewerStagesBackgroundWritesWhenApprovalEnabled(t *testing.T) {
 	}
 }
 
-func TestMemoryReviewerRejectsSharedGroupScope(t *testing.T) {
+func TestMemoryReviewerAcceptsSharedGroupCanonicalUserScope(t *testing.T) {
 	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
-		"action": "add", "target": "workspace", "content": "should not be reviewed",
+		"action": "add", "target": "current_user",
+		"content":          "Prefers concise progress updates",
+		"type":             memory.CuratedTypeCommunicationPreference,
+		"evidence_kind":    memory.CuratedEvidenceObserved,
+		"preference_key":   "communication.verbosity",
+		"preference_value": "concise",
+		"visibility":       memory.CuratedVisibilityBehavioral,
 	}}
 	al, agent, caller := newMemoryReviewerHarness(t, provider)
 	caller.ChatID, caller.GroupID, caller.TopicID = "group-1/10", "group-1", "10"
@@ -225,17 +231,18 @@ func TestMemoryReviewerRejectsSharedGroupScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := al.flushMemoryReview(context.Background(), agent, caller); err != nil {
-		t.Fatalf("group flush should safely skip: %v", err)
+		t.Fatalf("group flush failed: %v", err)
 	}
-	if started, err := al.startMemoryReview(agent, caller, true); err == nil || started {
-		t.Fatalf("group reviewer = (%v, %v), want rejected", started, err)
+	entries, err := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
+	if err != nil || len(entries) != 1 || entries[0].EffectiveVisibility() != memory.CuratedVisibilityBehavioral {
+		t.Fatalf("group reviewer memory = %#v, %v", entries, err)
 	}
-	if calls, _, _ := provider.snapshot(); calls != 0 {
-		t.Fatalf("group reviewer made %d provider calls", calls)
+	if calls, _, _ := provider.snapshot(); calls != 2 {
+		t.Fatalf("group reviewer made %d provider calls, want 2", calls)
 	}
 }
 
-func TestRunMemoryReviewerRejectsDeepScopeBypass(t *testing.T) {
+func TestRunMemoryReviewerRejectsMismatchedAgentScope(t *testing.T) {
 	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
 		"action": "add", "target": "workspace", "content": "must not be reviewed",
 	}}
@@ -245,18 +252,13 @@ func TestRunMemoryReviewerRejectsDeepScopeBypass(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	groupCaller := caller
-	groupCaller.GroupID = "group-1"
-	if err := al.runMemoryReview(context.Background(), agent, groupCaller); err == nil {
-		t.Fatal("deep reviewer accepted a shared group scope")
-	}
 	otherAgentCaller := caller
 	otherAgentCaller.AgentID = "other-agent"
 	if err := al.runMemoryReview(context.Background(), agent, otherAgentCaller); err == nil {
 		t.Fatal("deep reviewer accepted a mismatched agent scope")
 	}
 	if calls, _, _ := provider.snapshot(); calls != 0 {
-		t.Fatalf("deep scope bypass made %d provider calls", calls)
+		t.Fatalf("mismatched reviewer made %d provider calls", calls)
 	}
 }
 
@@ -355,6 +357,67 @@ func TestMemoryReviewEligibilityExcludesFailedStyleInternalTurns(t *testing.T) {
 	}
 }
 
+func TestLiveTurnCancellationSerializesWithReviewerMutationBarrier(t *testing.T) {
+	al, agent, _ := newMemoryReviewerHarness(t, &mockProvider{})
+	reviewCtx, cancel := context.WithCancel(context.Background())
+	agent.memoryReviewer.mu.Lock()
+	agent.memoryReviewer.cancel = cancel
+	agent.memoryReviewer.mu.Unlock()
+
+	mutationStarted := make(chan struct{})
+	releaseMutation := make(chan struct{})
+	mutationDone := make(chan error, 1)
+	go func() {
+		mutationDone <- agent.memoryReviewer.withMutationBarrier(reviewCtx, func() {
+			close(mutationStarted)
+			<-releaseMutation
+		})
+	}()
+	select {
+	case <-mutationStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reviewer mutation did not enter barrier")
+	}
+
+	cancelReturned := make(chan struct{})
+	go func() {
+		al.cancelMemoryReviewForLiveTurn(agent, processOptions{Dispatch: DispatchRequest{
+			InboundContext: &bus.InboundContext{Channel: "telegram", ChatID: "user-a", SenderID: "user-a"},
+		}})
+		close(cancelReturned)
+	}()
+	select {
+	case <-cancelReturned:
+		t.Fatal("live-turn cancellation crossed an in-flight reviewer mutation")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseMutation)
+	select {
+	case err := <-mutationDone:
+		if err != nil {
+			t.Fatalf("in-flight reviewer mutation error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("reviewer mutation did not leave barrier")
+	}
+	select {
+	case <-cancelReturned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("live-turn cancellation did not resume after mutation completed")
+	}
+	if reviewCtx.Err() == nil {
+		t.Fatal("review context remained live after cancellation barrier")
+	}
+	called := false
+	if err := agent.memoryReviewer.withMutationBarrier(reviewCtx, func() { called = true }); err == nil {
+		t.Fatal("canceled reviewer re-entered mutation barrier")
+	}
+	if called {
+		t.Fatal("canceled reviewer executed a stale mutation")
+	}
+}
+
 func TestMemoryReviewerTimeoutIsBestEffort(t *testing.T) {
 	provider := &scriptedMemoryReviewProvider{
 		started: make(chan struct{}), finished: make(chan struct{}), block: true,
@@ -377,6 +440,46 @@ func TestMemoryReviewerTimeoutIsBestEffort(t *testing.T) {
 	}
 	if cursor.LastReviewedSequence != 0 {
 		t.Fatalf("timed-out review advanced cursor: %#v", cursor)
+	}
+}
+
+func resetMemoryNotificationClaimsForTest() {
+	memoryNotificationClaims.Lock()
+	memoryNotificationClaims.items = make(map[string]time.Time)
+	memoryNotificationClaims.Unlock()
+}
+
+func TestMemoryNotificationCoalescesForegroundAndReviewerForSameLogicalTurn(t *testing.T) {
+	resetMemoryNotificationClaimsForTest()
+	t.Cleanup(resetMemoryNotificationClaimsForTest)
+	base := tools.MemoryChangeEvent{
+		TurnID: "foreground-turn",
+		Caller: memory.CallerScope{
+			AgentID: "main", UserKey: "telegram:user-a", SessionRef: "session-a",
+			MessageRef: "message-42",
+		},
+		Target: memory.CuratedTargetCurrentUser,
+		Result: memory.CuratedBatchResult{Applied: []memory.CuratedEntry{{ID: "mem_1"}}},
+	}
+	if !claimMemoryNotification(base) {
+		t.Fatal("first logical-turn notification was not claimed")
+	}
+	background := base
+	background.TurnID = "background-review"
+	background.Result.Applied = []memory.CuratedEntry{{ID: "mem_2"}}
+	if claimMemoryNotification(background) {
+		t.Fatal("background reviewer emitted a second notification for the same inbound message")
+	}
+	next := base
+	next.Caller.MessageRef = "message-43"
+	if !claimMemoryNotification(next) {
+		t.Fatal("distinct logical turn was incorrectly coalesced")
+	}
+	noop := base
+	noop.Caller.MessageRef = "message-44"
+	noop.Result = memory.CuratedBatchResult{}
+	if claimMemoryNotification(noop) {
+		t.Fatal("no-op memory change claimed a notification")
 	}
 }
 
@@ -416,7 +519,7 @@ func TestVerboseMemoryNotificationIsRedactedAndUsesTrustedAccount(t *testing.T) 
 			t.Fatalf("notification context = %#v", outbound.Context)
 		}
 		if containsAny(outbound.Content, "timezone", "Makassar") ||
-			!strings.Contains(outbound.Content, "private operation") {
+			!strings.Contains(outbound.Content, "personal operation") {
 			t.Fatalf("verbose notification leaked private content: %q", outbound.Content)
 		}
 	case <-time.After(2 * time.Second):

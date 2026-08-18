@@ -53,7 +53,7 @@ func TestMemoryManageToolCRUDScopeAndApproval(t *testing.T) {
 	added := decodeToolResult(t, tool.Execute(toolContext(callerA, "turn-a"), map[string]any{
 		"action": "add", "target": "current_user", "content": "Prefers concise responses",
 	}))
-	if added["ok"] != true {
+	if added["ok"] != true || added["outcome"] != "added" {
 		t.Fatalf("add payload = %#v", added)
 	}
 	listedB := decodeToolResult(t, tool.Execute(toolContext(callerB, "turn-b"), map[string]any{
@@ -69,12 +69,42 @@ func TestMemoryManageToolCRUDScopeAndApproval(t *testing.T) {
 	staged := decodeToolResult(t, approvalTool.Execute(backgroundCtx, map[string]any{
 		"action": "add", "target": "workspace", "content": "Use GitHub Actions for validation",
 	}))
-	if staged["ok"] != true || !strings.Contains(string(stagedJSON(t, staged)), "pending") {
+	if staged["ok"] != true || staged["outcome"] != "pending" ||
+		!strings.Contains(string(stagedJSON(t, staged)), "pending") {
 		t.Fatalf("background approval payload = %#v", staged)
 	}
 	workspaceEntries, err := store.List(memory.CuratedTargetWorkspace, callerA)
 	if err != nil || len(workspaceEntries) != 0 {
 		t.Fatalf("approval write was applied immediately: %#v, %v", workspaceEntries, err)
+	}
+}
+
+func TestMemoryManageToolReportsNoOpAndRejectedOutcomes(t *testing.T) {
+	store, err := memory.NewCuratedStore(filepath.Join(t.TempDir(), "curated"), memory.CuratedStoreOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := toolMemoryCaller("session-a", "user-a", "", "")
+	caller.ChatID = "user-a"
+	tool := NewMemoryManageTool(store, false, nil)
+	args := map[string]any{
+		"action": "add", "target": "current_user", "content": "Prefers concise responses",
+		"type": memory.CuratedTypeCommunicationPreference, "evidence_kind": memory.CuratedEvidenceExplicit,
+		"preference_key": "communication.verbosity", "preference_value": "concise",
+	}
+	first := decodeToolResult(t, tool.Execute(toolContext(caller, "turn-a"), args))
+	if first["outcome"] != "added" {
+		t.Fatalf("first outcome = %#v", first)
+	}
+	second := decodeToolResult(t, tool.Execute(toolContext(caller, "turn-b"), args))
+	if second["outcome"] != "no_op" {
+		t.Fatalf("same preference outcome = %#v", second)
+	}
+	rejected := decodeToolResult(t, tool.Execute(toolContext(caller, "turn-c"), map[string]any{
+		"action": "add", "target": "current_user", "content": "temporary token sk-secret-1234567890",
+	}))
+	if rejected["ok"] != false || rejected["outcome"] != "rejected" {
+		t.Fatalf("rejected outcome = %#v", rejected)
 	}
 }
 
@@ -190,7 +220,7 @@ func TestMemoryManageToolApprovalModesDistinguishInteractiveAndCuratorWrites(t *
 	}
 }
 
-func TestMemoryManageToolRejectsCurrentUserAccessFromSharedGroup(t *testing.T) {
+func TestMemoryManageToolSharedGroupUsesCanonicalOwnerAndFiltersPrivateEntries(t *testing.T) {
 	store, err := memory.NewCuratedStore(filepath.Join(t.TempDir(), "curated"), memory.CuratedStoreOptions{
 		WorkspaceCharLimit: 1_000,
 		PerUserCharLimit:   1_000,
@@ -200,17 +230,64 @@ func TestMemoryManageToolRejectsCurrentUserAccessFromSharedGroup(t *testing.T) {
 	}
 	caller := toolMemoryCaller("session-a", "user-a", "group-1", "10")
 	tool := NewMemoryManageToolWithApprovalMode(store, config.MemoryApprovalOff, nil)
-	result := tool.Execute(toolContext(caller, "turn-a"), map[string]any{
+	behavior := tool.Execute(toolContext(caller, "turn-a"), map[string]any{
 		"action": "add", "target": "current_user",
-		"content": "Prefers concise replies",
+		"content":          "Prefers concise replies",
+		"type":             memory.CuratedTypeCommunicationPreference,
+		"evidence_kind":    memory.CuratedEvidenceExplicit,
+		"preference_key":   "communication.verbosity",
+		"preference_value": "concise",
+		"visibility":       memory.CuratedVisibilityBehavioral,
 	})
-	if !result.IsError {
-		t.Fatalf("shared-group current-user mutation succeeded: %s", result.ContentForLLM())
+	if behavior.IsError {
+		t.Fatalf("shared-group behavioral mutation failed: %s", behavior.ContentForLLM())
 	}
-	payload := decodeToolResult(t, result)
-	errorPayload, _ := payload["error"].(map[string]any)
-	if errorPayload["code"] != "private_context_required" {
-		t.Fatalf("shared-group error payload = %#v", payload)
+	private := tool.Execute(toolContext(caller, "turn-a"), map[string]any{
+		"action": "add", "target": "current_user",
+		"content":       "Private timezone is Asia/Makassar",
+		"type":          memory.CuratedTypeIdentity,
+		"evidence_kind": memory.CuratedEvidenceExplicit,
+		"visibility":    memory.CuratedVisibilityPrivate,
+	})
+	if private.IsError {
+		t.Fatalf("shared-group private capture failed: %s", private.ContentForLLM())
+	}
+	if strings.Contains(private.ContentForLLM(), "Asia/Makassar") {
+		t.Fatalf("shared-group private write leaked content through tool result: %s", private.ContentForLLM())
+	}
+	listed := tool.Execute(toolContext(caller, "turn-b"), map[string]any{
+		"action": "list", "target": "current_user",
+	})
+	if listed.IsError {
+		t.Fatalf("shared-group list failed: %s", listed.ContentForLLM())
+	}
+	payload := listed.ContentForLLM()
+	if !strings.Contains(payload, "Prefers concise replies") || strings.Contains(payload, "Asia/Makassar") {
+		t.Fatalf("shared-group list visibility failure: %s", payload)
+	}
+
+	direct := caller
+	direct.GroupID, direct.TopicID, direct.ChatID = "", "", "user-a"
+	directList := tool.Execute(toolContext(direct, "turn-c"), map[string]any{
+		"action": "list", "target": "current_user",
+	})
+	if directList.IsError || !strings.Contains(directList.ContentForLLM(), "Asia/Makassar") {
+		t.Fatalf("direct canonical owner could not see private memory: %s", directList.ContentForLLM())
+	}
+
+	approvalTool := NewMemoryManageToolWithApprovalMode(store, config.MemoryApprovalAllWrites, nil)
+	pending := approvalTool.Execute(toolContext(caller, "turn-d"), map[string]any{
+		"action": "add", "target": "current_user",
+		"content":       "Private contact note 081234567890",
+		"type":          memory.CuratedTypeIdentity,
+		"evidence_kind": memory.CuratedEvidenceExplicit,
+		"visibility":    memory.CuratedVisibilityPrivate,
+	})
+	if pending.IsError {
+		t.Fatalf("shared-group private pending write failed: %s", pending.ContentForLLM())
+	}
+	if strings.Contains(pending.ContentForLLM(), "081234567890") {
+		t.Fatalf("shared-group pending private write leaked content: %s", pending.ContentForLLM())
 	}
 }
 
