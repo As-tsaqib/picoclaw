@@ -1,0 +1,70 @@
+name: One-shot stale branch cleanup
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+    paths:
+      - ".github/workflows/repo-branch-cleanup.yml"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete audited stale branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
+          EXPECTED_HEAD_REF: automation/repo-branch-cleanup-20260818
+          EXPECTED_MAIN_SHA: 9cdb96ee63bce5ba9ff7aff9f3e6ef6445922339
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$HEAD_REF" != "$EXPECTED_HEAD_REF" ]]; then
+            echo "Unexpected cleanup runner branch: $HEAD_REF" >&2
+            exit 1
+          fi
+
+          current_main="$(gh api "repos/$REPO/branches/main" --jq '.commit.sha')"
+          if [[ "$current_main" != "$EXPECTED_MAIN_SHA" ]]; then
+            echo "main moved: expected $EXPECTED_MAIN_SHA, got $current_main" >&2
+            exit 1
+          fi
+
+          targets=(
+            "automation/personal-memory-pr-trigger-20260818"
+            "automation/personal-memory-spec-v1-apply-v2"
+            "feat/personal-agent-memory"
+            "feat/personal-agent-memory-spec-v1"
+          )
+
+          for branch in "${targets[@]}"; do
+            open_count="$(gh pr list --repo "$REPO" --state open --head "$branch" --json number --jq 'length')"
+            if [[ "$open_count" != "0" ]]; then
+              echo "Refusing to delete $branch: $open_count open PR(s) still use it" >&2
+              exit 1
+            fi
+          done
+
+          for branch in "${targets[@]}"; do
+            if gh api "repos/$REPO/git/ref/heads/$branch" >/dev/null 2>&1; then
+              echo "Deleting $branch"
+              gh api --method DELETE "repos/$REPO/git/refs/heads/$branch"
+            else
+              echo "Already absent: $branch"
+            fi
+          done
+
+          gh pr close "$PR_NUMBER" --repo "$REPO" --comment "One-shot branch cleanup completed; closing the transport PR without merge."
+
+          echo "Deleting cleanup runner branch $HEAD_REF"
+          gh api --method DELETE "repos/$REPO/git/refs/heads/$HEAD_REF"
