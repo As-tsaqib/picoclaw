@@ -24,6 +24,7 @@ jobs:
         shell: bash
         env:
           EXPECTED_BASE: 31d584912e0d9cac5b3701ea0df210f5d86db23a
+          EXPECTED_TARGET_BASE: f8ec0e29acf26dfe080a938cab530a6029063412
           TARGET_BRANCH: feat/personal-agent-memory-spec-v1
           PATCH_XZ_SHA256: f6caa6f3ff4a875a169d4cf4f1b42726a885c5b8baf2a781dfccf902037fd7cb
           PATCH_SHA256: 7a0ce85b3dd17c14b146245b71db4d78685902581b386d2390d73dd3b4f28395
@@ -39,12 +40,12 @@ jobs:
             "+refs/heads/main:refs/remotes/origin/main" \
             "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
           test "$(git rev-parse origin/main)" = "${EXPECTED_BASE}"
-          test "$(git rev-parse "origin/${TARGET_BRANCH}")" = "${EXPECTED_BASE}"
+          test "$(git rev-parse "origin/${TARGET_BRANCH}")" = "${EXPECTED_TARGET_BASE}"
 
-          git switch --detach "${EXPECTED_BASE}"
+          git switch --detach "${EXPECTED_TARGET_BASE}"
           git switch -c personal-memory-apply
-          git apply --check -p1 /tmp/personal-memory.patch
-          git apply -p1 /tmp/personal-memory.patch
+          git apply --check -p1 --exclude=.github/workflows/personal-memory-validation.yml /tmp/personal-memory.patch
+          git apply -p1 --exclude=.github/workflows/personal-memory-validation.yml /tmp/personal-memory.patch
 
           changed_go=(
             pkg/agent/instance.go
@@ -71,7 +72,6 @@ jobs:
           git diff --check
 
           cat > /tmp/expected-files <<'EOF'
-          .github/workflows/personal-memory-validation.yml
           docs/guides/curated-memory.md
           pkg/agent/instance.go
           pkg/agent/memory_delivery.go
@@ -125,10 +125,6 @@ jobs:
           TARGET_BRANCH: feat/personal-agent-memory-spec-v1
         run: |
           set -euo pipefail
-
-          # go generate creates untracked embedded mirrors used only to validate
-          # generation. They are not part of this feature patch, so remove them
-          # before commit and verify the tree has returned to the exact 20-file set.
           rm -f -- pkg/beads/beads.go pkg/hooks/hooks.go
           { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u > /tmp/post-generate-files
           diff -u /tmp/expected-files /tmp/post-generate-files
@@ -136,7 +132,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- \
-            .github/workflows/personal-memory-validation.yml \
             docs/guides/curated-memory.md \
             pkg/agent/instance.go \
             pkg/agent/memory_delivery.go \
