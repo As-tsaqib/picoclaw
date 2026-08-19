@@ -95,7 +95,7 @@ func buildTypedNativeRichBlocks(
 				}
 				items = append(items, listItem)
 				*totalBytes += len([]byte(item))
-				*blockUnits++
+				(*blockUnits)++
 			}
 			if len(items) == 0 {
 				continue
@@ -143,7 +143,7 @@ func buildTypedNativeRichBlocks(
 		}
 		if native != nil {
 			out = append(out, native)
-			*blockUnits++
+			(*blockUnits)++
 		}
 		if *totalBytes > richMessageMaxBytes || *blockUnits > richMessageMaxBlocks {
 			return nil, false
