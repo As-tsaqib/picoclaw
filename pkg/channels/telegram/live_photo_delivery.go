@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	telegramLivePhotoMaxBytes       int64 = 10 * 1024 * 1024
-	telegramLivePhotoCaptionMaxChars      = 1024
+	telegramLivePhotoMaxBytes        int64 = 10 * 1024 * 1024
+	telegramLivePhotoCaptionMaxChars       = 1024
 )
 
 // SendSemanticMedia recognizes the channel-neutral live-photo envelope. Other
@@ -82,11 +82,11 @@ func (c *TelegramChannel) sendLivePhoto(
 	if !livePhotoVideoShape(videoPath, videoMeta) {
 		return nil, fmt.Errorf("live photo live_video_ref is not a video: %w", channels.ErrSendFailed)
 	}
-	if err := enforceLivePhotoFileSize(photoPath, "photo"); err != nil {
-		return nil, err
+	if sizeErr := enforceLivePhotoFileSize(photoPath, "photo"); sizeErr != nil {
+		return nil, sizeErr
 	}
-	if err := enforceLivePhotoFileSize(videoPath, "live video"); err != nil {
-		return nil, err
+	if sizeErr := enforceLivePhotoFileSize(videoPath, "live video"); sizeErr != nil {
+		return nil, sizeErr
 	}
 
 	photoFile, err := os.Open(photoPath)
@@ -157,8 +157,11 @@ func enforceLivePhotoFileSize(path, role string) error {
 
 func livePhotoStaticImageShape(path string, meta media.MediaMeta) bool {
 	contentType := strings.ToLower(strings.TrimSpace(meta.ContentType))
-	if strings.HasPrefix(contentType, "image/") {
-		return true
+	if contentType != "" {
+		return strings.HasPrefix(contentType, "image/")
+	}
+	if filename := strings.TrimSpace(meta.Filename); filename != "" {
+		path = filename
 	}
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".jpg", ".jpeg", ".png", ".webp":
@@ -170,8 +173,11 @@ func livePhotoStaticImageShape(path string, meta media.MediaMeta) bool {
 
 func livePhotoVideoShape(path string, meta media.MediaMeta) bool {
 	contentType := strings.ToLower(strings.TrimSpace(meta.ContentType))
-	if strings.HasPrefix(contentType, "video/") {
-		return true
+	if contentType != "" {
+		return strings.HasPrefix(contentType, "video/")
+	}
+	if filename := strings.TrimSpace(meta.Filename); filename != "" {
+		path = filename
 	}
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".mp4", ".mov", ".m4v":
