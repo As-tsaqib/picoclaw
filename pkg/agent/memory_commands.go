@@ -346,7 +346,10 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 	if routeErr != nil || agent == nil || !strings.EqualFold(agent.ID, req.AgentID) {
 		return nil, fmt.Errorf("callback agent validation failed")
 	}
-	
+	if agent.CuratedMemory == nil {
+		return nil, fmt.Errorf("memory is not available")
+	}
+
 	action := strings.ToLower(strings.TrimSpace(req.Action))
 	
 	opts := processOptions{InboundContext: &inbound}
@@ -477,7 +480,7 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 				fmt.Sprintf("Type: %s", matched.EffectiveType()),
 				fmt.Sprintf("Status: %s", matched.EffectiveStatus()),
 				fmt.Sprintf("Pinned: %v", matched.Pinned),
-				"\n" + matched.Content,
+				"\n" + truncateMemoryCommandText(memory.RedactMemoryText(matched.Content), 480),
 			},
 			Interaction: &bus.InteractionMenu{
 				Kind:    "memory",
