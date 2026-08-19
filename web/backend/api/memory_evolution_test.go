@@ -406,7 +406,23 @@ func TestCurrentUserProfile_OwnerBindingLabels(t *testing.T) {
 		t.Fatalf("linked owner scope_label body=%s, want Personal profile: alice", res2.Body.String())
 	}
 
-	// Case 3: Configured owner NOT in identity links and pico-user not linked -> falls back to Dashboard-local profile
+	// Case 3: owner alias exists but does not contain the authenticated dashboard identity -> local only.
+	cfg.Session.IdentityLinks = map[string][]string{
+		"alice": {"telegram:42"},
+	}
+	cfg.Memory.OwnerIdentity = "alice"
+	if err := config.SaveConfig(harness.configPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	h3 := NewHandler(harness.configPath)
+	mux3 := http.NewServeMux()
+	h3.RegisterRoutes(mux3)
+	res3 := managementRequest(t, mux3, http.MethodGet, "/api/memory/current-user", "")
+	if res3.Code != http.StatusOK || !strings.Contains(res3.Body.String(), `"scope_label":"Dashboard-local profile"`) {
+		t.Fatalf("unproven owner body=%s, want Dashboard-local profile", res3.Body.String())
+	}
+
+	// Case 4: Configured owner NOT in identity links and pico-user not linked -> falls back to Dashboard-local profile
 	cfg.Session.IdentityLinks = map[string][]string{
 		"alice": {"telegram:42"},
 	}
@@ -415,15 +431,15 @@ func TestCurrentUserProfile_OwnerBindingLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h3 := NewHandler(harness.configPath)
-	mux3 := http.NewServeMux()
-	h3.RegisterRoutes(mux3)
-	res3 := managementRequest(t, mux3, http.MethodGet, "/api/memory/current-user", "")
-	if res3.Code != http.StatusOK {
-		t.Fatalf("GET /api/memory/current-user status=%d", res3.Code)
+	h4 := NewHandler(harness.configPath)
+	mux4 := http.NewServeMux()
+	h4.RegisterRoutes(mux4)
+	res4 := managementRequest(t, mux4, http.MethodGet, "/api/memory/current-user", "")
+	if res4.Code != http.StatusOK {
+		t.Fatalf("GET /api/memory/current-user status=%d", res4.Code)
 	}
-	if !strings.Contains(res3.Body.String(), `"scope_label":"Dashboard-local profile"`) {
-		t.Fatalf("unlinked owner scope_label body=%s, want Dashboard-local profile", res3.Body.String())
+	if !strings.Contains(res4.Body.String(), `"scope_label":"Dashboard-local profile"`) {
+		t.Fatalf("unlinked owner scope_label body=%s, want Dashboard-local profile", res4.Body.String())
 	}
 }
 

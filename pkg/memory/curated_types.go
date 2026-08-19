@@ -219,6 +219,15 @@ type CuratedMutation struct {
 	LastVerifiedAt   *time.Time `json:"last_verified_at,omitempty"`
 	LastConfirmedAt  *time.Time `json:"last_confirmed_at,omitempty"`
 	Provenance       Provenance `json:"provenance"`
+
+	// migrationPreserveMetadata is intentionally unexported. It allows the
+	// trusted legacy-store migration path to retain historical timestamps,
+	// counts, pin state, and provenance without exposing those controls to LLM
+	// tool arguments or management JSON.
+	migrationPreserveMetadata bool
+	migrationCreatedAt        time.Time
+	migrationUpdatedAt        time.Time
+	migrationPinned           bool
 }
 
 type PendingCuratedChange struct {

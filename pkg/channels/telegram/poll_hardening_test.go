@@ -238,3 +238,26 @@ func TestQuizRevealClaimScopeReplayAndConcurrency(t *testing.T) {
 	_, err = ch.claimQuizReveal(good(), "quiz")
 	require.Error(t, err, "successful reveal must be replay-safe")
 }
+
+func TestStopPollForRouteAcceptsBoundTokenAndRejectsWrongRoute(t *testing.T) {
+	ch := newTestChannel(t, &stubCaller{callFn: func(_ context.Context, url string, _ *ta.RequestData) (*ta.Response, error) {
+		require.Contains(t, url, "stopPoll")
+		return successResponse(t), nil
+	}})
+	entry := telegramPollEntry{
+		LocalHandle: "route-bound", Account: ch.Name(), ChatID: -1001, ThreadID: 42,
+		MessageID: 7, AgentID: "main", SenderID: "alice", SessionKey: "session-a",
+	}
+	ch.registerPollEntry(entry)
+	token := bus.NewPollStopRouteToken(entry.LocalHandle, entry.Account, "-1001/42", "42", entry.AgentID, "", entry.SessionKey)
+	wrong := telegramPollRoute{Account: entry.Account, ChatID: -1002, ThreadID: 42, AgentID: "main", SenderID: "alice", SessionKey: "session-a"}
+	require.Error(t, ch.StopPollForRoute(context.Background(), token, wrong))
+	if _, ok := ch.resolvePollByLocalHandle(entry.LocalHandle); !ok {
+		t.Fatal("failed authorization consumed poll state")
+	}
+	good := telegramPollRoute{Account: entry.Account, ChatID: -1001, ThreadID: 42, AgentID: "main", SenderID: "alice", SessionKey: "session-a"}
+	require.NoError(t, ch.StopPollForRoute(context.Background(), token, good))
+	if _, ok := ch.resolvePollByLocalHandle(entry.LocalHandle); ok {
+		t.Fatal("successful stop retained poll state")
+	}
+}

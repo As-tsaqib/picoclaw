@@ -667,6 +667,9 @@ func (m *Manager) GetStreamer(ctx context.Context, channelName, chatID, sessionK
 	}
 
 	beginStream := func(beginCtx context.Context) (bus.Streamer, error) {
+		if preferred, ok := ch.(PreferredSessionStreamingCapable); ok {
+			return preferred.BeginPreferredStreamForSession(beginCtx, chatID, sessionKey)
+		}
 		if sessionCapable, ok := ch.(SessionStreamingCapable); ok {
 			return sessionCapable.BeginStreamForSession(beginCtx, chatID, sessionKey)
 		}
@@ -675,9 +678,11 @@ func (m *Manager) GetStreamer(ctx context.Context, channelName, chatID, sessionK
 		}
 		return nil, fmt.Errorf("channel %q does not support streaming", channelName)
 	}
-	if _, sessionAware := ch.(SessionStreamingCapable); !sessionAware {
-		if _, streamingCapable := ch.(StreamingCapable); !streamingCapable {
-			return nil, false
+	if _, preferred := ch.(PreferredSessionStreamingCapable); !preferred {
+		if _, sessionAware := ch.(SessionStreamingCapable); !sessionAware {
+			if _, streamingCapable := ch.(StreamingCapable); !streamingCapable {
+				return nil, false
+			}
 		}
 	}
 
@@ -1833,10 +1838,11 @@ func (m *Manager) sendMediaWithRetry(
 	w *channelWorker,
 	msg bus.OutboundMediaMessage,
 ) ([]string, error) {
-	ms, ok := w.ch.(MediaSender)
-	if !ok {
+	ms, hasMediaSender := w.ch.(MediaSender)
+	semantic, hasSemanticMedia := w.ch.(SemanticMediaCapable)
+	if !hasMediaSender && !hasSemanticMedia {
 		err := fmt.Errorf("channel %q does not support media sending", name)
-		logger.WarnCF("channels", "Channel does not support MediaSender", map[string]any{
+		logger.WarnCF("channels", "Channel does not support media sending", map[string]any{
 			"channel": name,
 			"error":   err.Error(),
 		})
@@ -1876,7 +1882,17 @@ func (m *Manager) sendMediaWithRetry(
 	var lastErr error
 	var msgIDs []string
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		msgIDs, lastErr = ms.SendMedia(ctx, msg)
+		handled := false
+		if hasSemanticMedia {
+			msgIDs, handled, lastErr = semantic.SendSemanticMedia(ctx, msg)
+		}
+		if !handled {
+			if !hasMediaSender {
+				lastErr = fmt.Errorf("channel %q did not handle semantic media and has no ordinary media sender", name)
+			} else {
+				msgIDs, lastErr = ms.SendMedia(ctx, msg)
+			}
+		}
 		if lastErr == nil {
 			m.publishOutboundMediaSent(name, msg, msgIDs)
 			return msgIDs, nil

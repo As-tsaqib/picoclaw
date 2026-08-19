@@ -31,12 +31,15 @@ func (c *TelegramChannel) SendSemanticMedia(
 	if len(msg.Parts) != 1 {
 		return nil, false, nil
 	}
-	payload, ok := bus.DecodeLivePhotoMediaRef(msg.Parts[0].Ref)
-	if !ok {
-		return nil, false, nil
+	if payload, ok := bus.DecodeLivePhotoMediaRef(msg.Parts[0].Ref); ok {
+		ids, err := c.sendLivePhoto(ctx, msg, payload)
+		return ids, true, err
 	}
-	ids, err := c.sendLivePhoto(ctx, msg, payload)
-	return ids, true, err
+	if payload, ok := bus.DecodeNativeSingleMediaRef(msg.Parts[0].Ref); ok {
+		ids, err := c.sendNativeSingleMedia(ctx, msg, payload)
+		return ids, true, err
+	}
+	return nil, false, nil
 }
 
 func (c *TelegramChannel) sendLivePhoto(

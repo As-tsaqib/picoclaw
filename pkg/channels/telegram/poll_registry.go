@@ -241,11 +241,19 @@ func (c *TelegramChannel) StopPollForRoute(
 	localHandle string,
 	route telegramPollRoute,
 ) error {
-	entry, ok := c.resolvePollByLocalHandle(localHandle)
-	if !ok {
-		return fmt.Errorf("poll %q not found or expired", localHandle)
+	lookupHandle := strings.TrimSpace(localHandle)
+	if handle, _, ok := bus.ParsePollStopRouteToken(lookupHandle); ok {
+		lookupHandle = handle
 	}
-	return c.stopPollEntry(ctx, localHandle, entry, route)
+	entry, ok := c.resolvePollByLocalHandle(lookupHandle)
+	if !ok {
+		return fmt.Errorf("poll %q not found or expired", lookupHandle)
+	}
+	verifiedHandle, err := stopPollHandleForEntry(localHandle, entry)
+	if err != nil || verifiedHandle != lookupHandle {
+		return fmt.Errorf("not authorized to stop poll: poll route proof mismatch")
+	}
+	return c.stopPollEntry(ctx, lookupHandle, entry, route)
 }
 
 func (c *TelegramChannel) stopPollEntry(

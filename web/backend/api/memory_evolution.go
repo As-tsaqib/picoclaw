@@ -103,30 +103,50 @@ func dashboardWorkspaceCaller() memory.CallerScope {
 // other channel profiles remain manageable only from their own trusted direct
 // chats, preventing an authenticated workspace operator from selecting an
 // arbitrary canonical user key.
-func dashboardCurrentUserCaller(cfg *config.Config) memory.CallerScope {
-	identityLinks := map[string][]string(nil)
-	var ownerIdentity string
-	if cfg != nil {
-		identityLinks = cfg.Session.IdentityLinks
-		ownerIdentity = cfg.Memory.OwnerIdentity
+func dashboardOwnerPersonKey(cfg *config.Config) (string, bool) {
+	if cfg == nil {
+		return "", false
 	}
-	var userKey string
-	if ownerIdentity != "" && identityLinks != nil {
-		ownerIdentityLower := strings.ToLower(strings.TrimSpace(ownerIdentity))
-		for canonical := range identityLinks {
-			if strings.ToLower(strings.TrimSpace(canonical)) == ownerIdentityLower {
-				userKey = "person:" + ownerIdentityLower
-				break
-			}
+	owner := strings.ToLower(strings.TrimSpace(cfg.Memory.OwnerIdentity))
+	if owner == "" {
+		return "", false
+	}
+	var members []string
+	matches := 0
+	for canonical, identities := range cfg.Session.IdentityLinks {
+		if strings.ToLower(strings.TrimSpace(canonical)) != owner {
+			continue
+		}
+		matches++
+		members = identities
+	}
+	if matches != 1 {
+		return "", false
+	}
+	for _, identity := range members {
+		parts := strings.Split(strings.ToLower(strings.TrimSpace(identity)), ":")
+		if len(parts) == 2 && parts[0] == config.ChannelPico && parts[1] == "pico-user" {
+			return "person:" + owner, true
+		}
+		if len(parts) == 3 && parts[0] == config.ChannelPico &&
+			routing.NormalizeAccountID(parts[1]) == routing.DefaultAccountID && parts[2] == "pico-user" {
+			return "person:" + owner, true
 		}
 	}
+	return "", false
+}
 
-	if userKey == "" {
+func dashboardCurrentUserCaller(cfg *config.Config) memory.CallerScope {
+	userKey, bound := dashboardOwnerPersonKey(cfg)
+	if !bound {
+		// Dashboard-local fallback deliberately ignores identity_links. Otherwise
+		// an unrelated alias containing pico-user could silently turn an
+		// unconfigured/invalid owner setting into a cross-channel person scope.
 		userKey = session.CanonicalUserScopeKey(
 			config.ChannelPico,
 			routing.DefaultAccountID,
 			"pico-user",
-			identityLinks,
+			nil,
 		)
 	}
 	return memory.CallerScope{

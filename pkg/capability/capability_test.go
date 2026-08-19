@@ -23,15 +23,13 @@ func TestResolveRouteCapabilities_TelegramDefaults(t *testing.T) {
 	assert.True(t, set.IsSupported(FeatureKeyboardInline))
 	assert.True(t, set.IsSupported(FeatureMediaAnimation))
 	assert.True(t, set.IsSupported(FeatureDiceAnimated))
+	assert.True(t, set.IsSupported(FeatureMessageStreamRich))
+	assert.True(t, set.IsSupported(FeatureMediaLivePhoto))
 
-	// Checklist is conditional on business context
+	// Checklist stays conditional until trusted business authority is wired end-to-end.
 	assert.False(t, set.IsSupported(FeatureChecklistNative))
 	assert.Equal(t, StateConditional, set[FeatureChecklistNative].State)
-	assert.Equal(t, "business_connection", set[FeatureChecklistNative].Condition)
-
-	// Rich stream is unsupported/text-only by default
-	assert.False(t, set.IsSupported(FeatureMessageStreamRich))
-	assert.Equal(t, StateUnsupported, set[FeatureMessageStreamRich].State)
+	assert.Equal(t, "context_unavailable", set[FeatureChecklistNative].Condition)
 }
 
 func TestResolveRouteCapabilities_ChecklistWithBusinessContext(t *testing.T) {
@@ -41,7 +39,8 @@ func TestResolveRouteCapabilities_ChecklistWithBusinessContext(t *testing.T) {
 		HasBusinessContext: true,
 	}
 	set := ResolveRouteCapabilities(route, nil)
-	assert.True(t, set.IsSupported(FeatureChecklistNative))
+	assert.Equal(t, StateConditional, set[FeatureChecklistNative].State)
+	assert.Equal(t, "context_unavailable", set[FeatureChecklistNative].Condition)
 }
 
 func TestResolveRouteCapabilities_NegativeCacheDowngrade(t *testing.T) {
@@ -86,6 +85,10 @@ func TestResolveRouteCapabilities_NegativeCacheIgnoresTransientErrors(t *testing
 		errors.New("api: 403 Forbidden: bot was blocked by the user"),
 		errors.New("dial tcp: i/o timeout"),
 		errors.New("connection refused"),
+		errors.New("api: 500 Internal Server Error: method not implemented"),
+		errors.New("api: 502 Bad Gateway: unsupported method"),
+		errors.New("network is unreachable"),
+		errors.New("lookup api.telegram.local: no such host"),
 	}
 
 	for _, err := range transientErrors {
@@ -106,8 +109,9 @@ func TestFormatCapabilityPrompt_MatchesRoute(t *testing.T) {
 	assert.Contains(t, prompt, "native_poll=supported")
 	assert.Contains(t, prompt, "stop_poll=supported")
 	assert.Contains(t, prompt, "rich_message=supported")
-	assert.Contains(t, prompt, "rich_stream=unsupported")
-	assert.Contains(t, prompt, "checklist=conditional:business_connection")
+	assert.Contains(t, prompt, "rich_stream=supported")
+	assert.Contains(t, prompt, "live_photo=supported")
+	assert.Contains(t, prompt, "checklist=conditional:context_unavailable")
 }
 
 func TestNegativeCache_TTLAndEviction(t *testing.T) {
@@ -179,4 +183,40 @@ func TestCapabilityCacheKeyConsistency(t *testing.T) {
 	)
 	assert.True(t, cache.IsDowngraded("telegram", "personal", "", FeaturePollRegular))
 	assert.True(t, cache.IsDowngraded("telegram", "personal", "official", FeaturePollRegular))
+}
+
+func TestResolveRouteCapabilities_ImplementedNativePathsAreTruthful(t *testing.T) {
+	route := RouteContext{Channel: "telegram", Account: "default"}
+	set := ResolveRouteCapabilities(route, nil)
+	assert.True(t, set.IsSupported(FeatureMessageStreamRich))
+	assert.True(t, set.IsSupported(FeatureMediaLivePhoto))
+	assert.Equal(t, StateUnsupported, set[FeatureKeyboardReply].State)
+	assert.Equal(t, "not_implemented", set[FeatureKeyboardReply].Condition)
+	assert.Equal(t, StateConditional, set[FeatureChecklistNative].State)
+	assert.Equal(t, "context_unavailable", set[FeatureChecklistNative].Condition)
+}
+
+func TestResolveRouteCapabilities_EphemeralDraftStreamingFailsClosed(t *testing.T) {
+	set := ResolveRouteCapabilities(RouteContext{Channel: "telegram", IsEphemeral: true}, nil)
+	assert.Equal(t, StateConditional, set[FeatureMessageStreamText].State)
+	assert.Equal(t, "non_ephemeral_route", set[FeatureMessageStreamText].Condition)
+	assert.Equal(t, StateConditional, set[FeatureMessageStreamRich].State)
+	assert.Equal(t, "non_ephemeral_route", set[FeatureMessageStreamRich].Condition)
+	assert.True(t, set.IsSupported(FeatureMessageEphemeral))
+}
+
+func TestResolveRouteCapabilities_RichAndLivePhotoServerDowngrade(t *testing.T) {
+	cache := NewNegativeCapabilityCache(time.Minute)
+	route := RouteContext{Channel: "telegram", Account: "legacy", ServerID: "http://legacy.example"}
+	if !cache.RecordFailure(route.Channel, route.Account, route.ServerID, FeatureMessageStreamRich, errors.New("400 Bad Request: method not found")) {
+		t.Fatal("rich draft unsupported failure was not cached")
+	}
+	if !cache.RecordFailure(route.Channel, route.Account, route.ServerID, FeatureMediaLivePhoto, errors.New("400 Bad Request: method not found")) {
+		t.Fatal("live photo unsupported failure was not cached")
+	}
+	set := ResolveRouteCapabilities(route, cache)
+	assert.Equal(t, StateUnsupported, set[FeatureMessageStreamRich].State)
+	assert.Equal(t, "downgraded_by_server", set[FeatureMessageStreamRich].Condition)
+	assert.Equal(t, StateUnsupported, set[FeatureMediaLivePhoto].State)
+	assert.True(t, set.IsSupported(FeaturePollRegular))
 }

@@ -48,6 +48,7 @@ export interface CoreConfigForm {
   evolutionMaxDraftChars: string
   evolutionRollbackRetention: string
   memoryEnabled: boolean
+  memoryCaptureMode: MemoryCaptureMode
   memoryBackgroundReviewEnabled: boolean
   memoryReviewInterval: string
   memoryReviewProvider: string
@@ -92,6 +93,7 @@ export type MCPServerType = "http" | "sse" | "stdio"
 export type TurnProfileMode = "default" | "off" | "custom"
 
 export type MemoryNotificationMode = "off" | "on" | "verbose"
+export type MemoryCaptureMode = "automatic" | "explicit_only"
 
 export type MemoryRecallMode = "isolated" | "user_recall" | "group_recall"
 export type MemoryApprovalMode = "off" | "background_only" | "all_writes"
@@ -262,6 +264,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   evolutionMaxDraftChars: "12000",
   evolutionRollbackRetention: "10",
   memoryEnabled: true,
+  memoryCaptureMode: "automatic",
   memoryBackgroundReviewEnabled: true,
   memoryReviewInterval: "10",
   memoryReviewProvider: "",
@@ -405,6 +408,10 @@ function toBasicTurnProfileMode(
   value: unknown,
 ): Exclude<TurnProfileMode, "custom"> {
   return value === "off" ? "off" : "default"
+}
+
+function toMemoryCaptureMode(value: unknown): MemoryCaptureMode {
+  return value === "explicit_only" ? "explicit_only" : "automatic"
 }
 
 function toMemoryNotificationMode(value: unknown): MemoryNotificationMode {
@@ -667,6 +674,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       memory.enabled === undefined
         ? EMPTY_FORM.memoryEnabled
         : asBool(memory.enabled),
+    memoryCaptureMode: toMemoryCaptureMode(memory.capture_mode),
     memoryBackgroundReviewEnabled:
       memoryBackgroundReview.enabled === undefined
         ? EMPTY_FORM.memoryBackgroundReviewEnabled
@@ -853,6 +861,9 @@ export function buildMemoryConfigPatch(
   if (!MEMORY_NOTIFICATION_OPTIONS.includes(form.memoryNotifications)) {
     throw new Error("Notification mode is invalid.")
   }
+  if (form.memoryCaptureMode !== "automatic" && form.memoryCaptureMode !== "explicit_only") {
+    throw new Error("Memory capture mode is invalid.")
+  }
   if (!MEMORY_RECALL_OPTIONS.includes(form.memoryRecallMode)) {
     throw new Error("Cross-topic recall mode is invalid.")
   }
@@ -868,6 +879,7 @@ export function buildMemoryConfigPatch(
 
   const full: Record<string, unknown> = {
     enabled: form.memoryEnabled,
+    capture_mode: form.memoryCaptureMode,
     workspace_char_limit: parseIntField(
       form.memoryWorkspaceCharLimit,
       "Workspace memory character limit",
@@ -1025,6 +1037,9 @@ export function buildMemoryConfigPatch(
   const delta: Record<string, unknown> = {}
   if (form.memoryEnabled !== baseline.memoryEnabled) {
     delta.enabled = form.memoryEnabled
+  }
+  if (form.memoryCaptureMode !== baseline.memoryCaptureMode) {
+    delta.capture_mode = form.memoryCaptureMode
   }
   if (form.memoryWorkspaceCharLimit !== baseline.memoryWorkspaceCharLimit) {
     delta.workspace_char_limit = full.workspace_char_limit

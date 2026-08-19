@@ -837,6 +837,14 @@ func isToolAllowedByCapability(toolName string, capSet capability.CapabilitySet)
 		return capSet.IsSupported(capability.FeatureContactCard)
 	case "send_dice":
 		return capSet.IsSupported(capability.FeatureDiceAnimated)
+	case "send_live_photo":
+		return capSet.IsSupported(capability.FeatureMediaLivePhoto)
+	case "send_animation":
+		return capSet.IsSupported(capability.FeatureMediaAnimation)
+	case "send_sticker":
+		return capSet.IsSupported(capability.FeatureMediaSticker)
+	case "send_video_note":
+		return capSet.IsSupported(capability.FeatureMediaVideoNote)
 	default:
 		return true
 	}

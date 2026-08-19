@@ -637,3 +637,26 @@ test("frontend delta patch produces only modified memory fields and preserves ad
   assert.equal(reloadedForm.memoryRetrievalMaxTotalChars, "12000")
   assert.equal(reloadedForm.memoryRecallMaxResults, "10")
 })
+
+test("memory capture mode round trips and delta patch changes only capture policy", () => {
+  const original = {
+    memory: {
+      enabled: true,
+      capture_mode: "automatic",
+      background_review: { enabled: true, interval: 19, timeout_seconds: 71 },
+      retrieval: { recency_weight: 0.61, fuzzy_weight: 0.83 },
+    },
+  }
+  const baseline = buildFormFromConfig(original)
+  assert.equal(baseline.memoryCaptureMode, "automatic")
+  const modified = { ...baseline, memoryCaptureMode: "explicit_only" as const }
+  const patch = buildMemoryConfigPatch(modified, baseline)
+  assert.deepEqual(patch, { capture_mode: "explicit_only" })
+  const merged = mergePatch(original, { memory: patch })
+  const reloaded = buildFormFromConfig(merged)
+  assert.equal(reloaded.memoryCaptureMode, "explicit_only")
+  assert.equal(reloaded.memoryReviewInterval, "19")
+  assert.equal(reloaded.memoryReviewTimeoutSeconds, "71")
+  assert.equal(reloaded.memoryRetrievalRecencyWeight, "0.61")
+  assert.equal(reloaded.memoryRetrievalFuzzyWeight, "0.83")
+})

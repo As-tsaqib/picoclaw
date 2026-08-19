@@ -31,7 +31,15 @@ const (
 	MaxCuratedEntryChars           = 4_000
 )
 
-var curatedDocumentLocks sync.Map
+type curatedDocumentLockEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+var curatedDocumentLocks = struct {
+	sync.Mutex
+	entries map[string]*curatedDocumentLockEntry
+}{entries: make(map[string]*curatedDocumentLockEntry)}
 
 type CuratedStoreOptions struct {
 	WorkspaceCharLimit     int
@@ -697,7 +705,9 @@ func (s *CuratedStore) prepareMutations(
 		if !validCuratedProvenanceBounds(mutation.Provenance) {
 			return nil, nil, ErrCuratedInvalidAction
 		}
-		mutation.Provenance.RecordedAt = now
+		if !mutation.migrationPreserveMetadata || mutation.Provenance.RecordedAt.IsZero() {
+			mutation.Provenance.RecordedAt = now
+		}
 		prepared = append(prepared, mutation)
 		outcomes = append(outcomes, outcome)
 	}
@@ -738,11 +748,21 @@ func applyCuratedMutations(
 				return nil, nil, ErrCuratedDuplicate
 			}
 			evidence := NormalizeEvidenceKind(mutation.EvidenceKind)
+			createdAt, updatedAt := now, now
+			if mutation.migrationPreserveMetadata {
+				if !mutation.migrationCreatedAt.IsZero() {
+					createdAt = mutation.migrationCreatedAt
+				}
+				if !mutation.migrationUpdatedAt.IsZero() {
+					updatedAt = mutation.migrationUpdatedAt
+				}
+			}
 			entry := CuratedEntry{
 				ID:               mutation.ID,
 				Content:          mutation.Content,
 				Type:             NormalizeCuratedType(mutation.Type),
 				Status:           CuratedStatusActive,
+				Pinned:           mutation.migrationPinned,
 				Confidence:       DefaultConfidenceForEvidence(evidence),
 				EvidenceKind:     evidence,
 				Visibility:       mutation.Visibility,
@@ -752,8 +772,8 @@ func applyCuratedMutations(
 				PreferenceValue:  strings.TrimSpace(mutation.PreferenceValue),
 				Supersedes:       mutation.Supersedes,
 				Provenance:       mutation.Provenance,
-				CreatedAt:        now,
-				UpdatedAt:        now,
+				CreatedAt:        createdAt,
+				UpdatedAt:        updatedAt,
 				LastVerifiedAt:   mutation.LastVerifiedAt,
 				LastConfirmedAt:  mutation.LastConfirmedAt,
 				ExpiresAt:        mutation.ExpiresAt,
@@ -761,19 +781,21 @@ func applyCuratedMutations(
 			if mutation.Confidence != nil {
 				entry.Confidence = *mutation.Confidence
 			}
-			if entry.EvidenceCount == 0 {
-				entry.EvidenceCount = 1
-			}
-			if evidence == CuratedEvidenceObserved && entry.ObservationCount == 0 {
-				entry.ObservationCount = entry.EvidenceCount
-			}
-			if entry.LastConfirmedAt == nil && entry.LastVerifiedAt != nil {
-				entry.LastConfirmedAt = entry.LastVerifiedAt
-			}
-			if evidence == CuratedEvidenceExplicit && entry.LastConfirmedAt == nil {
-				confirmed := now
-				entry.LastConfirmedAt = &confirmed
-				entry.LastVerifiedAt = &confirmed
+			if !mutation.migrationPreserveMetadata {
+				if entry.EvidenceCount == 0 {
+					entry.EvidenceCount = 1
+				}
+				if evidence == CuratedEvidenceObserved && entry.ObservationCount == 0 {
+					entry.ObservationCount = entry.EvidenceCount
+				}
+				if entry.LastConfirmedAt == nil && entry.LastVerifiedAt != nil {
+					entry.LastConfirmedAt = entry.LastVerifiedAt
+				}
+				if evidence == CuratedEvidenceExplicit && entry.LastConfirmedAt == nil {
+					confirmed := now
+					entry.LastConfirmedAt = &confirmed
+					entry.LastVerifiedAt = &confirmed
+				}
 			}
 			if mutation.Supersedes != "" {
 				markCuratedSuperseded(entries, mutation.Supersedes, now)
@@ -805,11 +827,20 @@ func applyCuratedMutations(
 			} else if mutation.EvidenceKind != "" {
 				entries[idx].Confidence = DefaultConfidenceForEvidence(entries[idx].EvidenceKind)
 			}
-			if mutation.EvidenceCount > 0 {
+			if mutation.migrationPreserveMetadata {
 				entries[idx].EvidenceCount = mutation.EvidenceCount
-			}
-			if mutation.ObservationCount > 0 {
 				entries[idx].ObservationCount = mutation.ObservationCount
+				entries[idx].Pinned = mutation.migrationPinned
+				if !mutation.migrationCreatedAt.IsZero() {
+					entries[idx].CreatedAt = mutation.migrationCreatedAt
+				}
+			} else {
+				if mutation.EvidenceCount > 0 {
+					entries[idx].EvidenceCount = mutation.EvidenceCount
+				}
+				if mutation.ObservationCount > 0 {
+					entries[idx].ObservationCount = mutation.ObservationCount
+				}
 			}
 			if mutation.PreferenceKey != "" {
 				entries[idx].PreferenceKey = NormalizePreferenceKey(mutation.PreferenceKey)
@@ -818,7 +849,10 @@ func applyCuratedMutations(
 			if mutation.ExpiresAt != nil {
 				entries[idx].ExpiresAt = mutation.ExpiresAt
 			}
-			if mutation.LastConfirmedAt != nil {
+			if mutation.migrationPreserveMetadata {
+				entries[idx].LastConfirmedAt = mutation.LastConfirmedAt
+				entries[idx].LastVerifiedAt = mutation.LastVerifiedAt
+			} else if mutation.LastConfirmedAt != nil {
 				entries[idx].LastConfirmedAt = mutation.LastConfirmedAt
 				entries[idx].LastVerifiedAt = mutation.LastConfirmedAt
 			} else if mutation.LastVerifiedAt != nil {
@@ -840,6 +874,9 @@ func applyCuratedMutations(
 			}
 			entries[idx].Provenance = mutation.Provenance
 			entries[idx].UpdatedAt = now
+			if mutation.migrationPreserveMetadata && !mutation.migrationUpdatedAt.IsZero() {
+				entries[idx].UpdatedAt = mutation.migrationUpdatedAt
+			}
 			entries[idx] = normalizedCuratedEntry(entries[idx])
 			reconcilePreferenceKey(entries, mutation.ID, now)
 			if current, ok := curatedEntryByID(entries, mutation.ID); ok {
@@ -1635,24 +1672,36 @@ func clonePendingChanges(changes []PendingCuratedChange) []PendingCuratedChange 
 // instances in the same process. This matters when the gateway and
 // authenticated dashboard open the same structured store independently.
 func lockCuratedDocument(path string) (func(), error) {
-	for {
-		actual, _ := curatedDocumentLocks.LoadOrStore(path, &sync.Mutex{})
-		mu, ok := actual.(*sync.Mutex)
-		if !ok || mu == nil {
-			curatedDocumentLocks.CompareAndSwap(path, actual, &sync.Mutex{})
-			continue
-		}
-		mu.Lock()
-		fileUnlock, err := fileutil.LockFile(curatedDocumentLockPath(path))
-		if err != nil {
-			mu.Unlock()
-			return nil, fmt.Errorf("lock curated memory: %w", err)
-		}
-		return func() {
-			_ = fileUnlock()
-			mu.Unlock()
-		}, nil
+	curatedDocumentLocks.Lock()
+	entry := curatedDocumentLocks.entries[path]
+	if entry == nil {
+		entry = &curatedDocumentLockEntry{}
+		curatedDocumentLocks.entries[path] = entry
 	}
+	entry.refs++
+	curatedDocumentLocks.Unlock()
+
+	releaseRef := func() {
+		curatedDocumentLocks.Lock()
+		defer curatedDocumentLocks.Unlock()
+		entry.refs--
+		if entry.refs == 0 && curatedDocumentLocks.entries[path] == entry {
+			delete(curatedDocumentLocks.entries, path)
+		}
+	}
+
+	entry.mu.Lock()
+	fileUnlock, err := fileutil.LockFile(curatedDocumentLockPath(path))
+	if err != nil {
+		entry.mu.Unlock()
+		releaseRef()
+		return nil, fmt.Errorf("lock curated memory: %w", err)
+	}
+	return func() {
+		_ = fileUnlock()
+		entry.mu.Unlock()
+		releaseRef()
+	}, nil
 }
 
 func curatedDocumentLockPath(path string) string {
@@ -1673,8 +1722,11 @@ func pendingIDs(changes []PendingCuratedChange) map[string]struct{} {
 }
 
 // MigrateLegacyUserStoreToPersonScope merges entries from legacy channel-scoped user keys
-// into a consolidated person-scoped user key. It is deterministic, idempotent, and preserves
-// preference reconciliation and fact uniqueness.
+// into a consolidated person-scoped user key. Source stores are retained, so a
+// partial migration is safely repeatable after a crash. Entries are applied one
+// at a time through the normal CuratedStore transaction/reconciliation path;
+// this keeps every commit below the public batch limit and makes each successful
+// step durable before moving to the next source entry.
 func (s *CuratedStore) MigrateLegacyUserStoreToPersonScope(
 	legacyUserKeys []string,
 	personUserKey string,
@@ -1682,127 +1734,188 @@ func (s *CuratedStore) MigrateLegacyUserStoreToPersonScope(
 	if s == nil || len(legacyUserKeys) == 0 || strings.TrimSpace(personUserKey) == "" {
 		return 0, nil
 	}
-
-	personCaller := CallerScope{UserKey: personUserKey}
-	migratedCount := 0
-
-	existingEntries, _ := s.List(CuratedTargetCurrentUser, personCaller)
-	existingFactContent := make(map[string]struct{}, len(existingEntries))
-	for _, entry := range existingEntries {
-		existingFactContent[strings.ToLower(strings.TrimSpace(entry.Content))] = struct{}{}
+	personUserKey = strings.TrimSpace(personUserKey)
+	if !strings.HasPrefix(strings.ToLower(personUserKey), "person:") {
+		return 0, fmt.Errorf("person-scoped user key is required")
 	}
 
-	for _, legacyKey := range legacyUserKeys {
-		legacyKey = strings.TrimSpace(legacyKey)
-		if legacyKey == "" || legacyKey == personUserKey {
+	legacySet := make(map[string]struct{}, len(legacyUserKeys))
+	for _, key := range legacyUserKeys {
+		key = strings.TrimSpace(key)
+		if key == "" || key == personUserKey {
 			continue
 		}
-		legacyCaller := CallerScope{UserKey: legacyKey}
-		legacyEntries, lErr := s.List(CuratedTargetCurrentUser, legacyCaller)
-		if lErr != nil || len(legacyEntries) == 0 {
-			continue
+		legacySet[key] = struct{}{}
+	}
+	orderedLegacyKeys := make([]string, 0, len(legacySet))
+	for key := range legacySet {
+		orderedLegacyKeys = append(orderedLegacyKeys, key)
+	}
+	sort.Strings(orderedLegacyKeys)
+
+	personCaller := CallerScope{AgentID: "migration", UserKey: personUserKey}
+	migrated := 0
+	for _, legacyKey := range orderedLegacyKeys {
+		legacyCaller := CallerScope{AgentID: "migration", UserKey: legacyKey}
+		legacyEntries, err := s.List(CuratedTargetCurrentUser, legacyCaller)
+		if err != nil {
+			return migrated, fmt.Errorf("read legacy user store %q: %w", legacyKey, err)
 		}
+		sort.SliceStable(legacyEntries, func(i, j int) bool {
+			if !legacyEntries[i].CreatedAt.Equal(legacyEntries[j].CreatedAt) {
+				return legacyEntries[i].CreatedAt.Before(legacyEntries[j].CreatedAt)
+			}
+			return legacyEntries[i].ID < legacyEntries[j].ID
+		})
 
-		currentPersonEntries, _ := s.List(CuratedTargetCurrentUser, personCaller)
-
-		var mutations []CuratedMutation
 		for _, entry := range legacyEntries {
+			entry = normalizedCuratedEntry(entry)
 			if entry.EffectiveStatus() != CuratedStatusActive {
 				continue
 			}
+			current, listErr := s.List(CuratedTargetCurrentUser, personCaller)
+			if listErr != nil {
+				return migrated, fmt.Errorf("read person store %q: %w", personUserKey, listErr)
+			}
 
-			if entry.PreferenceKey != "" {
-				normKey := NormalizePreferenceKey(entry.PreferenceKey)
-				normVal := strings.TrimSpace(entry.PreferenceValue)
-				alreadyPresent := false
-				for _, pe := range currentPersonEntries {
-					if pe.EffectiveStatus() == CuratedStatusActive &&
-						NormalizePreferenceKey(pe.PreferenceKey) == normKey &&
-						strings.TrimSpace(pe.PreferenceValue) == normVal {
-						alreadyPresent = true
+			preferenceKey := NormalizePreferenceKey(entry.PreferenceKey)
+			preferenceValue := NormalizePreferenceValue(preferenceKey, entry.PreferenceValue)
+			skip := false
+			if preferenceKey != "" {
+				for _, existing := range current {
+					existing = normalizedCuratedEntry(existing)
+					if existing.EffectiveStatus() != CuratedStatusActive ||
+						NormalizePreferenceKey(existing.PreferenceKey) != preferenceKey {
+						continue
+					}
+					existingValue := NormalizePreferenceValue(preferenceKey, existing.PreferenceValue)
+					if existingValue == preferenceValue && existing.EvidenceAuthority() >= entry.EvidenceAuthority() {
+						skip = true
+						break
+					}
+					// An equally authoritative conflicting historical value is ambiguous.
+					// Preserve it in the source store instead of choosing a winner based
+					// on migration execution time. Stronger evidence may still supersede.
+					if existingValue != preferenceValue && existing.EvidenceAuthority() >= entry.EvidenceAuthority() {
+						skip = true
 						break
 					}
 				}
-				if alreadyPresent {
-					continue
-				}
 			} else {
-				if duplicateCuratedContent(currentPersonEntries, entry.Content, "") {
-					continue
+				for _, existing := range current {
+					if existing.EffectiveStatus() == CuratedStatusActive &&
+						IsObviousFactDuplicate(existing.Content, entry.Content) {
+						skip = true
+						break
+					}
 				}
 			}
-
-			conf := entry.Confidence
-			mutations = append(mutations, CuratedMutation{
-				Action:           CuratedActionAdd,
-				Type:             entry.Type,
-				Content:          entry.Content,
-				PreferenceKey:    entry.PreferenceKey,
-				PreferenceValue:  entry.PreferenceValue,
-				EvidenceKind:     entry.EvidenceKind,
-				EvidenceCount:    entry.EvidenceCount,
-				ObservationCount: entry.ObservationCount,
-				Confidence:       &conf,
-				Visibility:       entry.Visibility,
-				ExpiresAt:        entry.ExpiresAt,
-				LastVerifiedAt:   entry.LastVerifiedAt,
-				LastConfirmedAt:  entry.LastConfirmedAt,
-				Provenance:       entry.Provenance,
-			})
-		}
-
-		if len(mutations) > 0 {
-			res, err := s.ApplyBatch(CuratedTargetCurrentUser, personCaller, mutations, false)
-			if err == nil {
-				migratedCount += len(res.Applied)
+			if skip {
+				continue
 			}
+
+			confidence := entry.EffectiveConfidence()
+			mutation := CuratedMutation{
+				Action:                    CuratedActionAdd,
+				Content:                   entry.Content,
+				Type:                      entry.EffectiveType(),
+				Confidence:                &confidence,
+				EvidenceKind:              entry.EffectiveEvidenceKind(),
+				Visibility:                entry.EffectiveVisibility(),
+				EvidenceCount:             entry.EvidenceCount,
+				ObservationCount:          entry.ObservationCount,
+				PreferenceKey:             preferenceKey,
+				PreferenceValue:           preferenceValue,
+				ExpiresAt:                 entry.ExpiresAt,
+				LastVerifiedAt:            entry.LastVerifiedAt,
+				LastConfirmedAt:           entry.LastConfirmedAt,
+				Provenance:                entry.Provenance,
+				migrationPreserveMetadata: true,
+				migrationCreatedAt:        entry.CreatedAt,
+				migrationUpdatedAt:        entry.UpdatedAt,
+				migrationPinned:           entry.Pinned,
+			}
+			result, applyErr := s.ApplyBatch(
+				CuratedTargetCurrentUser,
+				personCaller,
+				[]CuratedMutation{mutation},
+				false,
+			)
+			if errors.Is(applyErr, ErrCuratedDuplicate) {
+				continue
+			}
+			if applyErr != nil {
+				return migrated, fmt.Errorf("migrate legacy user store %q: %w", legacyKey, applyErr)
+			}
+			migrated += len(result.Applied)
 		}
 	}
-
-	return migratedCount, nil
+	return migrated, nil
 }
 
-// MigrateLegacyStoresFromConfig scans configured identity links and migrates
-// any matching legacy channel-scoped user stores into their canonical person scope.
+// MigrateLegacyStoresFromConfig consolidates legacy user stores according to trusted identity links.
 func (s *CuratedStore) MigrateLegacyStoresFromConfig(identityLinks map[string][]string) (int, error) {
 	if s == nil || len(identityLinks) == 0 {
 		return 0, nil
 	}
-	totalMigrated := 0
-	for canonical, ids := range identityLinks {
+	canonicalNames := make([]string, 0, len(identityLinks))
+	for canonical := range identityLinks {
+		canonicalNames = append(canonicalNames, canonical)
+	}
+	sort.SliceStable(canonicalNames, func(i, j int) bool {
+		return strings.ToLower(strings.TrimSpace(canonicalNames[i])) <
+			strings.ToLower(strings.TrimSpace(canonicalNames[j]))
+	})
+
+	total := 0
+	for _, canonical := range canonicalNames {
 		canonicalName := strings.ToLower(strings.TrimSpace(canonical))
 		if canonicalName == "" {
 			continue
 		}
-		if !strings.HasPrefix(canonicalName, "person:") {
-			canonicalName = "person:" + canonicalName
-		}
-		var legacyKeys []string
-		for _, id := range ids {
-			id = strings.TrimSpace(id)
-			if id == "" {
+		legacySet := make(map[string]struct{})
+		identities := append([]string(nil), identityLinks[canonical]...)
+		sort.SliceStable(identities, func(i, j int) bool {
+			return strings.ToLower(strings.TrimSpace(identities[i])) <
+				strings.ToLower(strings.TrimSpace(identities[j]))
+		})
+		for _, identity := range identities {
+			parts := strings.Split(strings.TrimSpace(identity), ":")
+			var channel, account, rawID string
+			switch len(parts) {
+			case 1:
+				channel, account, rawID = "unknown", "default", parts[0]
+			case 2:
+				channel, account, rawID = parts[0], "default", parts[1]
+			default:
+				channel, account, rawID = parts[0], parts[1], strings.Join(parts[2:], ":")
+			}
+			if strings.TrimSpace(rawID) == "" {
 				continue
 			}
-			parts := strings.Split(id, ":")
-			switch len(parts) {
-			case 3:
-				legacyKeys = append(legacyKeys, fmt.Sprintf("channel:%s|account:%s|user:%s",
-					strings.ToLower(parts[0]), strings.ToLower(parts[1]), strings.ToLower(parts[2])))
-			case 2:
-				legacyKeys = append(legacyKeys, fmt.Sprintf("channel:%s|account:default|user:%s",
-					strings.ToLower(parts[0]), strings.ToLower(parts[1])))
-			case 1:
-				for _, ch := range []string{"telegram", "pico", "discord", "slack"} {
-					legacyKeys = append(legacyKeys, fmt.Sprintf("channel:%s|account:default|user:%s",
-						ch, strings.ToLower(parts[0])))
-				}
-			}
+			legacySet[fmt.Sprintf(
+				"channel:%s|account:%s|user:%s",
+				strings.ToLower(strings.TrimSpace(channel)),
+				strings.ToLower(strings.TrimSpace(account)),
+				strings.ToLower(strings.TrimSpace(canonicalName)),
+			)] = struct{}{}
+			legacySet[fmt.Sprintf(
+				"channel:%s|account:%s|user:%s",
+				strings.ToLower(strings.TrimSpace(channel)),
+				strings.ToLower(strings.TrimSpace(account)),
+				strings.ToLower(strings.TrimSpace(rawID)),
+			)] = struct{}{}
 		}
-		count, err := s.MigrateLegacyUserStoreToPersonScope(legacyKeys, canonicalName)
+		legacyKeys := make([]string, 0, len(legacySet))
+		for key := range legacySet {
+			legacyKeys = append(legacyKeys, key)
+		}
+		sort.Strings(legacyKeys)
+		migrated, err := s.MigrateLegacyUserStoreToPersonScope(legacyKeys, "person:"+canonicalName)
 		if err != nil {
-			return totalMigrated, err
+			return total, fmt.Errorf("migrate identity %q: %w", canonicalName, err)
 		}
-		totalMigrated += count
+		total += migrated
 	}
-	return totalMigrated, nil
+	return total, nil
 }

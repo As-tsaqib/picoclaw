@@ -348,3 +348,29 @@ func TestHandlePatchConfig_MemoryDeltaPatchPreservesHiddenExpertValues(t *testin
 		t.Fatalf("timeout_seconds = %d, want 99", updated.Memory.BackgroundReview.TimeoutSeconds)
 	}
 }
+
+func TestHandlePatchConfigRejectsUnprovenDashboardOwnerBinding(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	bad := `{"session":{"identity_links":{"owner":["telegram:42"]}},"memory":{"owner_identity":"owner"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(bad))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unproven owner PATCH status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	good := `{"session":{"identity_links":{"owner":["telegram:42","pico:pico-user"]}},"memory":{"owner_identity":"owner"}}`
+	req = httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(good))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("proven owner PATCH status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}

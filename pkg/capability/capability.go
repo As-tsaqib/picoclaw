@@ -132,18 +132,36 @@ func cacheKey(channel, account, serverID string, feature Feature) string {
 }
 
 // RecordFailure checks if the error indicates an unsupported method/feature, and records it if so.
+func containsHTTP5xx(value string) bool {
+	for i := 0; i+2 < len(value); i++ {
+		if value[i] != '5' || value[i+1] < '0' || value[i+1] > '9' || value[i+2] < '0' || value[i+2] > '9' {
+			continue
+		}
+		beforeDigit := i > 0 && value[i-1] >= '0' && value[i-1] <= '9'
+		afterDigit := i+3 < len(value) && value[i+3] >= '0' && value[i+3] <= '9'
+		if !beforeDigit && !afterDigit {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *NegativeCapabilityCache) RecordFailure(channel, account, serverID string, feature Feature, err error) bool {
 	if c == nil || err == nil {
 		return false
 	}
 	errStr := strings.ToLower(err.Error())
 
-	// Distinguish genuine unsupported method from transient network/auth/rate-limit errors
-	// Do NOT downgrade on 401, 403, 429, timeout, network error
+	// Distinguish genuine unsupported method/field responses from transient
+	// transport, authentication, rate-limit, and server failures. A temporary
+	// outage must never poison capability truth for the cache TTL.
 	if strings.Contains(errStr, "401") || strings.Contains(errStr, "403") ||
 		strings.Contains(errStr, "429") || strings.Contains(errStr, "too many requests") ||
-		strings.Contains(errStr, "timeout") || strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "forbidden") {
+		strings.Contains(errStr, "timeout") || strings.Contains(errStr, "timed out") ||
+		strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "network is unreachable") || strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "temporary failure") || strings.Contains(errStr, "unauthorized") ||
+		strings.Contains(errStr, "forbidden") || containsHTTP5xx(errStr) {
 		return false
 	}
 
@@ -229,7 +247,6 @@ func ResolveRouteCapabilities(route RouteContext, cache *NegativeCapabilityCache
 		features := []Feature{
 			FeatureMessageText,
 			FeatureMessageEdit,
-			FeatureMessageStreamText,
 			FeatureMessageStructuredRich,
 			FeatureKeyboardInline,
 			FeaturePollRegular,
@@ -246,6 +263,7 @@ func ResolveRouteCapabilities(route RouteContext, cache *NegativeCapabilityCache
 			FeatureMediaAnimation,
 			FeatureMediaSticker,
 			FeatureMediaVideoNote,
+			FeatureMediaLivePhoto,
 			FeatureLocationPoint,
 			FeatureLocationVenue,
 			FeatureContactCard,
@@ -260,28 +278,31 @@ func ResolveRouteCapabilities(route RouteContext, cache *NegativeCapabilityCache
 			}
 		}
 
-		// Ephemeral delivery is conditional
+		// Draft streaming deliberately fails closed on callback-private routes:
+		// the draft APIs do not carry the receiver/callback authority required by
+		// an ephemeral response. Persistent Telegram routes support both text and
+		// typed rich drafts.
 		if route.IsEphemeral {
+			set[FeatureMessageStreamText] = CapabilityInfo{State: StateConditional, Condition: "non_ephemeral_route"}
+			set[FeatureMessageStreamRich] = CapabilityInfo{State: StateConditional, Condition: "non_ephemeral_route"}
 			set[FeatureMessageEphemeral] = CapabilityInfo{State: StateSupported}
 		} else {
+			set[FeatureMessageStreamText] = CapabilityInfo{State: StateSupported}
+			if cache != nil && cache.IsDowngraded(route.Channel, route.Account, route.ServerID, FeatureMessageStreamRich) {
+				set[FeatureMessageStreamRich] = CapabilityInfo{State: StateUnsupported, Condition: "downgraded_by_server"}
+			} else {
+				set[FeatureMessageStreamRich] = CapabilityInfo{State: StateSupported}
+			}
 			set[FeatureMessageEphemeral] = CapabilityInfo{State: StateConditional, Condition: "ephemeral_route"}
 		}
 
-		// Checklist requires business connection
-		if route.HasBusinessContext {
-			set[FeatureChecklistNative] = CapabilityInfo{State: StateSupported}
-		} else {
-			set[FeatureChecklistNative] = CapabilityInfo{State: StateConditional, Condition: "business_connection"}
-		}
-		set[FeatureMediaLivePhoto] = CapabilityInfo{State: StateUnsupported, Condition: "not_implemented"}
+		// Reply keyboards and checklists have no executable semantic path in
+		// PicoClaw yet. In particular, a caller-supplied HasBusinessContext flag
+		// must not turn checklist support on until trusted business authority is
+		// carried end-to-end by the channel runtime.
+		set[FeatureKeyboardReply] = CapabilityInfo{State: StateUnsupported, Condition: "not_implemented"}
+		set[FeatureChecklistNative] = CapabilityInfo{State: StateConditional, Condition: "context_unavailable"}
 		set[FeaturePollMedia] = CapabilityInfo{State: StateUnsupported, Condition: "not_implemented"}
-
-		// Rich stream draft
-		if cache != nil && cache.IsDowngraded(route.Channel, route.Account, route.ServerID, FeatureMessageStreamRich) {
-			set[FeatureMessageStreamRich] = CapabilityInfo{State: StateUnsupported}
-		} else {
-			set[FeatureMessageStreamRich] = CapabilityInfo{State: StateUnsupported, Condition: "text_draft_only"}
-		}
 	} else if channel == "pico" {
 		set[FeatureMessageText] = CapabilityInfo{State: StateSupported}
 		set[FeatureMessageStreamText] = CapabilityInfo{State: StateSupported}
@@ -315,6 +336,7 @@ func FormatCapabilityPrompt(set CapabilitySet, channel string) string {
 		{FeatureMediaAnimation, "animation"},
 		{FeatureMediaSticker, "sticker"},
 		{FeatureMediaVideoNote, "video_note"},
+		{FeatureMediaLivePhoto, "live_photo"},
 		{FeatureLocationPoint, "location"},
 		{FeatureLocationVenue, "venue"},
 		{FeatureContactCard, "contact"},

@@ -22,6 +22,7 @@ import (
 	tu "github.com/mymmrac/telego/telegoutil"
 
 	"github.com/As-tsaqib/picoclaw/pkg/bus"
+	"github.com/As-tsaqib/picoclaw/pkg/capability"
 	"github.com/As-tsaqib/picoclaw/pkg/channels"
 	"github.com/As-tsaqib/picoclaw/pkg/commands"
 	"github.com/As-tsaqib/picoclaw/pkg/config"
@@ -278,7 +279,14 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]
 	}
 
 	if msg.StopPollID != "" {
-		err := c.StopPoll(ctx, msg.StopPollID, msg.AgentID, msg.SessionKey, msg.Context.SenderID)
+		account := strings.TrimSpace(msg.Context.Account)
+		if account == "" {
+			account = c.Name()
+		}
+		err := c.StopPollForRoute(ctx, msg.StopPollID, telegramPollRoute{
+			Account: account, ChatID: chatID, ThreadID: threadID,
+			AgentID: msg.AgentID, SessionKey: msg.SessionKey, SenderID: msg.Context.SenderID,
+		})
 		if err != nil {
 			logger.WarnCF("telegram", "Failed to stop native poll", map[string]any{
 				"poll_id": msg.StopPollID,
@@ -1003,6 +1011,19 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 		file.Close()
 
 		if err != nil {
+			if feature, native := telegramMediaCapability(part.Type); native {
+				account := strings.TrimSpace(msg.Context.Account)
+				if account == "" {
+					account = c.Name()
+				}
+				serverID := ""
+				if c.tgCfg != nil {
+					serverID = c.tgCfg.BaseURL
+				}
+				if capability.GlobalNegativeCache.RecordFailure("telegram", account, serverID, feature, err) {
+					return nil, fmt.Errorf("native %s is unsupported by this Telegram server: %v: %w", part.Type, err, channels.ErrSendFailed)
+				}
+			}
 			if ephemeralTarget != nil {
 				logger.ErrorCF("telegram", "Failed to send ephemeral media", map[string]any{
 					"type": part.Type,

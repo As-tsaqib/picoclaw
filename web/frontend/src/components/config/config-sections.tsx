@@ -170,23 +170,27 @@ export function MemoryRecallSection({
 
   const [showAdvanced, setShowAdvanced] = useState(false)
 
-  const learningMode = !form.memoryBackgroundReviewEnabled
-    ? "manual"
-    : form.memoryApprovalMode === "background_only" ||
-        form.memoryApprovalMode === "all_writes"
-      ? "review"
-      : "automatic"
+  const learningMode =
+    form.memoryCaptureMode === "explicit_only"
+      ? "manual"
+      : form.memoryApprovalMode === "background_only" ||
+          form.memoryApprovalMode === "all_writes"
+        ? "review"
+        : "automatic"
 
   const updateLearningMode = (mode: string) => {
     if (mode === "automatic") {
+      onFieldChange("memoryCaptureMode", "automatic")
       onFieldChange("memoryBackgroundReviewEnabled", true)
       onFieldChange("memoryApprovalMode", "off")
       onFieldChange("memoryWriteApproval", false)
     } else if (mode === "review") {
+      onFieldChange("memoryCaptureMode", "automatic")
       onFieldChange("memoryBackgroundReviewEnabled", true)
       onFieldChange("memoryApprovalMode", "background_only")
       onFieldChange("memoryWriteApproval", true)
     } else {
+      onFieldChange("memoryCaptureMode", "explicit_only")
       onFieldChange("memoryBackgroundReviewEnabled", false)
       onFieldChange("memoryApprovalMode", "off")
       onFieldChange("memoryWriteApproval", false)
@@ -210,10 +214,16 @@ export function MemoryRecallSection({
         label="Learn Preferences Automatically"
         hint="Learn durable preferences without requiring 'remember this'."
         layout="setting-row"
-        checked={form.memoryBackgroundReviewEnabled}
-        onCheckedChange={(checked) =>
-          onFieldChange("memoryBackgroundReviewEnabled", checked)
-        }
+        checked={form.memoryCaptureMode === "automatic"}
+        onCheckedChange={(checked) => {
+          onFieldChange(
+            "memoryCaptureMode",
+            checked ? "automatic" : "explicit_only",
+          )
+          if (!checked) {
+            onFieldChange("memoryBackgroundReviewEnabled", false)
+          }
+        }}
       />
 
       <SwitchCardField

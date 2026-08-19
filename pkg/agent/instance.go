@@ -210,6 +210,18 @@ func NewAgentInstance(
 	if cfg.Tools.IsToolEnabled("send_dice") {
 		toolsRegistry.Register(tools.NewSendDiceTool())
 	}
+	if cfg.Tools.IsToolEnabled("send_live_photo") {
+		toolsRegistry.Register(tools.NewSendLivePhotoTool())
+	}
+	if cfg.Tools.IsToolEnabled("send_animation") {
+		toolsRegistry.Register(tools.NewSendAnimationTool())
+	}
+	if cfg.Tools.IsToolEnabled("send_sticker") {
+		toolsRegistry.Register(tools.NewSendStickerTool())
+	}
+	if cfg.Tools.IsToolEnabled("send_video_note") {
+		toolsRegistry.Register(tools.NewSendVideoNoteTool())
+	}
 
 	sessionsDir := filepath.Join(workspace, "sessions")
 	sessions := initSessionStore(sessionsDir)
