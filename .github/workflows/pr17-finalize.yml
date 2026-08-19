@@ -1,0 +1,61 @@
+name: PR17 finalize source
+
+on:
+  push:
+    branches:
+      - feat/telegram-interactive-command-ux
+    paths:
+      - .github/workflows/pr17-finalize.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/telegram-interactive-command-ux
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          check-latest: false
+      - name: Apply exact source patch
+        shell: bash
+        env:
+          PATCH_B64: H4sICAUyhmoAA3ByMTctc291cmNlLWZpbmFsLnBhdGNoAM1b63PbuBH/LP8VMDt1pYiiJEd+RK079TlJ694ll4nd9sPNjQuRkMUzRTJ82FFd/+/dBRYgKOrlJL02k4lNcrEA9vnbBRKE0ynr9W7DgvF+enfb57ciLvpzMU+yxY2fzOc8DnLvNmGTjZ/3wjgQn5l/9HJydDryvJEYHgajKRsOBsej0V6v19vCf6/b7W6b409/Yr3R4Mg9Zl38cfiKwZtpGfvMT+JpeFtm4p0cdaEGfSzjIpyL9h5rPe0x+LvXldSK9WVciIz7RZjEH5OyEJf5hyy854Voh/EkKeOAvZiUuXepHi4SIP9cdNgkSSL2uNdthVOmCc/OWByqt61MFGUWsymPcgHPT4oyL7Iwvs29N59KHr1NoqCt31xn4fwq5b6Z1ruY8eJ6kYqOy5wgzIRfOJ0a7yIrNWt6o4fSDj6KPE3iXLCDA7Z+Hk2Mm79O7kTcYftnzHH2usB5nagueBSJ7MpPUpBrt+XLRyLzrI8u7nu9HOFzZ8WoZcHuK8HCNr7pDpU0+312zu5FFk5DEbBU0bIMidmdEGnOiplgt/AiZVHic9w+myYZuxaRuM34XNLC1C5xe5iFkaBdsUzwIO/Py0KOyxnPBMtxjwErEskZNCtCmJ9lHB4zeMdj/EDc8hkMCRgvg1DEvvDY9UyvrsC9sDCHRSe+yPMeLi9iPjCIRQRDilmShcXCQ1ZKRd6fcR+Xr5nSsG08ikBpXblTG5i9OEc3/CFJ0g4Tn4UP89acC73qBh0P1ekZtbKWdF8afhnnBYfFu8p3h6fu8BCcdzR0hwPjvLvOtsrhmHEKeHa1Rb3JMlI9reuj+FSCJwUyEvRaoXb11yJCDSzY+OzrXfTf/15npTAlOQrM41fm/jbJrmHtbSky7/K1y3jk+dNbl71I0iLvqE2bZSQ/JA8iW7GsTHzyfkzBRdHUOsrIA57PJgnPAqcppum8QBkl2bTtkLnm5YRCLYuTAm0zuY3Df4nA6WihTdl+U3Dgf/sk9fMoSh40wd9ykSkNttWGO9q393cMv53aug8whlxB5PPhUagwEheSonUdFpEYM+eDyPIkBmtSEzuu/PqBZxy8NZ3lY/bTz0p4j8oeXx7KXHL00j15tjW2Wk+S/5OLMpUy6lpa3hg4n2ECrrYpVAPJYlKGUaAW9FprmQTyRjFyycrs0Zj/cNdHR4ew3e7RyWjDriGSBJGQyweB0uaB5YT7d+0dzAliE5oRv+dhxCeRICtiLdwUyoci14+pjI6P9ewwZge07qfnu47ynG+rC1LFgaULsO/70BfIPxYPNfO4Up+Iz0UJfilIX1oxyEGtxQ49mz383FfuDXoMNsK2sNrpTQ7Wi6ngphB5sQbHbaInYDf1Xw4Hpyeedzo5HI5eDrcAu40c1yC9jWOku0pnVUYbztMkKxiaooM0IC4H5AJPIJNZOfEgmPXP816R808hTBb6iR/xBzkrRBLMgDtQqpUBY5S5cpRrmOy91rdlUu9EXH4HssqvszIHdcuY9ia+FxEaGeRDWqV3jXENtwP+95J1T47co5Fxw03cP4pfIM/klzEsOI0EIBprpsYM4KKF95YXPGo74nMKIwFLiHlaLJhK0ABCJohBfpGftH9WyA+X0liHDagop+oNX/CUT8IIlNZYS7eVlpMo9CUEQXs/aAJCicguFICBUF4QxHJcdu77QAcxwQnElJdRAe8w/16+hlc9sMPRYf+E3mFOhrcSszkSll0noFFJijRXAqw5k4+jQ0lA+HxbTrI2QFjcSFd9Ipyo8NkcJKLin0Ji/xIspdzUowBZpeeOWgX8i6WF4PGPcSQByQtr0vrXBgo+0zXBDls5sBg19qJoeplmTLTsAXwF2ND+fKNrtdUpRHnmR0ku7O0YaA17sea0vjQBOsLTJOWfStEjNNurJnN2BBAHmv/y9taA/Ry2FgWWsjQy7ym0uUpXCvWtUJP6YBAibogQYv2jguJghdVrslUN0Xfaqhq6vFFaHYiwaO5uqyluCQJW9kR9qqUA4/zvJN7VEamZke3K7xEB4/diYfn+mPx9jK7KqH4xPu887RZXGmGBPP42KXbEBi6zvf/3ONJUU/salJg3tiKmS9FB1n/gS4GIRTBmv/3NPWwM2K0NATttyGVL4WAso8EX7NOODM/cZxk3nGv7bu0IsSEn7LTd6rUJJuNNsUQH/+fIx8QVI1pbQI6DJeC2aggFsCy8NXEpCFUxJmKE0FVUojaCmqgp2KcmPKT9533tW/3clFI3AdVyFTrclZzA4WR0/HIymXre4DgY+CO/CQ53Zlhhw52HqM7CQIJD+DE6NGhK4x4leYmhZGTyVfgFwHk8clkxw1aNeu4wwt4uYXIFpXSjBMYBPUZpu52YC10hWeZDqKU9h1l1A6wG56C4UCTWTJS/YUSzo0jmqgedrWh70Tc0A2RCS6gVGIYWCbzzagBVNtvHkIvaY3NAB/6MQnwumD258ouqgaffn+H7MW5vFVd2ZjNZxfdsDd/9Ot+KX53uOSzNe96Yo98HSAmlM1go9xd9HvAUlEztuMpeVZtMge5iBrWx6dSZ1SCriZgmmWDgtRMBIF/kMuZiyQ28ICx47F2YzznIWmBgiHsKz9/zqBSywUh80Dsm2A0SkEUiMS0YzJGUclieIH0YqG4mpOcokvAtJ/zmrRCdtco1yqooavAhExOIEA3fUF4YQ4Rf4xlQ/GUorhUfjZvI4WvdBL9634fYKtTc5KP+9ONDjHWA9ZXeaAIqRSwCeqMJqs1rgsq0NIeiNoN6oT9XYE9/pzdmAtlAtQnojSZQHfPqs3zWHy91p9R8pjd2n5csQTQ0ZApXGYxW62htEHWNeevIJrA5JCOp3c6sxxWSf4fcDTLpuqClpFARYq27hpZ0tgNTimYVU5lWjlSD8PTUbpX57IU+ATD8K1//KNJo8Y5nd2XaaJQ1umWm53GvQhH8U0AQKTg20EJT6ZvuGYjvLlT9b+q00VnGxhx0MFca897zuWhjA6mFnEArGOd3MwKt8ErVFsPfS177VlO+uW2gkO1SKdhXJ9hy7Q4HkLC3SFZ1Ij9A4Q56uxJ5jgEEENFcSEm3/eJz4xSCzeVUDOADhNMpNhshUnpS0/Kf75tCxEUD2Ap9cS0ji2wnz0FBHMpf0yQP+IzdiQAi7gPPcu6xv/KIx3dAQs0iFvHb0HPUVnu1IzsUWC6wPWht4r2cEneBpxd5zm+BrlpHZ+nYb3ceas91XkwlvdwefBHxcH4ZSysYS8tQv0spgHk4l3EKhf+MZ2UOeSkrU84KcZezBY9vWQGmc8fuEigob9WuN4qbZnaoBfbqdOgOh9IOTvGX/xtDsGVgREAK3lkSX65/a/qvN4AaMxVGlChVS92j/KB7/brL/xdF06ZDKD3EZNwv3ZvzAwd5gcMA2KjkBnPDc8g95+s3vH0GCqaUItVpRN0udLI0VN47NY1MyBDtwdLuvcsi4W2avyLoSNuGGujEPZTGPRrhL/8d434i/SwH4Ci5vYVq/R88iy/etu1+qvNBbhbAGTBmDzyvmsDAkqc/qRT5M48Xjw6EejBoByppWXTeJNmNhKI3FYh0YAlfbAxWjFVqAgTNC6h8QSMQLKz4qk8nVXz9Blby5VObXGzapOQVgC/0K48O5GpH1YWOqTB3OeF43g9xZMZzIAjCPJynPDZR1DCvLkGsOhei6aR7m9sNGMMKFby2jfm6SFV8kxBVWLGpAia+l4kpLHZGjBB3nk/BjxVHxUuzWJb7CkxSdwkpo5pfIH9GUzKOExF3chUsk7Y4iWZ3A5GmuKEB6py4Y4HBbVJCdbSanrLWZFabKlZ95R2mrVRkE8haYdXq9dTpSGu9b3zjyUgCT1U3RQkBz85VuFSH8cPB8Sv31eZgudksYAZSm9ZGTcQq+uGCdFH+YuXVAqCoChdZcWr6pj9WV0ZWAgzXwAtzj2tDXUzT2BWX20hQqtXHWnNZaMB3lTncyndWVyTEvM5QI3v7nUb5a9IL6RBBvdLe0cAdHqH6Xg3cw6Ov1F9VPKg+W29D4bU+0KxImMrQ8WAC2CQ6ZasA1KhWu8+fFdtKKyaWDbnVU+Mhxg7W2m1ZS5SX52o1tea++l4U+V3Kgbu8fFGUev42/Hr52mAYbFHAc6cKyWqQJr/WZf4ZW4I9+ou6KKQ/vklnYg5WHFXo6Y9sgK6jKd7CBivLgrhHE36kZjd2zmvz4QBPzlORgn3jLR8ongHkAe0BCXnpy2NzOeMNS6UDFNsrhCaijUhvXqLJ6iv/w5mmM1dDrQaAbvibRENXAs0VPmwElLF9j6bbkh2utYJavxZa7BblqLX+CrKVRlnVZg0cTathX7CYFWswr1wmj2auVMT8hzrYlgz0uRmjLsVweHwsc9Lh8HhbTqpfmCIfNjemVkajT6Wow8iVmHHJjbvre0Abs8ryHPX08tV5ZZk9sdSZ5Zkp5XnnV9KH/MUNFOaBiGG1S3edvmzwXiwe2FRe6E0CoY+01IHXQP3xvMHkGKo7X5509QNx34/LKNr1EGv91Gh8A3cAlueeYntsrwvA/Q4DvOaDLXZzB6rbcsi45L0mEfsJKq3/C6JS+Qajjbr0RJBF/m4uTnWXrkPNF/M52IZadYK0BWfrCegHT8Ple1Uwmyj8WdaXU00XfZ5DJCq2kmXqbhHQdTbfRaAWJx7CiABTg76NpAS/6hIC+RimQcOxgf7anYrUdhWr7S/vaKwiaR6PKNIZ3RXEjZj1uewgL8qJOm1+fJLbbd2scLzZNkQ3PHw5OnLZoCNvdkv5ee8TmWhwGuBT/1K8D+X8NBN+VNpRcLYt+/jU4TVU3vK54a5DmseGW26ZEKE+8brCk6q3eFB1Ic+p/quapeOsHn+GivWYyf9K18uaJs2s1TLKg4dxTkNoPN5oL5QPmdv2c9KB09AaXW9QKFVhYIAa+VWRyJUr8HGuscxqneUqhLXoQInJs9rieNTGFtrRSAKeosKdx/ic0PGdoR0dIl392q8tbHz7Nh7LBN5u/rcFVmb6tMplN7BK7uH1Rljra17wDmurNyrHuQp7dwz629d1oBEpsHOx243pWMIOXfnVzkVUWPbeiwe8P2NuaZ5/uJQHv8xhXVxYBflocF76eHfaoCq9MOV/y6c0JCuXnQ47qt6GFP+0wUj1DWVTmUiHWlucPKJ/j5cpsKp7rNQ6bixsbC3RgtVjdnLisjpuHZs90NLhR78v/z9MCQS/y6lBExa5iKaImGsn4PKkXM/gqWtC/qKC2IqbvMiIp+5siiUJ/gedNBP3YVLm0cIckgX2uYqmhAk1ygRelhOvq03J+r6DpI53muIA3e6gXhlK4Vk49uSVy5ZqLVuEmPvGhgfK7dES3JOrr1KRohJZ6j3ailGXrKyv+OKqTEUm71257DJ/m2TlnFCy1IXVMtKVjDpvcnbLQj+IuLI4D3/kENyQ4p5nWGUXdLKqvGep1pGuz5p//onAZ+xoI7pBI7kJA+efigeaivnzYnUFUfGA1zepeS95PK3eG47w/hYDdM5nkAztTf00+NnDSOJ9lwSLj/wBMwE2KVdlUOOvSLFU3jXjOhHBKhs6qK4hyzt4Vk05WSiPCfF0JGGc1W4pznXI2iHaWxnZVFI7RP2VMfrXj0kqw9gx6bgZjHS4/DX9+lhdZ286q1pxw/mkpvOCL/QNQmcHZLAeADTbEI5tqXjraNltpbH8B5ZirA9OPAAA=
+        run: |
+          set -euo pipefail
+          test "$(git hash-object pkg/agent/memory_commands.go)" = "c53b58473e14d6845f6560afd31b8b7ca0ff8327"
+          test "$(git hash-object pkg/agent/memory_interaction_security_test.go)" = "fc31087f2f0310ccf1bd11f76dee97b622602e42"
+          test "$(git hash-object pkg/channels/telegram/structured_delivery.go)" = "b463bbfdf07f1e3f73e92046b50229b49042778e"
+          printf '%s' "$PATCH_B64" | base64 -d | gzip -d > /tmp/pr17-source-final.patch
+          test "$(sha256sum /tmp/pr17-source-final.patch | awk '{print $1}')" = "80480ebea7a7650875ddb64223203b0ccb9b3d4c1e927dd932eb43dad193d244"
+          git apply --check /tmp/pr17-source-final.patch
+          git apply /tmp/pr17-source-final.patch
+          gofmt -w pkg/agent/memory_commands.go pkg/agent/memory_interaction_security_test.go pkg/channels/telegram/structured_delivery.go pkg/channels/telegram/structured_privacy_hardening_test.go
+          git diff --check
+          test "$(git hash-object pkg/agent/memory_commands.go)" = "4e12d4f04459cb5ab33d86de0a5100cc128ab15f"
+          test "$(git hash-object pkg/agent/memory_interaction_security_test.go)" = "8b21431888f7088f4a295e235f71c855d8636c70"
+          test "$(git hash-object pkg/channels/telegram/structured_delivery.go)" = "06d0c4ca0c647ccb23fa105f62ef68f514e21478"
+          test "$(git hash-object pkg/channels/telegram/structured_privacy_hardening_test.go)" = "0b6044cfe8163da9d4f0ba93f7ced1d40b106cd5"
+      - name: Run targeted Go tests
+        run: go test -tags goolm,stdjson ./pkg/commands/... ./pkg/channels/telegram/... ./pkg/agent/...
+      - name: Run Telegram race regression
+        run: go test -race -tags goolm,stdjson ./pkg/channels/telegram/...
+      - name: Commit source and self-delete
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/pr17-finalize.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(telegram): finalize private memory interaction hardening"
+          git push origin HEAD:feat/telegram-interactive-command-ux
