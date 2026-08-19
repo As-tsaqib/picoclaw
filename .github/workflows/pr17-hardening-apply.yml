@@ -1,0 +1,60 @@
+name: PR17 hardening apply
+
+on:
+  push:
+    branches:
+      - feat/telegram-interactive-command-ux
+    paths:
+      - .github/workflows/pr17-hardening-apply.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/telegram-interactive-command-ux
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          check-latest: false
+      - name: Apply exact hardening patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object pkg/agent/memory_commands.go)" = "010dbef0a196fab61ad65555fd03846665a32c99"
+          test "$(git hash-object pkg/channels/telegram/structured_delivery.go)" = "b463bbfdf07f1e3f73e92046b50229b49042778e"
+          test "$(git hash-object pkg/channels/telegram/telegram.go)" = "aa029c9f0f30998b7801b5b203c28d83fb894294"
+          base64 -d .github/pr17-hardening.patch.gz.b64 | gzip -d > /tmp/pr17-hardening.patch
+          git apply --check /tmp/pr17-hardening.patch
+          git apply /tmp/pr17-hardening.patch
+          rm .github/pr17-hardening.patch.gz.b64 .github/workflows/pr17-hardening-apply.yml
+          gofmt -w pkg/agent/memory_commands.go pkg/channels/telegram/formatted_chunks.go pkg/channels/telegram/structured_delivery.go pkg/channels/telegram/telegram.go
+          git diff --check
+          test "$(git hash-object pkg/agent/memory_commands.go)" = "07de18d509adeb0d56b8b4cda9c7d9acc3098070"
+          test "$(git hash-object pkg/channels/telegram/structured_delivery.go)" = "3c057d63667ce1c2860ebc2cdc881646eb1342c8"
+          test "$(git hash-object pkg/channels/telegram/telegram.go)" = "21cd0f43b6098c22a3c235786767f72ddc3834ca"
+          test "$(git hash-object pkg/channels/telegram/formatted_chunks.go)" = "d89fb8790566c5b662b353f66f7c186b2fef6b25"
+      - name: Run focused Go tests
+        run: go test -tags goolm,stdjson ./pkg/channels/telegram/... ./pkg/agent/...
+      - name: Run Telegram race regression
+        run: go test -race -tags goolm,stdjson ./pkg/channels/telegram/...
+      - name: Commit validated hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test ! -e .github/pr17-hardening.patch.gz.b64
+          test ! -e .github/workflows/pr17-hardening-apply.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(telegram): harden private memory routing and formatting"
+          git push origin HEAD:feat/telegram-interactive-command-ux
