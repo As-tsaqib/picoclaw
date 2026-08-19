@@ -31,21 +31,24 @@ jobs:
           set -euo pipefail
           test "$(git hash-object pkg/agent/memory_commands.go)" = "c53b58473e14d6845f6560afd31b8b7ca0ff8327"
           test "$(git hash-object pkg/agent/memory_interaction_security_test.go)" = "fc31087f2f0310ccf1bd11f76dee97b622602e42"
+          test "$(git hash-object pkg/channels/telegram/structured_delivery.go)" = "b463bbfdf07f1e3f73e92046b50229b49042778e"
           test "$(git hash-object pkg/channels/telegram/structured_delivery_test.go)" = "d2a46bb2016e9ae99236ef9fc3d2bc1aefaac523"
-          test "$(sha256sum .github/pr17-hardening.patch.gz.b64 | awk '{print $1}')" = "0df48e3ad14f896c6e205363e9744788dd85ee55ea9a95fffe0be8122b19aeab"
+          test "$(sha256sum .github/pr17-hardening.patch.gz.b64 | awk '{print $1}')" = "c5f597a8643e5f23061224f3bc682571dd5e43d01005793b6a93963889f8528e"
           base64 -d .github/pr17-hardening.patch.gz.b64 | gzip -d > /tmp/pr17-finalize.patch
-          test "$(sha256sum /tmp/pr17-finalize.patch | awk '{print $1}')" = "1b595d7e7beaba5e715a260a3a73c089e1ff3c7fa0756bcf117cd81897b3643a"
+          test "$(sha256sum /tmp/pr17-finalize.patch | awk '{print $1}')" = "b91783a76a7db90dd61b3ed1264d966d2cf01282ecf3547342c3de1647746954"
           git apply --check /tmp/pr17-finalize.patch
           git apply /tmp/pr17-finalize.patch
           rm .github/pr17-hardening.patch.gz.b64 .github/workflows/pr17-hardening-apply.yml
           gofmt -w \
             pkg/agent/memory_commands.go \
             pkg/agent/memory_interaction_security_test.go \
+            pkg/channels/telegram/structured_delivery.go \
             pkg/channels/telegram/structured_delivery_test.go
           git diff --check
           test "$(git hash-object pkg/agent/memory_commands.go)" = "4e12d4f04459cb5ab33d86de0a5100cc128ab15f"
           test "$(git hash-object pkg/agent/memory_interaction_security_test.go)" = "8b21431888f7088f4a295e235f71c855d8636c70"
-          test "$(git hash-object pkg/channels/telegram/structured_delivery_test.go)" = "bd9e0f7acaec5b1e8282ca950f3d2858cf394928"
+          test "$(git hash-object pkg/channels/telegram/structured_delivery.go)" = "dfe95127b7d660ef5c6625599fe8365b8b381222"
+          test "$(git hash-object pkg/channels/telegram/structured_delivery_test.go)" = "9c19b1f69311bae1a7eaecfc14c3ac7e2c7af9f9"
       - name: Run focused Go tests
         run: go test -tags goolm,stdjson ./pkg/commands/... ./pkg/channels/telegram/... ./pkg/agent/...
       - name: Run Telegram race regression
