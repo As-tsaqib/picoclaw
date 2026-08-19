@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,12 @@ const (
 	pollRegistryTTL        = 30 * 24 * time.Hour
 )
 
+type telegramPollVote struct {
+	OptionIDs           []int
+	OptionPersistentIDs []string
+	UpdatedAt           time.Time
+}
+
 type telegramPollEntry struct {
 	LocalHandle    string
 	TelegramPollID string
@@ -33,6 +40,18 @@ type telegramPollEntry struct {
 	IsClosed       bool
 	CreatedAt      time.Time
 	PollPayload    *bus.PollPayload
+	Votes          map[string]telegramPollVote
+	RevealPending  bool
+	RevealConsumed bool
+}
+
+type telegramPollRoute struct {
+	Account    string
+	ChatID     int64
+	ThreadID   int
+	AgentID    string
+	SenderID   string
+	SessionKey string
 }
 
 func (c *TelegramChannel) ensurePollRegistryLocked() {
@@ -46,8 +65,6 @@ func (c *TelegramChannel) ensurePollRegistryLocked() {
 
 func (c *TelegramChannel) prunePollsLocked(now time.Time) {
 	c.ensurePollRegistryLocked()
-
-	// 1. Delete items older than TTL or already closed over 24h
 	cutoff := now.Add(-pollRegistryTTL)
 	closedCutoff := now.Add(-24 * time.Hour)
 	for handle, entry := range c.pollRegistry {
@@ -58,40 +75,39 @@ func (c *TelegramChannel) prunePollsLocked(now time.Time) {
 			}
 		}
 	}
-
-	// 2. If still over max capacity, evict oldest created entries
-	if len(c.pollRegistry) >= maxPollRegistryEntries {
-		for len(c.pollRegistry) >= maxPollRegistryEntries {
-			var oldestHandle string
-			var oldestTime time.Time
-			for handle, entry := range c.pollRegistry {
-				if oldestHandle == "" || entry.CreatedAt.Before(oldestTime) {
-					oldestHandle = handle
-					oldestTime = entry.CreatedAt
-				}
+	for len(c.pollRegistry) >= maxPollRegistryEntries {
+		var oldestHandle string
+		var oldestTime time.Time
+		for handle, entry := range c.pollRegistry {
+			if oldestHandle == "" || entry.CreatedAt.Before(oldestTime) {
+				oldestHandle = handle
+				oldestTime = entry.CreatedAt
 			}
-			if oldestHandle == "" {
-				break
-			}
-			if entry, ok := c.pollRegistry[oldestHandle]; ok && entry.TelegramPollID != "" {
-				delete(c.pollByTgID, entry.TelegramPollID)
-			}
-			delete(c.pollRegistry, oldestHandle)
 		}
+		if oldestHandle == "" {
+			break
+		}
+		if entry, ok := c.pollRegistry[oldestHandle]; ok && entry.TelegramPollID != "" {
+			delete(c.pollByTgID, entry.TelegramPollID)
+		}
+		delete(c.pollRegistry, oldestHandle)
 	}
 }
 
 func (c *TelegramChannel) registerPollEntry(entry telegramPollEntry) {
 	c.pollRegistryMu.Lock()
 	defer c.pollRegistryMu.Unlock()
-
 	now := time.Now().UTC()
 	c.prunePollsLocked(now)
-
 	if entry.CreatedAt.IsZero() {
 		entry.CreatedAt = now
 	}
-
+	if strings.TrimSpace(entry.Account) == "" {
+		entry.Account = c.Name()
+	}
+	if entry.Votes == nil {
+		entry.Votes = make(map[string]telegramPollVote)
+	}
 	c.pollRegistry[entry.LocalHandle] = entry
 	if entry.TelegramPollID != "" {
 		c.pollByTgID[entry.TelegramPollID] = entry.LocalHandle
@@ -101,7 +117,6 @@ func (c *TelegramChannel) registerPollEntry(entry telegramPollEntry) {
 func (c *TelegramChannel) resolvePollByLocalHandle(handle string) (telegramPollEntry, bool) {
 	c.pollRegistryMu.Lock()
 	defer c.pollRegistryMu.Unlock()
-
 	c.ensurePollRegistryLocked()
 	entry, ok := c.pollRegistry[handle]
 	return entry, ok
@@ -110,7 +125,6 @@ func (c *TelegramChannel) resolvePollByLocalHandle(handle string) (telegramPollE
 func (c *TelegramChannel) resolvePollByTgPollID(tgPollID string) (telegramPollEntry, bool) {
 	c.pollRegistryMu.Lock()
 	defer c.pollRegistryMu.Unlock()
-
 	c.ensurePollRegistryLocked()
 	handle, ok := c.pollByTgID[tgPollID]
 	if !ok {
@@ -123,7 +137,6 @@ func (c *TelegramChannel) resolvePollByTgPollID(tgPollID string) (telegramPollEn
 func (c *TelegramChannel) updatePollStateByTgPollID(tgPollID string, isClosed bool) {
 	c.pollRegistryMu.Lock()
 	defer c.pollRegistryMu.Unlock()
-
 	c.ensurePollRegistryLocked()
 	handle, ok := c.pollByTgID[tgPollID]
 	if !ok {
@@ -135,6 +148,34 @@ func (c *TelegramChannel) updatePollStateByTgPollID(tgPollID string, isClosed bo
 	}
 }
 
+func pollRouteAuthorized(entry telegramPollEntry, route telegramPollRoute) error {
+	checks := []struct {
+		label string
+		want  string
+		got   string
+	}{
+		{"account", strings.TrimSpace(entry.Account), strings.TrimSpace(route.Account)},
+		{"agent", strings.TrimSpace(entry.AgentID), strings.TrimSpace(route.AgentID)},
+		{"session", strings.TrimSpace(entry.SessionKey), strings.TrimSpace(route.SessionKey)},
+		{"sender", strings.TrimSpace(entry.SenderID), strings.TrimSpace(route.SenderID)},
+	}
+	for _, check := range checks {
+		if check.want != "" && check.got != check.want {
+			return fmt.Errorf("poll route %s mismatch", check.label)
+		}
+	}
+	if entry.ChatID != route.ChatID {
+		return fmt.Errorf("poll route chat mismatch")
+	}
+	if entry.ThreadID != route.ThreadID {
+		return fmt.Errorf("poll route topic mismatch")
+	}
+	return nil
+}
+
+// StopPoll preserves the existing channel interface while validating the trusted
+// principal. Call StopPollForRoute from outbound delivery so account/chat/topic
+// are also checked against the current trusted route.
 func (c *TelegramChannel) StopPoll(
 	ctx context.Context,
 	localHandle string,
@@ -146,56 +187,39 @@ func (c *TelegramChannel) StopPoll(
 	if !ok {
 		return fmt.Errorf("poll %q not found or expired", localHandle)
 	}
-
-	// Verify caller / session ownership to prevent cross-session / cross-agent / cross-user stop
-	if callerAgentID != "" && entry.AgentID != "" && callerAgentID != entry.AgentID {
-		return fmt.Errorf(
-			"caller agent %q not authorized to stop poll created by agent %q",
-			callerAgentID,
-			entry.AgentID,
-		)
-	}
-	if callerSessionKey != "" && entry.SessionKey != "" && callerSessionKey != entry.SessionKey {
-		return fmt.Errorf(
-			"caller session %q not authorized to stop poll in session %q",
-			callerSessionKey,
-			entry.SessionKey,
-		)
-	}
-	if callerSenderID != "" && entry.SenderID != "" && callerSenderID != entry.SenderID {
-		return fmt.Errorf(
-			"caller sender %q not authorized to stop poll created by %q",
-			callerSenderID,
-			entry.SenderID,
-		)
-	}
-
-	_, err := c.bot.StopPoll(ctx, &telego.StopPollParams{
-		ChatID:    tu.ID(entry.ChatID),
-		MessageID: entry.MessageID,
+	return c.stopPollEntry(ctx, localHandle, entry, telegramPollRoute{
+		Account: entry.Account, ChatID: entry.ChatID, ThreadID: entry.ThreadID,
+		AgentID: callerAgentID, SessionKey: callerSessionKey, SenderID: callerSenderID,
 	})
+}
+
+func (c *TelegramChannel) StopPollForRoute(ctx context.Context, localHandle string, route telegramPollRoute) error {
+	entry, ok := c.resolvePollByLocalHandle(localHandle)
+	if !ok {
+		return fmt.Errorf("poll %q not found or expired", localHandle)
+	}
+	return c.stopPollEntry(ctx, localHandle, entry, route)
+}
+
+func (c *TelegramChannel) stopPollEntry(ctx context.Context, localHandle string, entry telegramPollEntry, route telegramPollRoute) error {
+	if err := pollRouteAuthorized(entry, route); err != nil {
+		return fmt.Errorf("not authorized to stop poll: %w", err)
+	}
+	_, err := c.bot.StopPoll(ctx, &telego.StopPollParams{ChatID: tu.ID(entry.ChatID), MessageID: entry.MessageID})
 	if err != nil {
 		serverID := ""
 		if c.tgCfg != nil {
 			serverID = c.tgCfg.BaseURL
 		}
-		capability.GlobalNegativeCache.RecordFailure(
-			"telegram",
-			entry.Account,
-			serverID,
-			capability.FeaturePollStop,
-			err,
-		)
+		capability.GlobalNegativeCache.RecordFailure("telegram", entry.Account, serverID, capability.FeaturePollStop, err)
 		return fmt.Errorf("telegram stop poll failed: %w", err)
 	}
-
 	c.pollRegistryMu.Lock()
 	delete(c.pollRegistry, localHandle)
 	if entry.TelegramPollID != "" {
 		delete(c.pollByTgID, entry.TelegramPollID)
 	}
 	c.pollRegistryMu.Unlock()
-
 	return nil
 }
 
@@ -204,61 +228,168 @@ func (c *TelegramChannel) handlePollUpdate(_ *th.Context, poll *telego.Poll) err
 		return nil
 	}
 	c.updatePollStateByTgPollID(poll.ID, poll.IsClosed)
-	logger.DebugCF("telegram", "Received poll update", map[string]any{
-		"poll_id":   poll.ID,
-		"is_closed": poll.IsClosed,
-	})
+	logger.DebugCF("telegram", "Received poll update", map[string]any{"is_closed": poll.IsClosed})
 	return nil
+}
+
+func pollAnswerIdentity(answer *telego.PollAnswer) (string, bool) {
+	if answer == nil {
+		return "", false
+	}
+	if answer.User != nil && answer.User.ID > 0 {
+		return "user:" + strconv.FormatInt(answer.User.ID, 10), true
+	}
+	if answer.VoterChat != nil && answer.VoterChat.ID != 0 {
+		return "chat:" + strconv.FormatInt(answer.VoterChat.ID, 10), true
+	}
+	return "", false
+}
+
+func (c *TelegramChannel) recordPollAnswer(answer *telego.PollAnswer) (bool, bool) {
+	identity, identifiable := pollAnswerIdentity(answer)
+	if answer == nil || !identifiable {
+		return false, false
+	}
+	c.pollRegistryMu.Lock()
+	defer c.pollRegistryMu.Unlock()
+	c.ensurePollRegistryLocked()
+	handle, ok := c.pollByTgID[answer.PollID]
+	if !ok {
+		return false, false
+	}
+	entry, ok := c.pollRegistry[handle]
+	if !ok {
+		return false, false
+	}
+	if entry.Votes == nil {
+		entry.Votes = make(map[string]telegramPollVote)
+	}
+	retracted := len(answer.OptionIDs) == 0 && len(answer.OptionPersistentIDs) == 0
+	if retracted {
+		delete(entry.Votes, identity)
+	} else {
+		entry.Votes[identity] = telegramPollVote{
+			OptionIDs: append([]int(nil), answer.OptionIDs...),
+			OptionPersistentIDs: append([]string(nil), answer.OptionPersistentIDs...),
+			UpdatedAt: time.Now().UTC(),
+		}
+	}
+	c.pollRegistry[handle] = entry
+	return true, retracted
 }
 
 func (c *TelegramChannel) handlePollAnswerUpdate(_ *th.Context, answer *telego.PollAnswer) error {
 	if answer == nil {
 		return nil
 	}
-	entry, found := c.resolvePollByTgPollID(answer.PollID)
+	found, retracted := c.recordPollAnswer(answer)
 	if !found {
-		logger.DebugCF("telegram", "Received answer for unregistered poll", map[string]any{
-			"poll_id": answer.PollID,
-		})
+		logger.DebugCF("telegram", "Ignored poll answer without registered poll and trusted voter identity", nil)
 		return nil
 	}
-	logger.DebugCF("telegram", "Received poll answer", map[string]any{
-		"poll_id":      answer.PollID,
-		"local_handle": entry.LocalHandle,
-		"user_id":      answer.User.ID,
-		"option_ids":   answer.OptionIDs,
+	logger.DebugCF("telegram", "Recorded poll answer", map[string]any{
+		"option_count": len(answer.OptionIDs),
+		"persistent_option_count": len(answer.OptionPersistentIDs),
+		"retracted": retracted,
 	})
 	return nil
 }
 
-func (c *TelegramChannel) handleQuizRevealCallback(ctx context.Context, query *telego.CallbackQuery) error {
-	if query == nil || query.Message == nil {
-		return nil
+func (c *TelegramChannel) claimQuizReveal(query *telego.CallbackQuery, handle string) (telegramPollEntry, error) {
+	if query == nil || query.Message == nil || query.From.IsBot || query.From.ID <= 0 {
+		return telegramPollEntry{}, fmt.Errorf("invalid callback envelope")
 	}
-	handle := strings.TrimPrefix(query.Data, "quiz_reveal:")
-	entry, ok := c.resolvePollByLocalHandle(handle)
+	message := query.Message.Message()
+	if message == nil {
+		return telegramPollEntry{}, fmt.Errorf("callback message unavailable")
+	}
+	c.pollRegistryMu.Lock()
+	defer c.pollRegistryMu.Unlock()
+	c.ensurePollRegistryLocked()
+	entry, ok := c.pollRegistry[handle]
 	if !ok || entry.PollPayload == nil {
-		_ = c.bot.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
-			CallbackQueryID: query.ID,
-			Text:            "Detail quiz tidak ditemukan atau sudah kedaluwarsa.",
-			ShowAlert:       true,
-		})
+		return telegramPollEntry{}, fmt.Errorf("quiz not found or expired")
+	}
+	if entry.RevealConsumed || entry.RevealPending {
+		return telegramPollEntry{}, fmt.Errorf("quiz reveal already processed")
+	}
+	if strings.TrimSpace(entry.Account) != "" && strings.TrimSpace(entry.Account) != strings.TrimSpace(c.Name()) {
+		return telegramPollEntry{}, fmt.Errorf("callback account mismatch")
+	}
+	if message.Chat.ID != entry.ChatID || message.MessageThreadID != entry.ThreadID {
+		return telegramPollEntry{}, fmt.Errorf("callback chat or topic mismatch")
+	}
+	if entry.MessageID <= 0 || message.MessageID != entry.MessageID {
+		return telegramPollEntry{}, fmt.Errorf("callback message mismatch")
+	}
+	if entry.AgentID == "" || entry.SessionKey == "" || entry.SenderID == "" {
+		return telegramPollEntry{}, fmt.Errorf("callback ownership metadata incomplete")
+	}
+	if strconv.FormatInt(query.From.ID, 10) != entry.SenderID {
+		return telegramPollEntry{}, fmt.Errorf("callback sender mismatch")
+	}
+	entry.RevealPending = true
+	c.pollRegistry[handle] = entry
+	return entry, nil
+}
+
+func (c *TelegramChannel) finishQuizReveal(handle string, success bool) {
+	c.pollRegistryMu.Lock()
+	defer c.pollRegistryMu.Unlock()
+	entry, ok := c.pollRegistry[handle]
+	if !ok {
+		return
+	}
+	entry.RevealPending = false
+	if success {
+		entry.RevealConsumed = true
+	}
+	c.pollRegistry[handle] = entry
+}
+
+func (c *TelegramChannel) handleQuizRevealCallback(ctx context.Context, query *telego.CallbackQuery) error {
+	if query == nil {
 		return nil
 	}
-
-	_ = c.bot.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
-		CallbackQueryID: query.ID,
-		Text:            "Jawaban quiz terungkap",
-	})
+	handle := strings.TrimPrefix(strings.TrimSpace(query.Data), "quiz_reveal:")
+	entry, err := c.claimQuizReveal(query, handle)
+	if err != nil {
+		answerErr := c.bot.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID, Text: "Quiz ini tidak dapat diungkap dari konteks ini atau sudah diproses.", ShowAlert: true,
+		})
+		if answerErr != nil {
+			return fmt.Errorf("answer rejected quiz reveal callback: %w", answerErr)
+		}
+		return nil
+	}
 
 	revealText := formatQuizRevealText(entry.PollPayload)
-	msg := query.Message.Message()
-	if msg != nil {
-		_, _ = c.bot.EditMessageText(ctx, &telego.EditMessageTextParams{
-			ChatID:    tu.ID(entry.ChatID),
-			MessageID: msg.MessageID,
-			Text:      revealText,
+	message := query.Message.Message()
+	if message == nil {
+		c.finishQuizReveal(handle, false)
+		return nil
+	}
+	if err := c.bot.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID}); err != nil {
+		c.finishQuizReveal(handle, false)
+		return fmt.Errorf("answer quiz reveal callback: %w", err)
+	}
+
+	var sendErr error
+	if message.Chat.Type == telego.ChatTypePrivate {
+		_, sendErr = c.bot.SendMessage(ctx, &telego.SendMessageParams{
+			ChatID: tu.ID(entry.ChatID), MessageThreadID: entry.ThreadID, Text: revealText,
+			ReplyParameters: &telego.ReplyParameters{MessageID: entry.MessageID, AllowSendingWithoutReply: true},
+		})
+	} else {
+		_, sendErr = c.bot.SendMessage(ctx, &telego.SendMessageParams{
+			ChatID: tu.ID(entry.ChatID), MessageThreadID: entry.ThreadID,
+			ReceiverUserID: query.From.ID, CallbackQueryID: query.ID, Text: revealText,
 		})
 	}
+	if sendErr != nil {
+		c.finishQuizReveal(handle, false)
+		return fmt.Errorf("deliver personal quiz reveal: %w", sendErr)
+	}
+	c.finishQuizReveal(handle, true)
 	return nil
 }
