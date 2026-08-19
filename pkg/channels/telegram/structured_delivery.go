@@ -122,7 +122,7 @@ func buildNativeRichMessage(content *bus.StructuredContent) (telego.InputRichMes
 	if content == nil {
 		return telego.InputRichMessage{}, false
 	}
-	blocks := make([]telego.InputRichBlock, 0, len(content.Paragraphs)+len(content.Tables)+1)
+	blocks := make([]telego.InputRichBlock, 0, len(content.Paragraphs)+len(content.Blocks)+len(content.Tables)+1)
 	totalBytes := 0
 	blockUnits := 0
 	if title := strings.TrimSpace(content.Title); title != "" {
@@ -138,6 +138,13 @@ func buildNativeRichMessage(content *bus.StructuredContent) (telego.InputRichMes
 		totalBytes += len([]byte(paragraph))
 		blocks = append(blocks, tu.RichBlockParagraph(tu.RichTextPlain(paragraph)))
 		blockUnits++
+	}
+	if len(content.Blocks) > 0 {
+		typedBlocks, ok := buildTypedNativeRichBlocks(content.Blocks, &totalBytes, &blockUnits, 0)
+		if !ok {
+			return telego.InputRichMessage{}, false
+		}
+		blocks = append(blocks, typedBlocks...)
 	}
 	for _, table := range content.Tables {
 		if len(table.Columns) == 0 || len(table.Columns) > richMessageMaxColumns {
@@ -811,8 +818,8 @@ func (c *TelegramChannel) sendSessionRenameNotice(
 	} else if message.MessageID > 0 {
 		params.ReplyParameters = &telego.ReplyParameters{
 			MessageID:                message.MessageID,
-			AllowSendingWithoutReply: true,
-		}
+				AllowSendingWithoutReply: true,
+			}
 	}
 	if _, err := c.bot.SendMessage(ctx, params); err != nil {
 		return fmt.Errorf("send session rename notice: %w", err)
