@@ -14,13 +14,18 @@ import (
 
 func callerScopeForTurn(agentID string, cfg *config.Config, opts processOptions) memory.CallerScope {
 	normalizeProcessOptionsInPlace(&opts)
-	return callerScopeFromInbound(
+	caller := callerScopeFromInbound(
 		agentID,
 		opts.Dispatch.SessionKey,
 		opts.Dispatch.InboundContext,
 		opts.Dispatch.SessionScope,
 		cfg,
 	)
+	if cfg != nil {
+		caller.CaptureMode = cfg.Memory.EffectiveCaptureMode()
+		caller.ExplicitMemoryIntent = explicitMemoryCaptureIntent(opts.UserMessage)
+	}
+	return caller
 }
 
 func callerScopeFromInbound(
@@ -61,6 +66,7 @@ func callerScopeFromInbound(
 		identityLinks := map[string][]string(nil)
 		if cfg != nil {
 			identityLinks = cfg.Session.IdentityLinks
+			caller.CaptureMode = cfg.Memory.EffectiveCaptureMode()
 		}
 		caller.UserKey = session.CanonicalUserScopeKey(
 			caller.Channel,
@@ -70,6 +76,55 @@ func callerScopeFromInbound(
 		)
 	}
 	return caller
+}
+
+// explicitMemoryCaptureIntent is deliberately narrow. Explicit-only mode is a
+// user-control boundary, so ordinary preference statements such as "I prefer
+// concise answers" must not be treated as a save request merely because the
+// information itself is explicit evidence.
+func explicitMemoryCaptureIntent(value string) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
+	if normalized == "" {
+		return false
+	}
+	markers := []string{
+		"remember that ",
+		"please remember that ",
+		"save this to memory",
+		"save that to memory",
+		"store this in memory",
+		"store that in memory",
+		"forget that ",
+		"please forget ",
+		"remove this from memory",
+		"remove that from memory",
+		"delete this from memory",
+		"delete that from memory",
+		"update what you remember",
+		"change what you remember",
+		"ingat bahwa ",
+		"tolong ingat bahwa ",
+		"simpan ini ke memori",
+		"simpan itu ke memori",
+		"simpan ini dalam memori",
+		"simpan itu dalam memori",
+		"catat ini sebagai memori",
+		"catat itu sebagai memori",
+		"lupakan bahwa ",
+		"tolong lupakan ",
+		"hapus ini dari memori",
+		"hapus itu dari memori",
+		"hapus ini dari ingatan",
+		"hapus itu dari ingatan",
+		"perbarui yang kamu ingat",
+		"ubah yang kamu ingat",
+	}
+	for _, marker := range markers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func memorySessionRef(sessionKey string) string {
