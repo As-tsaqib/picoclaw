@@ -406,6 +406,7 @@ func expectedMemoryMenuRoute(chatID int64, threadID int) (string, string) {
 	topic := ""
 	if threadID > 0 {
 		topic = strconv.Itoa(threadID)
+		chat += "/" + topic
 	}
 	return chat, topic
 }
