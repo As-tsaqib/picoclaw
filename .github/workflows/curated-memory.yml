@@ -7,6 +7,7 @@ on:
       - feat/contextual-memory-evolution
       - feat/personalization-completion
       - feat/advanced-dashboard-settings
+      - feat/native-telegram-capabilities-memory-hardening
       - chore/standalone-v1.0.0
   workflow_dispatch: {}
 
