@@ -32,6 +32,9 @@ func (al *AgentLoop) handleInternalCallback(
 	if kind == "model" {
 		return al.handleInternalModelCallback(ctx, req)
 	}
+	if kind == "memory" {
+		return al.handleInternalMemoryCallback(ctx, req)
+	}
 	if kind != "session" {
 		return nil, fmt.Errorf("unsupported internal callback")
 	}

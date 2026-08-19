@@ -49,6 +49,7 @@ type telegramSessionRenamePromptKey struct {
 type telegramSessionRenamePrompt struct {
 	token     string
 	menu      telegramSessionMenu
+	action    string
 	createdAt time.Time
 	consumed  bool
 }
@@ -216,14 +217,38 @@ func (c *TelegramChannel) sendStructuredFallback(
 	if hasTelegramRichTable(fallback) {
 		formattedFallback = telegramTableFallbackPlainText(fallback)
 	}
-	chunks := channels.SplitMessage(formattedFallback, 3500)
+	
+	mdv2Fallback := markdownToTelegramMarkdownV2(formattedFallback)
+
+	chunks := channels.SplitMessage(mdv2Fallback, 3500)
+	plainChunks := channels.SplitMessage(formattedFallback, 3500)
 	if len(chunks) == 0 {
-		chunks = []string{formattedFallback}
+		chunks = []string{mdv2Fallback}
 	}
+	if len(plainChunks) == 0 {
+		plainChunks = []string{formattedFallback}
+	}
+	
+	usePlain := false
 	messageIDs := make([]string, 0, len(chunks))
-	for i, chunk := range chunks {
-		params := tu.Message(tu.ID(chatID), chunk)
+	
+	for i := 0; i < len(chunks); i++ {
+		text := chunks[i]
+		parseMode := telego.ModeMarkdownV2
+		
+		if usePlain {
+			if i < len(plainChunks) {
+				text = plainChunks[i]
+			} else {
+				continue
+			}
+			parseMode = ""
+		}
+		
+		params := tu.Message(tu.ID(chatID), text)
 		params.MessageThreadID = threadID
+		params.ParseMode = parseMode
+		
 		if i == 0 && markup != nil {
 			params.ReplyMarkup = markup
 		}
@@ -233,6 +258,16 @@ func (c *TelegramChannel) sendStructuredFallback(
 		}
 		applyEphemeralSendMessage(params, ephemeral, currentReply)
 		pMsg, err := c.bot.SendMessage(ctx, params)
+		
+		if err != nil && !usePlain && isTelegramParseRejection(err) {
+			usePlain = true
+			if i < len(plainChunks) {
+				params.Text = plainChunks[i]
+			}
+			params.ParseMode = ""
+			pMsg, err = c.bot.SendMessage(ctx, params)
+		}
+		
 		if err != nil {
 			if ephemeral != nil {
 				return nil, ephemeralDeliveryError("structured fallback", err)
@@ -254,6 +289,27 @@ func (c *TelegramChannel) sendStructuredFallback(
 			c.storeSessionMenu(*pending)
 		}
 	}
+	
+	if usePlain && len(plainChunks) > len(chunks) {
+		for i := len(chunks); i < len(plainChunks); i++ {
+			params := tu.Message(tu.ID(chatID), plainChunks[i])
+			params.MessageThreadID = threadID
+			applyEphemeralSendMessage(params, ephemeral, "")
+			pMsg, err := c.bot.SendMessage(ctx, params)
+			if err != nil {
+				if ephemeral != nil {
+					return nil, ephemeralDeliveryError("structured fallback", err)
+				}
+				return nil, fmt.Errorf("telegram structured fallback: %w", channels.ErrTemporary)
+			}
+			encodedID, err := validateEphemeralSendResult(pMsg, ephemeral)
+			if err != nil {
+				return nil, err
+			}
+			messageIDs = append(messageIDs, encodedID)
+		}
+	}
+
 	return messageIDs, nil
 }
 
@@ -307,7 +363,10 @@ func (c *TelegramChannel) structuredReplyMarkup(
 	menu := *content.Interaction
 	menu.Entries = append([]bus.InteractionEntry(nil), content.Interaction.Entries...)
 	kind := strings.ToLower(strings.TrimSpace(menu.Kind))
-	if (kind != "session" && kind != "model") || menu.OwnerID == "" || menu.Scope == "" || menu.AgentID == "" {
+	if (kind != "session" && kind != "model" && kind != "memory") || menu.OwnerID == "" || menu.AgentID == "" {
+		return nil, nil, fmt.Errorf("interactive menu metadata is incomplete")
+	}
+	if (kind == "session" || kind == "model") && menu.Scope == "" {
 		return nil, nil, fmt.Errorf("interactive menu metadata is incomplete")
 	}
 	if menu.Channel != "" && menu.Channel != c.Name() {
@@ -321,6 +380,8 @@ func (c *TelegramChannel) structuredReplyMarkup(
 	var keyboard [][]telego.InlineKeyboardButton
 	if kind == "model" {
 		keyboard = modelInteractionKeyboard(menu, callback)
+	} else if kind == "memory" {
+		keyboard = memoryInteractionKeyboard(menu, callback)
 	} else {
 		keyboard = sessionInteractionKeyboard(menu, callback)
 	}
@@ -396,6 +457,48 @@ func sessionInteractionKeyboard(
 		keyboard,
 		[]telego.InlineKeyboardButton{{Text: "✖️ Tutup", CallbackData: callback("x"), Style: telego.ButtonStyleDanger}},
 	)
+	return keyboard
+}
+
+func memoryInteractionKeyboard(menu bus.InteractionMenu, callback func(string) string) [][]telego.InlineKeyboardButton {
+	keyboard := make([][]telego.InlineKeyboardButton, 0, 4)
+	
+	appendGrouped := func(indices []int, size int, style string) {
+		for len(indices) > 0 {
+			n := size
+			if len(indices) < n {
+				n = len(indices)
+			}
+			row := make([]telego.InlineKeyboardButton, 0, n)
+			for _, idx := range indices[:n] {
+				entry := menu.Entries[idx]
+				row = append(row, telego.InlineKeyboardButton{
+					Text: entry.Label, CallbackData: callback("e" + strconv.Itoa(idx)), Style: style,
+				})
+			}
+			keyboard = append(keyboard, row)
+			indices = indices[n:]
+		}
+	}
+
+	actions := make([]int, 0, len(menu.Entries))
+	pages := make([]int, 0, len(menu.Entries))
+	closeEntries := make([]int, 0, 1)
+
+	for idx, entry := range menu.Entries {
+		if entry.Action == "close" {
+			closeEntries = append(closeEntries, idx)
+		} else if entry.Action == "page" {
+			pages = append(pages, idx)
+		} else {
+			actions = append(actions, idx)
+		}
+	}
+
+	appendGrouped(actions, 2, telego.ButtonStylePrimary)
+	appendGrouped(pages, 3, telego.ButtonStylePrimary)
+	appendGrouped(closeEntries, 1, telego.ButtonStyleDanger)
+	
 	return keyboard
 }
 
@@ -530,6 +633,7 @@ func (c *TelegramChannel) beginSessionRenamePrompt(
 	token string,
 	menu telegramSessionMenu,
 	promptText string,
+	action string,
 ) error {
 	promptText = strings.TrimSpace(promptText)
 	if promptText == "" {
@@ -571,7 +675,7 @@ func (c *TelegramChannel) beginSessionRenamePrompt(
 		key.messageID = promptMessage.MessageID
 	}
 	c.storeSessionRenamePrompt(key, telegramSessionRenamePrompt{
-		token: token, menu: menu, createdAt: time.Now(),
+		token: token, menu: menu, action: action, createdAt: time.Now(),
 	})
 	return nil
 }
@@ -592,7 +696,8 @@ func (c *TelegramChannel) storeSessionRenamePrompt(
 			existing.menu.menu.OwnerID == prompt.menu.menu.OwnerID &&
 			existing.menu.menu.AgentID == prompt.menu.menu.AgentID &&
 			existing.menu.menu.Scope == prompt.menu.menu.Scope &&
-			existing.menu.menu.Current == prompt.menu.menu.Current && !existing.consumed {
+			existing.menu.menu.Current == prompt.menu.menu.Current &&
+			existing.action == prompt.action && !existing.consumed {
 			existing.consumed = true
 			c.sessionRenamePrompts[existingKey] = existing
 		}
@@ -736,7 +841,7 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(
 	}
 	response, err := handler(ctx, bus.InternalCallbackRequest{
 		Kind:       prompt.menu.menu.Kind,
-		Action:     "rename",
+		Action:     prompt.action,
 		Value:      message.Text,
 		OwnerID:    prompt.menu.menu.OwnerID,
 		Channel:    prompt.menu.menu.Channel,
@@ -883,6 +988,10 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 	switch action {
 	case "rename":
 		answerText = "Balas prompt untuk mengganti nama session."
+	case "search":
+		answerText = "Balas prompt untuk mencari memory."
+	case "edit":
+		answerText = "Balas prompt untuk mengedit memory."
 	case "noop":
 		answerText = fmt.Sprintf("Halaman %d/%d", menu.menu.Page+1, menu.menu.Pages)
 	}
@@ -922,8 +1031,8 @@ func (c *TelegramChannel) handleInternalSessionCallback(
 	if response == nil {
 		return nil
 	}
-	if action == "rename" && strings.TrimSpace(value) == "" {
-		return c.beginSessionRenamePrompt(ctx, query, token, menu, response.Text)
+	if (action == "rename" || action == "search" || action == "edit") && strings.TrimSpace(value) == "" {
+		return c.beginSessionRenamePrompt(ctx, query, token, menu, response.Text, action)
 	}
 	if response.Close {
 		if clearErr := c.clearSessionMenuKeyboard(ctx, message, menu); clearErr != nil {
@@ -992,6 +1101,17 @@ func (c *TelegramChannel) sessionCallbackEnvelopeValid(
 func resolveSessionMenuAction(menu bus.InteractionMenu, code string) (action, value string, ok bool) {
 	if strings.EqualFold(strings.TrimSpace(menu.Kind), "model") && strings.HasPrefix(code, "m") {
 		idx, err := strconv.Atoi(strings.TrimPrefix(code, "m"))
+		if err != nil || idx < 0 || idx >= len(menu.Entries) {
+			return "", "", false
+		}
+		entry := menu.Entries[idx]
+		if strings.TrimSpace(entry.Action) == "" {
+			return "", "", false
+		}
+		return entry.Action, entry.Value, true
+	}
+	if strings.EqualFold(strings.TrimSpace(menu.Kind), "memory") && strings.HasPrefix(code, "e") {
+		idx, err := strconv.Atoi(strings.TrimPrefix(code, "e"))
 		if err != nil || idx < 0 || idx >= len(menu.Entries) {
 			return "", "", false
 		}

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/As-tsaqib/picoclaw/pkg/bus"
 	"github.com/As-tsaqib/picoclaw/pkg/commands"
 	"github.com/As-tsaqib/picoclaw/pkg/memory"
 )
@@ -266,6 +268,350 @@ func configureMemoryCommandRuntime(
 			}
 			return fmt.Sprintf("Archived checkpoint %s (%s).", checkpoint.Title, checkpoint.ID), nil
 		}
+	}
+
+	rt.MemoryCommand = func(ctx context.Context, req commands.MemoryCommandRequest) (*bus.StructuredContent, error) {
+		return al.executeMemoryCommand(ctx, agent, opts, req)
+	}
+}
+
+func (al *AgentLoop) executeMemoryCommand(
+	_ context.Context,
+	agent *AgentInstance,
+	opts *processOptions,
+	req commands.MemoryCommandRequest,
+) (*bus.StructuredContent, error) {
+	if agent == nil || opts == nil {
+		return nil, fmt.Errorf("context is unavailable")
+	}
+
+	caller := callerScopeForTurn(agent.ID, al.cfg, *opts)
+
+	switch strings.ToLower(strings.TrimSpace(req.Operation)) {
+	case "dashboard":
+		return buildMemoryDashboardContent(agent, caller, opts.Dispatch.InboundContext), nil
+	default:
+		return nil, fmt.Errorf("memory subcommand not recognized")
+	}
+}
+
+func buildMemoryDashboardContent(agent *AgentInstance, caller memory.CallerScope, inbound *bus.InboundContext) *bus.StructuredContent {
+	content := &bus.StructuredContent{
+		Title: "Personal Memory",
+	}
+
+	workspace, _ := agent.CuratedMemory.Stats(memory.CuratedTargetWorkspace, caller)
+	status := fmt.Sprintf("Workspace entries: %d", workspace.Entries)
+	if memory.AllowsPrivateUserMemory(caller) {
+		user, err := agent.CuratedMemory.Stats(memory.CuratedTargetCurrentUser, caller)
+		if err == nil {
+			status += fmt.Sprintf("\nUser entries: %d", user.Entries)
+		}
+	} else {
+		status += "\nUser entries hidden in shared scope."
+	}
+	
+	content.Paragraphs = []string{
+		status,
+		"Choose an action below to manage memory.",
+	}
+
+	content.Interaction = &bus.InteractionMenu{
+		Kind:    "memory",
+		OwnerID: inbound.SenderID,
+		AgentID: agent.ID,
+		Channel: inbound.Channel,
+		Entries: []bus.InteractionEntry{
+			{Action: "profile", Label: "My Profile"},
+			{Action: "browse", Label: "Browse"},
+			{Action: "search", Label: "Search"},
+			{Action: "pending", Label: "Pending"},
+			{Action: "close", Label: "Close"},
+		},
+	}
+	return content
+}
+
+func (al *AgentLoop) handleInternalMemoryCallback(
+	ctx context.Context,
+	req bus.InternalCallbackRequest,
+) (*bus.InternalCallbackResponse, error) {
+	inbound := bus.NormalizeInboundMessage(bus.InboundMessage{Context: req.Inbound}).Context
+	if strings.TrimSpace(req.OwnerID) == "" || inbound.SenderID != req.OwnerID ||
+		inbound.Channel != req.Channel || inbound.Account != req.Account ||
+		inbound.ChatID != req.ChatID || inbound.TopicID != req.TopicID {
+		return nil, fmt.Errorf("callback scope validation failed")
+	}
+	_, agent, routeErr := al.resolveMessageRoute(bus.InboundMessage{Context: inbound})
+	if routeErr != nil || agent == nil || !strings.EqualFold(agent.ID, req.AgentID) {
+		return nil, fmt.Errorf("callback agent validation failed")
+	}
+	
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	
+	opts := processOptions{InboundContext: &inbound}
+	caller := callerScopeForTurn(agent.ID, al.cfg, opts)
+
+	switch action {
+	case "close":
+		return &bus.InternalCallbackResponse{Close: true}, nil
+	case "dashboard":
+		return &bus.InternalCallbackResponse{Content: buildMemoryDashboardContent(agent, caller, &inbound)}, nil
+	case "profile":
+		if !memory.AllowsPrivateUserMemory(caller) {
+			return nil, memory.ErrPrivateContextRequired
+		}
+		profile, err := agent.CuratedMemory.CompileUserProfile(caller, memory.UserProfileOptions{
+			MaxChars:      al.cfg.Memory.Profile.EffectiveMaxChars(),
+			MinConfidence: al.cfg.Memory.Profile.EffectiveMinConfidence(),
+		})
+		var text string
+		if err != nil {
+			text = "Failed to compile profile: " + err.Error()
+		} else {
+			text = formatUserProfile(profile)
+		}
+		
+		content := &bus.StructuredContent{
+			Title:      "My Profile",
+			Paragraphs: []string{text},
+			Interaction: &bus.InteractionMenu{
+				Kind:    "memory",
+				OwnerID: inbound.SenderID,
+				AgentID: agent.ID,
+				Channel: inbound.Channel,
+				Entries: []bus.InteractionEntry{
+					{Action: "dashboard", Label: "Back to Dashboard"},
+					{Action: "close", Label: "Close"},
+				},
+			},
+		}
+		return &bus.InternalCallbackResponse{Content: content}, nil
+	case "browse":
+		workspace, _ := agent.CuratedMemory.List(memory.CuratedTargetWorkspace, caller)
+		user, _ := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
+		
+		allEntries := append(workspace, user...)
+		
+		// Simple pagination
+		page := req.Page
+		if page < 0 {
+			page = 0
+		}
+		perPage := 5
+		pages := (len(allEntries) + perPage - 1) / perPage
+		if page >= pages && pages > 0 {
+			page = pages - 1
+		}
+		
+		start := page * perPage
+		end := start + perPage
+		if end > len(allEntries) {
+			end = len(allEntries)
+		}
+		
+		pageEntries := allEntries[start:end]
+		
+		var lines []string
+		var entries []bus.InteractionEntry
+		
+		for i, entry := range pageEntries {
+			content := truncateMemoryCommandText(memory.RedactMemoryText(entry.Content), 50)
+			lines = append(lines, fmt.Sprintf("%d. %s — %s", i+1, entry.ID, content))
+			entries = append(entries, bus.InteractionEntry{
+				Action: "detail",
+				Label:  fmt.Sprintf("%d. %s", i+1, entry.ID),
+				Value:  entry.ID,
+			})
+		}
+		
+		if len(lines) == 0 {
+			lines = append(lines, "No memory entries found.")
+		}
+		
+		if page > 0 {
+			entries = append(entries, bus.InteractionEntry{Action: "page", Label: "◀️ Prev", Value: fmt.Sprintf("%d", page-1)})
+		}
+		if page < pages-1 {
+			entries = append(entries, bus.InteractionEntry{Action: "page", Label: "Next ▶️", Value: fmt.Sprintf("%d", page+1)})
+		}
+		
+		entries = append(entries, bus.InteractionEntry{Action: "dashboard", Label: "Back to Dashboard"})
+		entries = append(entries, bus.InteractionEntry{Action: "close", Label: "Close"})
+		
+		content := &bus.StructuredContent{
+			Title:      "Memory Browse",
+			Paragraphs: []string{strings.Join(lines, "\n")},
+			Interaction: &bus.InteractionMenu{
+				Kind:    "memory",
+				OwnerID: inbound.SenderID,
+				AgentID: agent.ID,
+				Channel: inbound.Channel,
+				Page:    page,
+				Pages:   pages,
+				Entries: entries,
+			},
+		}
+		return &bus.InternalCallbackResponse{Content: content}, nil
+	case "detail":
+		id := req.Value
+		target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, memory.AllowsPrivateUserMemory(caller))
+		if err != nil {
+			return nil, err
+		}
+		list, _ := agent.CuratedMemory.List(target, caller)
+		var matched *memory.CuratedEntry
+		for _, e := range list {
+			if e.ID == id {
+				matched = &e
+				break
+			}
+		}
+		if matched == nil {
+			return nil, fmt.Errorf("entry not found")
+		}
+		
+		content := &bus.StructuredContent{
+			Title: "Memory Detail: " + matched.ID,
+			Paragraphs: []string{
+				fmt.Sprintf("Type: %s", matched.EffectiveType()),
+				fmt.Sprintf("Status: %s", matched.EffectiveStatus()),
+				fmt.Sprintf("Pinned: %v", matched.Pinned),
+				"\n" + matched.Content,
+			},
+			Interaction: &bus.InteractionMenu{
+				Kind:    "memory",
+				OwnerID: inbound.SenderID,
+				AgentID: agent.ID,
+				Channel: inbound.Channel,
+				Entries: []bus.InteractionEntry{
+					{Action: "edit", Label: "Edit", Value: ""},
+					{Action: "forget_confirm", Label: "Forget", Value: matched.ID},
+					{Action: "browse", Label: "Back to List"},
+					{Action: "close", Label: "Close"},
+				},
+			},
+		}
+		return &bus.InternalCallbackResponse{Content: content}, nil
+	case "forget_confirm":
+		id := req.Value
+		content := &bus.StructuredContent{
+			Title: "Confirm Forget: " + id,
+			Paragraphs: []string{"Are you sure you want to forget this entry? This action cannot be undone."},
+			Interaction: &bus.InteractionMenu{
+				Kind:    "memory",
+				OwnerID: inbound.SenderID,
+				AgentID: agent.ID,
+				Channel: inbound.Channel,
+				Entries: []bus.InteractionEntry{
+					{Action: "forget", Label: "Confirm Forget", Value: id},
+					{Action: "detail", Label: "Cancel", Value: id},
+				},
+			},
+		}
+		return &bus.InternalCallbackResponse{Content: content}, nil
+	case "forget":
+		id := req.Value
+		target, err := findMemoryEntryTarget(agent.CuratedMemory, caller, id, memory.AllowsPrivateUserMemory(caller))
+		if err != nil {
+			return nil, err
+		}
+		_, err = agent.CuratedMemory.ApplyBatch(target, caller, []memory.CuratedMutation{{
+			Action: memory.CuratedActionRemove, ID: id,
+			Provenance: memory.Provenance{Source: "user_command"},
+		}}, false)
+		if err != nil {
+			return nil, err
+		}
+		return &bus.InternalCallbackResponse{Text: "Forgot memory entry " + id}, nil
+	case "page":
+		parsed, _ := strconv.Atoi(req.Value)
+		return al.handleInternalMemoryCallback(ctx, bus.InternalCallbackRequest{
+			Kind: req.Kind, Action: "browse", Value: "", Page: parsed,
+			OwnerID: req.OwnerID, Channel: req.Channel, Account: req.Account,
+			ChatID: req.ChatID, TopicID: req.TopicID, MessageID: req.MessageID,
+			AgentID: req.AgentID, Scope: req.Scope, Inbound: req.Inbound,
+		})
+	case "pending":
+		workspace, _ := agent.CuratedMemory.Pending(memory.CuratedTargetWorkspace, caller)
+		user, _ := agent.CuratedMemory.Pending(memory.CuratedTargetCurrentUser, caller)
+		
+		text := formatPendingMemory(workspace, user)
+		content := &bus.StructuredContent{
+			Title:      "Pending Memory",
+			Paragraphs: []string{text},
+			Interaction: &bus.InteractionMenu{
+				Kind:    "memory",
+				OwnerID: inbound.SenderID,
+				AgentID: agent.ID,
+				Channel: inbound.Channel,
+				Entries: []bus.InteractionEntry{
+					{Action: "dashboard", Label: "Back to Dashboard"},
+					{Action: "close", Label: "Close"},
+				},
+			},
+		}
+		return &bus.InternalCallbackResponse{Content: content}, nil
+	case "search":
+		if strings.TrimSpace(req.Value) == "" {
+			return &bus.InternalCallbackResponse{Text: "Balas pesan ini dengan kata kunci pencarian:"}, nil
+		}
+		
+		workspace, _ := agent.CuratedMemory.Search(memory.CuratedTargetWorkspace, caller, req.Value, 20)
+		user, _ := agent.CuratedMemory.Search(memory.CuratedTargetCurrentUser, caller, req.Value, 20)
+		
+		text := formatMemoryEntries(workspace, user)
+		if text == "" || text == "Workspace memory:\n- (empty)\nCurrent-user memory:\n- (empty)" {
+			text = "No results found for query: " + req.Value
+		}
+		
+		content := &bus.StructuredContent{
+			Title:      "Search Results",
+			Paragraphs: []string{text},
+			Interaction: &bus.InteractionMenu{
+				Kind:    "memory",
+				OwnerID: inbound.SenderID,
+				AgentID: agent.ID,
+				Channel: inbound.Channel,
+				Entries: []bus.InteractionEntry{
+					{Action: "search", Label: "Search Again"},
+					{Action: "dashboard", Label: "Back to Dashboard"},
+					{Action: "close", Label: "Close"},
+				},
+			},
+		}
+		return &bus.InternalCallbackResponse{Content: content}, nil
+	case "edit":
+		if strings.TrimSpace(req.Value) == "" {
+			return &bus.InternalCallbackResponse{Text: "Balas pesan ini dengan format `<id> <konten baru>`:"}, nil
+		}
+		parts := strings.SplitN(strings.TrimSpace(req.Value), " ", 2)
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("invalid edit format")
+		}
+		id, editedContent := parts[0], parts[1]
+		
+		target, err := findMemoryEntryTarget(
+			agent.CuratedMemory,
+			caller,
+			id,
+			memory.AllowsPrivateUserMemory(caller),
+		)
+		if err != nil {
+			return nil, err
+		}
+		_, err = agent.CuratedMemory.ApplyBatch(target, caller, []memory.CuratedMutation{{
+			Action: memory.CuratedActionReplace, ID: id, Content: editedContent,
+			EvidenceKind: memory.CuratedEvidenceExplicit,
+			Provenance:   memory.Provenance{Source: "user_command"},
+		}}, false)
+		if err != nil {
+			return nil, err
+		}
+		
+		return &bus.InternalCallbackResponse{Text: "Updated memory entry " + id}, nil
+	default:
+		return nil, fmt.Errorf("invalid memory callback action")
 	}
 }
 

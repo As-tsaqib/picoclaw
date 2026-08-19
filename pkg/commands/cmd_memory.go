@@ -9,6 +9,7 @@ func memoryCommand() Definition {
 	return Definition{
 		Name:        "memory",
 		Description: "Inspect and manage curated durable memory",
+		Handler:     memoryRootHandler,
 		SubCommands: []SubCommand{
 			{Name: "status", Description: "Show memory configuration and capacity", Handler: memoryStatusHandler},
 			{
@@ -57,6 +58,22 @@ func memoryCommand() Definition {
 			{Name: "review", Description: "Run one bounded review of delivered turns", Handler: memoryReviewHandler},
 		},
 	}
+}
+
+func memoryRootHandler(ctx context.Context, req Request, rt *Runtime) error {
+	if rt == nil || rt.MemoryCommand == nil {
+		return req.Reply(unavailableMsg)
+	}
+	content, err := rt.MemoryCommand(ctx, MemoryCommandRequest{
+		Operation: "dashboard",
+	})
+	if err != nil {
+		return req.Reply("Failed to open memory dashboard: " + err.Error())
+	}
+	if content == nil {
+		return req.Reply(unavailableMsg)
+	}
+	return req.replyStructured(*content)
 }
 
 func memorySearchHandler(_ context.Context, req Request, rt *Runtime) error {

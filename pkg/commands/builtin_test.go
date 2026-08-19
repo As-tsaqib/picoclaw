@@ -35,20 +35,18 @@ func TestBuiltinHelpHandler_ReturnsFormattedMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("/help handler error: %v", err)
 	}
-	// Now uses auto-generated EffectiveUsage which includes agents
-	if !strings.Contains(reply, "/show [model|channel|agents|mcp <server>]") {
+	// Now uses auto-generated root usage
+	if !strings.Contains(reply, "/show - Show current configuration") {
 		t.Fatalf("/help reply missing /show usage, got %q", reply)
 	}
-	if !strings.Contains(reply, "/list [models|channels|agents|skills|mcp]") {
+	if !strings.Contains(reply, "/list - List available options") {
 		t.Fatalf("/help reply missing /list usage, got %q", reply)
 	}
-	if !strings.Contains(reply, "/stop") {
+	if !strings.Contains(reply, "/stop - Stop the current task") {
 		t.Fatalf("/help reply missing /stop usage, got %q", reply)
 	}
-	if !strings.Contains(reply, "/use <skill> <message>") {
-		if !strings.Contains(reply, "/use <skill> [message]") {
-			t.Fatalf("/help reply missing /use usage, got %q", reply)
-		}
+	if !strings.Contains(reply, "/use - Force a specific installed skill for one request") {
+		t.Fatalf("/help reply missing /use usage, got %q", reply)
 	}
 }
 
