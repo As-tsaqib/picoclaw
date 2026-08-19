@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/As-tsaqib/picoclaw/pkg/config"
 	"github.com/As-tsaqib/picoclaw/pkg/constants"
 	"github.com/As-tsaqib/picoclaw/pkg/logger"
 	"github.com/As-tsaqib/picoclaw/pkg/memory"
@@ -178,7 +179,8 @@ func (al *AgentLoop) acknowledgeEvolutionTurn(turnID string, delivered bool) {
 
 func memoryReviewEligible(ts *turnState, caller memory.CallerScope) bool {
 	if ts == nil || ts.opts.NoHistory || ts.opts.SuppressMemoryReview || ts.depth > 0 ||
-		!memory.HasCanonicalUserMemoryScope(caller) || constants.IsInternalChannel(caller.Channel) {
+		!memory.HasCanonicalUserMemoryScope(caller) || constants.IsInternalChannel(caller.Channel) ||
+		strings.EqualFold(strings.TrimSpace(caller.CaptureMode), config.MemoryCaptureExplicitOnly) {
 		return false
 	}
 	sender := strings.ToLower(strings.TrimSpace(ts.opts.Dispatch.SenderID()))
