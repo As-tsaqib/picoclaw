@@ -88,19 +88,23 @@ func (e *CapacityError) Error() string {
 
 // CallerScope contains trusted runtime identity and topic provenance. UserKey
 // is resolved by backend code from inbound channel/account identity and is
-// never accepted as a model tool argument.
+// never accepted as a model tool argument. CaptureMode and ExplicitMemoryIntent
+// are process-local policy facts derived from configuration and the original
+// user turn; they are never serialized or model-controlled.
 type CallerScope struct {
-	AgentID    string `json:"agent_id"`
-	UserKey    string `json:"-"`
-	Channel    string `json:"channel,omitempty"`
-	Account    string `json:"account,omitempty"`
-	ChatID     string `json:"chat_id,omitempty"`
-	GroupID    string `json:"group_id,omitempty"`
-	TopicID    string `json:"topic_id,omitempty"`
-	TopicName  string `json:"topic_name,omitempty"`
-	SessionKey string `json:"-"`
-	SessionRef string `json:"session_ref,omitempty"`
-	MessageRef string `json:"message_ref,omitempty"`
+	AgentID              string `json:"agent_id"`
+	UserKey              string `json:"-"`
+	Channel              string `json:"channel,omitempty"`
+	Account              string `json:"account,omitempty"`
+	ChatID               string `json:"chat_id,omitempty"`
+	GroupID              string `json:"group_id,omitempty"`
+	TopicID              string `json:"topic_id,omitempty"`
+	TopicName            string `json:"topic_name,omitempty"`
+	SessionKey           string `json:"-"`
+	SessionRef           string `json:"session_ref,omitempty"`
+	MessageRef           string `json:"message_ref,omitempty"`
+	CaptureMode          string `json:"-"`
+	ExplicitMemoryIntent bool   `json:"-"`
 }
 
 // AllowsPrivateUserMemory reports whether trusted runtime scope is sufficient
