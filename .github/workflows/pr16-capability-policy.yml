@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/pr16-capability-policy.yml
       - .github/scripts/pr16_capability_policy_fix.py
+      - .github/scripts/pr16_capability_policy_prepare.py
 
 permissions:
   contents: write
@@ -38,60 +39,11 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 <<'PY'
-          from pathlib import Path
-          p = Path('.github/scripts/pr16_capability_policy_fix.py')
-          text = p.read_text()
-          old = '''    if text.count(old) != 1:
-        raise SystemExit(f"{path}: expected exactly one match, found {text.count(old)}")
-    p.write_text(text.replace(old, new, 1))
-'''
-          new = '''    expected = 2 if path == "pkg/agent/pipeline_llm.go" and "SenderID:" in old else 1
-    if text.count(old) != expected:
-        raise SystemExit(f"{path}: expected exactly {expected} match(es), found {text.count(old)}")
-    p.write_text(text.replace(old, new, expected))
-'''
-          if old not in text:
-              raise SystemExit('replace_once implementation not found')
-          p.write_text(text.replace(old, new, 1))
-          PY
+          python3 .github/scripts/pr16_capability_policy_prepare.py
           python3 .github/scripts/pr16_capability_policy_fix.py
           golangci-lint fmt
           git restore --source=HEAD -- pkg/providers/bedrock/provider_bedrock.go
-          python3 <<'PY'
-          import subprocess
-
-          allowed = {
-              "pkg/config/config.go",
-              "pkg/config/defaults.go",
-              "pkg/config/native_telegram_tools_test.go",
-              "pkg/capability/capability.go",
-              "pkg/capability/capability_policy_test.go",
-              "pkg/agent/pipeline_llm.go",
-              "pkg/agent/prompt.go",
-              "pkg/agent/prompt_turn.go",
-              "pkg/agent/prompt_contributors.go",
-              "pkg/agent/capability_policy_test.go",
-          }
-          changed = set(filter(None, subprocess.check_output(
-              ["git", "diff", "--name-only"], text=True
-          ).splitlines()))
-          unexpected = changed - allowed
-          missing = {
-              "pkg/config/config.go",
-              "pkg/config/defaults.go",
-              "pkg/capability/capability.go",
-              "pkg/agent/pipeline_llm.go",
-              "pkg/agent/prompt.go",
-              "pkg/agent/prompt_turn.go",
-              "pkg/agent/prompt_contributors.go",
-          } - changed
-          if unexpected:
-              raise SystemExit(f"formatter touched unexpected files: {sorted(unexpected)}")
-          if missing:
-              raise SystemExit(f"required capability-policy fixes missing: {sorted(missing)}")
-          print("validated changed files:", *sorted(changed), sep="\n- ")
-          PY
+          python3 -c 'import subprocess; allowed={"pkg/config/config.go","pkg/config/defaults.go","pkg/config/native_telegram_tools_test.go","pkg/capability/capability.go","pkg/capability/capability_policy_test.go","pkg/agent/pipeline_llm.go","pkg/agent/prompt.go","pkg/agent/prompt_turn.go","pkg/agent/prompt_contributors.go","pkg/agent/capability_policy_test.go"}; changed=set(filter(None,subprocess.check_output(["git","diff","--name-only"],text=True).splitlines())); unexpected=changed-allowed; required={"pkg/config/config.go","pkg/config/defaults.go","pkg/capability/capability.go","pkg/agent/pipeline_llm.go","pkg/agent/prompt.go","pkg/agent/prompt_turn.go","pkg/agent/prompt_contributors.go"}; missing=required-changed; assert not unexpected, f"formatter touched unexpected files: {sorted(unexpected)}"; assert not missing, f"required capability-policy fixes missing: {sorted(missing)}"; print("validated changed files:", *sorted(changed), sep="\n- ")'
 
       - name: Targeted policy tests
         run: go test ./pkg/config ./pkg/capability ./pkg/agent
