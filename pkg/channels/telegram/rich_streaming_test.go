@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -42,7 +43,7 @@ func TestPreferredRichStreamUsesStableDraftAndPersistentFinal(t *testing.T) {
 		MessageThreadID int   `json:"message_thread_id"`
 		DraftID         int   `json:"draft_id"`
 	}
-	require.NoError(t, jsonUnmarshalRequest(caller.calls[0].Data.BodyRaw, &draft))
+	require.NoError(t, json.Unmarshal(caller.calls[0].Data.BodyRaw, &draft))
 	assert.Equal(t, int64(-1001234567890), draft.ChatID)
 	assert.Equal(t, 42, draft.MessageThreadID)
 	assert.NotZero(t, draft.DraftID)
@@ -51,7 +52,7 @@ func TestPreferredRichStreamUsesStableDraftAndPersistentFinal(t *testing.T) {
 		DraftID int    `json:"draft_id"`
 		Text    string `json:"text"`
 	}
-	require.NoError(t, jsonUnmarshalRequest(caller.calls[2].Data.BodyRaw, &clear))
+	require.NoError(t, json.Unmarshal(caller.calls[2].Data.BodyRaw, &clear))
 	assert.Equal(t, draft.DraftID, clear.DraftID)
 	assert.Equal(t, " ", clear.Text)
 }
