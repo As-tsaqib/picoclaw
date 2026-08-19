@@ -221,7 +221,7 @@ func (c *TelegramChannel) sendStructuredFallback(
 	messageIDs := make([]string, 0, len(chunks))
 	for i, chunk := range chunks {
 		mdFallback := chunk
-		content := chunk
+		var content string
 		if hasTelegramRichTable(chunk) {
 			fallbackMarkdown := telegramTableFallbackMarkdown(chunk)
 			content = parseContent(fallbackMarkdown, useMarkdownV2)

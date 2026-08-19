@@ -928,10 +928,12 @@ func TestMemoryStructuredContentAndKeyboard(t *testing.T) {
 	assert.Equal(t, "memory", pending.menu.Kind)
 
 	var capturedReq *bus.InternalCallbackRequest
-	ch.SetInternalCallbackHandler(func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
-		capturedReq = &req
-		return &bus.InternalCallbackResponse{Content: content}, nil
-	})
+	ch.SetInternalCallbackHandler(
+		func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
+			capturedReq = &req
+			return &bus.InternalCallbackResponse{Content: content}, nil
+		},
+	)
 
 	pending.messageID = 91
 	ch.storeSessionMenu(*pending)
@@ -1037,15 +1039,17 @@ func TestMemoryForceReply_SearchAndEditFlows(t *testing.T) {
 	require.NoError(t, err)
 
 	var capturedReq *bus.InternalCallbackRequest
-	ch.SetInternalCallbackHandler(func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
-		capturedReq = &req
-		if strings.TrimSpace(req.Value) == "" {
-			return &bus.InternalCallbackResponse{Text: "Balas prompt pencarian."}, nil
-		}
-		updated := testMemoryStructuredContent()
-		updated.Title = "Hasil Pencarian: " + req.Value
-		return &bus.InternalCallbackResponse{Content: updated}, nil
-	})
+	ch.SetInternalCallbackHandler(
+		func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
+			capturedReq = &req
+			if strings.TrimSpace(req.Value) == "" {
+				return &bus.InternalCallbackResponse{Text: "Balas prompt pencarian."}, nil
+			}
+			updated := testMemoryStructuredContent()
+			updated.Title = "Hasil Pencarian: " + req.Value
+			return &bus.InternalCallbackResponse{Content: updated}, nil
+		},
+	)
 
 	var sent struct {
 		ReplyMarkup telego.InlineKeyboardMarkup `json:"reply_markup"`

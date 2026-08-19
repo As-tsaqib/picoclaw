@@ -309,7 +309,11 @@ func (al *AgentLoop) executeMemoryCommand(
 	}
 }
 
-func buildMemoryDashboardContent(agent *AgentInstance, caller memory.CallerScope, inbound *bus.InboundContext) *bus.StructuredContent {
+func buildMemoryDashboardContent(
+	agent *AgentInstance,
+	caller memory.CallerScope,
+	inbound *bus.InboundContext,
+) *bus.StructuredContent {
 	content := &bus.StructuredContent{
 		Title: "Personal Memory",
 	}
@@ -501,7 +505,7 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 			return nil, fmt.Errorf("entry not found")
 		}
 
-		var detailLines []string
+		detailLines := make([]string, 0, 5)
 		detailLines = append(detailLines, fmt.Sprintf("Type: %s", matched.EffectiveType()))
 		detailLines = append(detailLines, fmt.Sprintf("Status: %s", matched.EffectiveStatus()))
 		detailLines = append(detailLines, fmt.Sprintf("Pinned: %v", matched.Pinned))
