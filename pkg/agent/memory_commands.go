@@ -322,7 +322,9 @@ func buildMemoryDashboardContent(
 	if agent.CuratedMemory != nil {
 		workspace, _ := agent.CuratedMemory.Stats(memory.CuratedTargetWorkspace, caller)
 		paragraphs = append(paragraphs, fmt.Sprintf("Workspace entries: %d", workspace.Entries))
-		if memory.AllowsPrivateUserMemory(caller) || (inbound != nil && (strings.EqualFold(inbound.ChatType, "direct") || inbound.PrivateResponse)) {
+		hasPrivateAccess := memory.AllowsPrivateUserMemory(caller) ||
+			(inbound != nil && (strings.EqualFold(inbound.ChatType, "direct") || inbound.PrivateResponse))
+		if hasPrivateAccess {
 			user, err := agent.CuratedMemory.Stats(memory.CuratedTargetCurrentUser, caller)
 			if err == nil {
 				paragraphs = append(paragraphs, fmt.Sprintf("User entries: %d", user.Entries))
@@ -388,7 +390,10 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 	case "dashboard":
 		return &bus.InternalCallbackResponse{Content: buildMemoryDashboardContent(agent, caller, &inbound)}, nil
 	case "profile":
-		if !memory.AllowsPrivateUserMemory(caller) && !strings.EqualFold(inbound.ChatType, "direct") && !inbound.PrivateResponse {
+		hasPrivateAccess := memory.AllowsPrivateUserMemory(caller) ||
+			strings.EqualFold(inbound.ChatType, "direct") ||
+			inbound.PrivateResponse
+		if !hasPrivateAccess {
 			return nil, memory.ErrPrivateContextRequired
 		}
 		profile, err := agent.CuratedMemory.CompileUserProfile(caller, memory.UserProfileOptions{
