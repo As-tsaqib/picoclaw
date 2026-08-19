@@ -818,8 +818,8 @@ func (c *TelegramChannel) sendSessionRenameNotice(
 	} else if message.MessageID > 0 {
 		params.ReplyParameters = &telego.ReplyParameters{
 			MessageID:                message.MessageID,
-				AllowSendingWithoutReply: true,
-			}
+			AllowSendingWithoutReply: true,
+		}
 	}
 	if _, err := c.bot.SendMessage(ctx, params); err != nil {
 		return fmt.Errorf("send session rename notice: %w", err)

@@ -152,7 +152,11 @@ func (c *TelegramChannel) sendPoll(
 
 	pMsg, err := c.bot.SendPoll(ctx, params)
 	if err != nil {
-		logger.WarnCF("telegram", "Native poll send failed, using deterministic text fallback", map[string]any{"error": "native_poll_unavailable"})
+		logger.WarnCF(
+			"telegram",
+			"Native poll send failed, using deterministic text fallback",
+			map[string]any{"error": "native_poll_unavailable"},
+		)
 		serverID := ""
 		if c.tgCfg != nil {
 			serverID = c.tgCfg.BaseURL
@@ -161,7 +165,13 @@ func (c *TelegramChannel) sendPoll(
 		if pollType == telego.PollTypeQuiz {
 			feature = capability.FeaturePollQuiz
 		}
-		capability.GlobalNegativeCache.RecordFailure("telegram", c.pollAccount(msg.Context.Account), serverID, feature, err)
+		capability.GlobalNegativeCache.RecordFailure(
+			"telegram",
+			c.pollAccount(msg.Context.Account),
+			serverID,
+			feature,
+			err,
+		)
 
 		fallback := formatPollFallbackText(poll)
 		var keyboard *telego.InlineKeyboardMarkup
@@ -170,7 +180,16 @@ func (c *TelegramChannel) sendPoll(
 				tu.InlineKeyboardButton("💡 Reveal Answer").WithCallbackData("quiz_reveal:" + poll.ID),
 			))
 		}
-		ids, fallbackErr := c.sendStructuredFallback(ctx, chatID, threadID, msg.ReplyToMessageID, fallback, keyboard, nil, nil)
+		ids, fallbackErr := c.sendStructuredFallback(
+			ctx,
+			chatID,
+			threadID,
+			msg.ReplyToMessageID,
+			fallback,
+			keyboard,
+			nil,
+			nil,
+		)
 		if fallbackErr != nil {
 			return nil, fallbackErr
 		}
@@ -178,9 +197,16 @@ func (c *TelegramChannel) sendPoll(
 			messageID, parseErr := strconv.Atoi(ids[0])
 			if parseErr == nil && messageID > 0 {
 				c.registerPollEntry(telegramPollEntry{
-					LocalHandle: poll.ID, Account: c.pollAccount(msg.Context.Account), ChatID: chatID, ThreadID: threadID,
-					MessageID: messageID, AgentID: msg.AgentID, SenderID: msg.Context.SenderID,
-					SessionKey: msg.SessionKey, PollPayload: poll, CreatedAt: time.Now().UTC(),
+					LocalHandle: poll.ID,
+					Account:     c.pollAccount(msg.Context.Account),
+					ChatID:      chatID,
+					ThreadID:    threadID,
+					MessageID:   messageID,
+					AgentID:     msg.AgentID,
+					SenderID:    msg.Context.SenderID,
+					SessionKey:  msg.SessionKey,
+					PollPayload: poll,
+					CreatedAt:   time.Now().UTC(),
 				})
 			}
 		}

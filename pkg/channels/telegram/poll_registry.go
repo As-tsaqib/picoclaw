@@ -156,7 +156,12 @@ func pollRouteAuthorized(entry telegramPollEntry, route telegramPollRoute) error
 	if want, got := strings.TrimSpace(entry.AgentID), strings.TrimSpace(route.AgentID); want != "" && got != want {
 		return fmt.Errorf("caller agent %q not authorized", got)
 	}
-	if want, got := strings.TrimSpace(entry.SessionKey), strings.TrimSpace(route.SessionKey); want != "" && got != want {
+	if want, got := strings.TrimSpace(
+		entry.SessionKey,
+	), strings.TrimSpace(
+		route.SessionKey,
+	); want != "" &&
+		got != want {
 		return fmt.Errorf("caller session %q not authorized", got)
 	}
 	if want, got := strings.TrimSpace(entry.SenderID), strings.TrimSpace(route.SenderID); want != "" && got != want {
@@ -222,12 +227,12 @@ func (c *TelegramChannel) StopPoll(
 		return fmt.Errorf("not authorized to stop poll: poll route proof mismatch")
 	}
 	return c.stopPollEntry(ctx, lookupHandle, entry, telegramPollRoute{
-		Account: entry.Account,
-		ChatID: entry.ChatID,
-		ThreadID: entry.ThreadID,
-		AgentID: callerAgentID,
+		Account:    entry.Account,
+		ChatID:     entry.ChatID,
+		ThreadID:   entry.ThreadID,
+		AgentID:    callerAgentID,
 		SessionKey: callerSessionKey,
-		SenderID: callerSenderID,
+		SenderID:   callerSenderID,
 	})
 }
 
@@ -253,7 +258,7 @@ func (c *TelegramChannel) stopPollEntry(
 		return fmt.Errorf("not authorized to stop poll: %w", err)
 	}
 	_, err := c.bot.StopPoll(ctx, &telego.StopPollParams{
-		ChatID: tu.ID(entry.ChatID),
+		ChatID:    tu.ID(entry.ChatID),
 		MessageID: entry.MessageID,
 	})
 	if err != nil {

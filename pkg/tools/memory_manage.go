@@ -244,18 +244,18 @@ func (t *MemoryManageTool) apply(
 	}
 	if t.onChange != nil {
 		t.onChange(ctx, MemoryChangeEvent{
-			Caller: caller,
-			Target: target,
-			Result: result,
+			Caller:     caller,
+			Target:     target,
+			Result:     result,
 			Background: background,
-			TurnID: ToolTurnID(ctx),
+			TurnID:     ToolTurnID(ctx),
 		})
 	}
 	return memoryToolJSON(map[string]any{
-		"ok": true,
-		"target": target,
+		"ok":      true,
+		"target":  target,
 		"outcome": memoryToolOverallOutcome(result),
-		"result": memoryBatchResultForTool(target, caller, result),
+		"result":  memoryBatchResultForTool(target, caller, result),
 	})
 }
 
@@ -413,10 +413,10 @@ func memoryToolError(err error) *ToolResult {
 	case errors.As(err, &capacity):
 		code = "memory_full"
 		details = map[string]any{
-			"target": capacity.Target,
-			"resource": capacity.Resource,
-			"limit": capacity.Limit,
-			"current": capacity.Current,
+			"target":    capacity.Target,
+			"resource":  capacity.Resource,
+			"limit":     capacity.Limit,
+			"current":   capacity.Current,
 			"requested": capacity.Requested,
 		}
 	case errors.Is(err, errExplicitMemoryIntentRequired):
@@ -445,9 +445,9 @@ func memoryToolError(err error) *ToolResult {
 		code = "invalid_preference_key"
 	}
 	payload := map[string]any{
-		"ok": false,
+		"ok":      false,
 		"outcome": "rejected",
-		"error": map[string]any{"code": code},
+		"error":   map[string]any{"code": code},
 	}
 	if details != nil {
 		payload["details"] = details

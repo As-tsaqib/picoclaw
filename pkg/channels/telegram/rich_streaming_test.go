@@ -7,13 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	ta "github.com/mymmrac/telego/telegoapi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/As-tsaqib/picoclaw/pkg/capability"
 	"github.com/As-tsaqib/picoclaw/pkg/config"
-
-	ta "github.com/mymmrac/telego/telegoapi"
 )
 
 func TestPreferredRichStreamUsesStableDraftAndPersistentFinal(t *testing.T) {

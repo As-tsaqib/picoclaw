@@ -150,7 +150,7 @@ func pollCommonSchemaProperties() map[string]any {
 			"description": "Seconds the poll remains open (5-2628000). Mutually exclusive with close_date_unix.",
 		},
 		"close_date_unix": map[string]any{
-			"type":        "integer",
+			"type": "integer",
 			"description": "Unix timestamp when the poll closes, 5-2628000 seconds in the future. " +
 				"Mutually exclusive with open_period_seconds.",
 		},
@@ -251,7 +251,7 @@ func (t *sendPollTool) Execute(_ context.Context, args map[string]any) *toolshar
 	}
 
 	return &toolshared.ToolResult{
-		ForLLM: "Native poll queued for delivery. poll_handle=" + payload.ID,
+		ForLLM:          "Native poll queued for delivery. poll_handle=" + payload.ID,
 		ResponseHandled: true,
 		Poll:            payload,
 	}
@@ -283,7 +283,7 @@ func (t *sendQuizTool) Parameters() map[string]any {
 	}
 	props["correct_option_ids"] = map[string]any{
 		"type": "array", "minItems": 1,
-		"items": map[string]any{"type": "integer", "minimum": 0},
+		"items":       map[string]any{"type": "integer", "minimum": 0},
 		"description": "Monotonically increasing unique 0-based indices of correct answers.",
 	}
 	props["explanation"] = map[string]any{
@@ -382,7 +382,7 @@ func (t *sendQuizTool) Execute(_ context.Context, args map[string]any) *toolshar
 	}
 
 	return &toolshared.ToolResult{
-		ForLLM: "Native quiz queued for delivery. poll_handle=" + payload.ID,
+		ForLLM:          "Native quiz queued for delivery. poll_handle=" + payload.ID,
 		ResponseHandled: true,
 		Poll:            payload,
 	}
@@ -436,7 +436,7 @@ func (t *stopPollTool) Execute(ctx context.Context, args map[string]any) *toolsh
 		return toolshared.ErrorResult("trusted route is unavailable for stop_poll")
 	}
 	return &toolshared.ToolResult{
-		ForLLM:         "Stop poll command queued.",
+		ForLLM:          "Stop poll command queued.",
 		ResponseHandled: true,
 		StopPollID:      boundHandle,
 	}

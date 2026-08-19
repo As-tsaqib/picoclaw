@@ -8,14 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	ta "github.com/mymmrac/telego/telegoapi"
 	"github.com/stretchr/testify/require"
 
 	"github.com/As-tsaqib/picoclaw/pkg/bus"
 	"github.com/As-tsaqib/picoclaw/pkg/capability"
 	"github.com/As-tsaqib/picoclaw/pkg/channels"
 	"github.com/As-tsaqib/picoclaw/pkg/media"
-
-	ta "github.com/mymmrac/telego/telegoapi"
 )
 
 type livePhotoTestMedia struct {
@@ -90,7 +89,9 @@ func TestTelegramSemanticLivePhotoRejectsWrongMediaShape(t *testing.T) {
 		"media://photo": {path: photo, meta: media.MediaMeta{Filename: "not-photo.mp4", ContentType: "video/mp4"}},
 		"media://video": {path: video, meta: media.MediaMeta{Filename: "live.mp4", ContentType: "video/mp4"}},
 	}})
-	ref, _ := bus.EncodeLivePhotoMediaRef(bus.LivePhotoPayload{PhotoRef: "media://photo", LiveVideoRef: "media://video"})
+	ref, _ := bus.EncodeLivePhotoMediaRef(
+		bus.LivePhotoPayload{PhotoRef: "media://photo", LiveVideoRef: "media://video"},
+	)
 
 	_, handled, err := ch.SendSemanticMedia(context.Background(), bus.OutboundMediaMessage{
 		ChatID: "12345", Context: bus.InboundContext{Channel: "telegram", Account: ch.Name(), ChatID: "12345"},
@@ -116,7 +117,9 @@ func TestTelegramSemanticLivePhotoUnsupportedDowngradesOnlyLivePhoto(t *testing.
 		"media://photo": {path: photo, meta: media.MediaMeta{Filename: "photo.jpg", ContentType: "image/jpeg"}},
 		"media://video": {path: video, meta: media.MediaMeta{Filename: "live.mp4", ContentType: "video/mp4"}},
 	}})
-	ref, _ := bus.EncodeLivePhotoMediaRef(bus.LivePhotoPayload{PhotoRef: "media://photo", LiveVideoRef: "media://video"})
+	ref, _ := bus.EncodeLivePhotoMediaRef(
+		bus.LivePhotoPayload{PhotoRef: "media://photo", LiveVideoRef: "media://video"},
+	)
 
 	_, handled, err := ch.SendSemanticMedia(context.Background(), bus.OutboundMediaMessage{
 		ChatID: "12345", Context: bus.InboundContext{Channel: "telegram", Account: ch.Name(), ChatID: "12345"},

@@ -31,7 +31,8 @@ func TestSendLivePhotoToolQueuesChannelNeutralEnvelope(t *testing.T) {
 		t.Fatalf("unexpected live photo result: %#v", result)
 	}
 	payload, ok := bus.DecodeLivePhotoMediaRef(result.Media[0])
-	if !ok || payload.PhotoRef != "media://photo" || payload.LiveVideoRef != "media://video" || payload.Caption != "hello" {
+	if !ok || payload.PhotoRef != "media://photo" || payload.LiveVideoRef != "media://video" ||
+		payload.Caption != "hello" {
 		t.Fatalf("unexpected live photo payload: %#v ok=%t", payload, ok)
 	}
 }
