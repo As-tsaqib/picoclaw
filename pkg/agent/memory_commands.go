@@ -246,10 +246,23 @@ func configureMemoryCommandRuntime(
 			lines := []string{
 				"Curated memory: enabled",
 				fmt.Sprintf("Recall mode: %s", rt.Config.Memory.Recall.EffectiveMode()),
-				fmt.Sprintf("Background review: %t (interval %d)", rt.Config.Memory.BackgroundReview.Enabled, rt.Config.Memory.BackgroundReview.EffectiveInterval()),
+				fmt.Sprintf(
+					"Background review: %t (interval %d)",
+					rt.Config.Memory.BackgroundReview.Enabled,
+					rt.Config.Memory.BackgroundReview.EffectiveInterval(),
+				),
 				fmt.Sprintf("Approval mode: %s", rt.Config.Memory.EffectiveApprovalMode()),
-				fmt.Sprintf("Query-aware retrieval: %t (%s, user share %.0f%%)", rt.Config.Memory.Retrieval.Enabled, rt.Config.Memory.Retrieval.EffectiveEngine(), rt.Config.Memory.Retrieval.EffectiveUserShare()*100),
-				fmt.Sprintf("Compiled user profile: %t (max %d chars)", rt.Config.Memory.Profile.Enabled, rt.Config.Memory.Profile.EffectiveMaxChars()),
+				fmt.Sprintf(
+					"Query-aware retrieval: %t (%s, user share %.0f%%)",
+					rt.Config.Memory.Retrieval.Enabled,
+					rt.Config.Memory.Retrieval.EffectiveEngine(),
+					rt.Config.Memory.Retrieval.EffectiveUserShare()*100,
+				),
+				fmt.Sprintf(
+					"Compiled user profile: %t (max %d chars)",
+					rt.Config.Memory.Profile.Enabled,
+					rt.Config.Memory.Profile.EffectiveMaxChars(),
+				),
 				fmt.Sprintf("Notifications: %s", rt.Config.Memory.EffectiveNotificationMode()),
 			}
 			if err != nil {
@@ -269,7 +282,10 @@ func configureMemoryCommandRuntime(
 			if !rt.Config.Memory.Profile.Enabled {
 				return "Compiled user profile is disabled.", nil
 			}
-			profile, err := service.profile(rt.Config.Memory.Profile.EffectiveMaxChars(), rt.Config.Memory.Profile.EffectiveMinConfidence())
+			profile, err := service.profile(
+				rt.Config.Memory.Profile.EffectiveMaxChars(),
+				rt.Config.Memory.Profile.EffectiveMinConfidence(),
+			)
 			if err != nil {
 				return "", err
 			}
@@ -361,14 +377,22 @@ func configureMemoryCommandRuntime(
 			return formatCheckpointList(checkpoints), nil
 		}
 		rt.CheckpointResume = func(id string) (string, error) {
-			checkpoint, err := agent.Checkpoints.Apply(caller, "", memory.CheckpointMutation{Action: memory.CheckpointActionResume, ID: id})
+			checkpoint, err := agent.Checkpoints.Apply(
+				caller,
+				"",
+				memory.CheckpointMutation{Action: memory.CheckpointActionResume, ID: id},
+			)
 			if err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("Resumed %s (%s). Next: %s", checkpoint.Title, checkpoint.ID, checkpoint.NextStep), nil
 		}
 		rt.CheckpointForget = func(id string) (string, error) {
-			checkpoint, err := agent.Checkpoints.Apply(caller, "", memory.CheckpointMutation{Action: memory.CheckpointActionArchive, ID: id})
+			checkpoint, err := agent.Checkpoints.Apply(
+				caller,
+				"",
+				memory.CheckpointMutation{Action: memory.CheckpointActionArchive, ID: id},
+			)
 			if err != nil {
 				return "", err
 			}
@@ -402,7 +426,10 @@ func (al *AgentLoop) executeMemoryCommand(
 	if !isPrivateDelivery && !memory.AllowsPrivateUserMemory(caller) {
 		return &bus.StructuredContent{
 			Title: "Personal Memory",
-			Paragraphs: []string{"Personal memory is private and hidden in shared channels. Please use a direct chat or an ephemeral private command to inspect and manage personal memory."},
+			Paragraphs: []string{
+				"Personal memory is private and hidden in shared channels. " +
+					"Please use a direct chat or an ephemeral private command to inspect and manage personal memory.",
+			},
 		}, nil
 	}
 	return buildMemoryDashboardContentE(agent, caller, inbound)
@@ -460,17 +487,16 @@ func newMemoryInteractionMenu(
 	}, nil
 }
 
-func buildMemoryDashboardContent(agent *AgentInstance, caller memory.CallerScope, inbound *bus.InboundContext) *bus.StructuredContent {
-	content, err := buildMemoryDashboardContentE(agent, caller, inbound)
-	if err == nil {
-		return content
-	}
-	return &bus.StructuredContent{Title: "Personal Memory", Paragraphs: []string{"Memory dashboard is unavailable."}}
-}
-
-func buildMemoryDashboardContentE(agent *AgentInstance, caller memory.CallerScope, inbound *bus.InboundContext) (*bus.StructuredContent, error) {
+func buildMemoryDashboardContentE(
+	agent *AgentInstance,
+	caller memory.CallerScope,
+	inbound *bus.InboundContext,
+) (*bus.StructuredContent, error) {
 	if agent == nil || agent.CuratedMemory == nil {
-		return &bus.StructuredContent{Title: "Personal Memory", Paragraphs: []string{"Curated memory is not configured."}}, nil
+		return &bus.StructuredContent{
+			Title:      "Personal Memory",
+			Paragraphs: []string{"Curated memory is not configured."},
+		}, nil
 	}
 	service := newMemoryCommandService(agent.CuratedMemory, caller)
 	stats, err := service.stats()
@@ -517,7 +543,6 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 	ctx context.Context,
 	req bus.InternalCallbackRequest,
 ) (response *bus.InternalCallbackResponse, err error) {
-	_ = ctx
 	inbound, err := memoryCallbackEnvelope(req)
 	if err != nil {
 		return nil, err
@@ -539,7 +564,9 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 			return
 		}
 		menu := response.Content.Interaction
-		bound, bindErr := newMemoryInteractionMenu(&inbound, agent.ID, menu.Page, menu.Pages, menu.Current, menu.Entries)
+		bound, bindErr := newMemoryInteractionMenu(
+			&inbound, agent.ID, menu.Page, menu.Pages, menu.Current, menu.Entries,
+		)
 		if bindErr != nil {
 			response = nil
 			err = bindErr
@@ -556,13 +583,30 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 		return &bus.InternalCallbackResponse{Content: content}, buildErr
 	case "profile":
 		if !al.cfg.Memory.Profile.Enabled {
-			return &bus.InternalCallbackResponse{Content: memorySimpleView("My Profile", "Compiled user profile is disabled.", []bus.InteractionEntry{{Action: "dashboard", Label: "↩️ Kembali"}, {Action: "close", Label: "✖️ Tutup"}})}, nil
+			return &bus.InternalCallbackResponse{Content: memorySimpleView(
+				"My Profile",
+				"Compiled user profile is disabled.",
+				[]bus.InteractionEntry{
+					{Action: "dashboard", Label: "↩️ Kembali"},
+					{Action: "close", Label: "✖️ Tutup"},
+				},
+			)}, nil
 		}
-		profile, profileErr := service.profile(al.cfg.Memory.Profile.EffectiveMaxChars(), al.cfg.Memory.Profile.EffectiveMinConfidence())
+		profile, profileErr := service.profile(
+			al.cfg.Memory.Profile.EffectiveMaxChars(),
+			al.cfg.Memory.Profile.EffectiveMinConfidence(),
+		)
 		if profileErr != nil {
 			return nil, profileErr
 		}
-		return &bus.InternalCallbackResponse{Content: memorySimpleView("My Profile", formatUserProfile(profile), []bus.InteractionEntry{{Action: "dashboard", Label: "↩️ Kembali"}, {Action: "close", Label: "✖️ Tutup"}})}, nil
+		return &bus.InternalCallbackResponse{Content: memorySimpleView(
+			"My Profile",
+			formatUserProfile(profile),
+			[]bus.InteractionEntry{
+				{Action: "dashboard", Label: "↩️ Kembali"},
+				{Action: "close", Label: "✖️ Tutup"},
+			},
+		)}, nil
 	case "browse", "browse_page", "page":
 		page, pageErr := memoryRequestedPage(req, action)
 		if pageErr != nil {
@@ -572,7 +616,9 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 		if listErr != nil {
 			return nil, listErr
 		}
-		return &bus.InternalCallbackResponse{Content: renderMemoryEntryPage("browse", "Memory", flattenMemoryEntries(set), page, "", true)}, nil
+		return &bus.InternalCallbackResponse{Content: renderMemoryEntryPage(
+			"browse", "Memory", flattenMemoryEntries(set), page, "", true,
+		)}, nil
 	case "detail":
 		entry, detailErr := service.detail(req.Value)
 		if detailErr != nil {
@@ -593,7 +639,7 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 			return nil, detailErr
 		}
 		return &bus.InternalCallbackResponse{Content: &bus.StructuredContent{
-			Title: "Lupakan Memori Ini?",
+			Title:      "Lupakan Memori Ini?",
 			Paragraphs: []string{"Tindakan ini akan menghapus entri memori yang dipilih. Lanjutkan?"},
 			Interaction: &bus.InteractionMenu{Current: req.Value, Entries: []bus.InteractionEntry{
 				{Action: "forget", Label: "✅ Konfirmasi", Value: req.Value},
@@ -608,7 +654,9 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 		if listErr != nil {
 			return nil, listErr
 		}
-		return &bus.InternalCallbackResponse{Content: renderMemoryEntryPage("browse", "Memory", flattenMemoryEntries(set), 0, "", true)}, nil
+		return &bus.InternalCallbackResponse{Content: renderMemoryEntryPage(
+			"browse", "Memory", flattenMemoryEntries(set), 0, "", true,
+		)}, nil
 	case "pending", "pending_page":
 		page, pageErr := memoryRequestedPage(req, action)
 		if pageErr != nil {
@@ -627,7 +675,9 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 		if pendingErr != nil {
 			return nil, pendingErr
 		}
-		return &bus.InternalCallbackResponse{Content: renderMemoryPendingPage(flattenPendingChanges(set), req.Page)}, nil
+		return &bus.InternalCallbackResponse{Content: renderMemoryPendingPage(
+			flattenPendingChanges(set), req.Page,
+		)}, nil
 	case "search":
 		query := strings.TrimSpace(req.Value)
 		if query == "" {
@@ -637,7 +687,9 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 		if searchErr != nil {
 			return nil, searchErr
 		}
-		return &bus.InternalCallbackResponse{Content: renderMemoryEntryPage("search", "Search Results", flattenMemoryEntries(set), 0, query, false)}, nil
+		return &bus.InternalCallbackResponse{Content: renderMemoryEntryPage(
+			"search", "Search Results", flattenMemoryEntries(set), 0, query, false,
+		)}, nil
 	case "search_page":
 		page, pageErr := memoryRequestedPage(req, action)
 		if pageErr != nil {
@@ -651,7 +703,9 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 		if searchErr != nil {
 			return nil, searchErr
 		}
-		return &bus.InternalCallbackResponse{Content: renderMemoryEntryPage("search", "Search Results", flattenMemoryEntries(set), page, query, false)}, nil
+		return &bus.InternalCallbackResponse{Content: renderMemoryEntryPage(
+			"search", "Search Results", flattenMemoryEntries(set), page, query, false,
+		)}, nil
 	case "edit":
 		if strings.TrimSpace(req.Value) == "" {
 			if strings.TrimSpace(req.SessionKey) == "" {
@@ -660,7 +714,9 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 			if _, detailErr := service.detail(req.SessionKey); detailErr != nil {
 				return nil, detailErr
 			}
-			return &bus.InternalCallbackResponse{Text: "Balas pesan ini dengan konten baru untuk entri memori ini:"}, nil
+			return &bus.InternalCallbackResponse{
+				Text: "Balas pesan ini dengan konten baru untuk entri memori ini:",
+			}, nil
 		}
 		id := strings.TrimSpace(req.SessionKey)
 		if id == "" {
@@ -682,7 +738,9 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 }
 
 func memorySimpleView(title, text string, entries []bus.InteractionEntry) *bus.StructuredContent {
-	return &bus.StructuredContent{Title: title, Paragraphs: []string{text}, Interaction: &bus.InteractionMenu{Entries: entries}}
+	return &bus.StructuredContent{
+		Title: title, Paragraphs: []string{text}, Interaction: &bus.InteractionMenu{Entries: entries},
+	}
 }
 
 func memoryRequestedPage(req bus.InternalCallbackRequest, action string) (int, error) {
@@ -732,7 +790,13 @@ func clampMemoryPage(total, page int) (int, int, int, int) {
 	return page, pages, start, end
 }
 
-func renderMemoryEntryPage(view, title string, all []memory.CuratedEntry, page int, current string, includeSearch bool) *bus.StructuredContent {
+func renderMemoryEntryPage(
+	view, title string,
+	all []memory.CuratedEntry,
+	page int,
+	current string,
+	includeSearch bool,
+) *bus.StructuredContent {
 	page, pages, start, end := clampMemoryPage(len(all), page)
 	lines := make([]string, 0, memoryInteractionPageSize)
 	entries := make([]bus.InteractionEntry, 0, memoryInteractionPageSize+7)
@@ -768,9 +832,14 @@ func renderMemoryEntryPage(view, title string, all []memory.CuratedEntry, page i
 		}
 		entries = append(entries, bus.InteractionEntry{Action: "search", Label: label})
 	}
-	entries = append(entries, bus.InteractionEntry{Action: "dashboard", Label: "↩️ Kembali"}, bus.InteractionEntry{Action: "close", Label: "✖️ Tutup"})
+	entries = append(
+		entries,
+		bus.InteractionEntry{Action: "dashboard", Label: "↩️ Kembali"},
+		bus.InteractionEntry{Action: "close", Label: "✖️ Tutup"},
+	)
 	return &bus.StructuredContent{
-		Title: fmt.Sprintf("%s · %d/%d", title, page+1, pages), Paragraphs: []string{strings.Join(lines, "\n")},
+		Title:       fmt.Sprintf("%s · %d/%d", title, page+1, pages),
+		Paragraphs:  []string{strings.Join(lines, "\n")},
 		Interaction: &bus.InteractionMenu{Page: page, Pages: pages, Current: current, Entries: entries},
 	}
 }
@@ -799,7 +868,13 @@ func renderMemoryDetail(entry memory.CuratedEntry) *bus.StructuredContent {
 		bus.InteractionEntry{Action: "browse", Label: "↩️ Kembali"},
 		bus.InteractionEntry{Action: "close", Label: "✖️ Tutup"},
 	)
-	return &bus.StructuredContent{Title: "Memory Detail", Paragraphs: []string{strings.Join(lines, "\n")}, Interaction: &bus.InteractionMenu{Current: entry.ID, Entries: actions}}
+	return &bus.StructuredContent{
+		Title:      "Memory Detail",
+		Paragraphs: []string{strings.Join(lines, "\n")},
+		Interaction: &bus.InteractionMenu{
+			Current: entry.ID, Entries: actions,
+		},
+	}
 }
 
 func renderMemoryPendingPage(all []memory.PendingCuratedChange, page int) *bus.StructuredContent {
@@ -819,14 +894,26 @@ func renderMemoryPendingPage(all []memory.PendingCuratedChange, page int) *bus.S
 		lines = append(lines, "Tidak ada perubahan memori yang tertunda.")
 	}
 	if page > 0 {
-		entries = append(entries, bus.InteractionEntry{Action: "pending_page", Label: "◀️", Value: strconv.Itoa(page - 1)})
+		entries = append(entries, bus.InteractionEntry{
+			Action: "pending_page", Label: "◀️", Value: strconv.Itoa(page - 1),
+		})
 	}
 	entries = append(entries, bus.InteractionEntry{Action: "noop", Label: fmt.Sprintf("%d/%d", page+1, pages)})
 	if page+1 < pages {
-		entries = append(entries, bus.InteractionEntry{Action: "pending_page", Label: "▶️", Value: strconv.Itoa(page + 1)})
+		entries = append(entries, bus.InteractionEntry{
+			Action: "pending_page", Label: "▶️", Value: strconv.Itoa(page + 1),
+		})
 	}
-	entries = append(entries, bus.InteractionEntry{Action: "dashboard", Label: "↩️ Kembali"}, bus.InteractionEntry{Action: "close", Label: "✖️ Tutup"})
-	return &bus.StructuredContent{Title: fmt.Sprintf("Pending Memory · %d/%d", page+1, pages), Paragraphs: []string{strings.Join(lines, "\n")}, Interaction: &bus.InteractionMenu{Page: page, Pages: pages, Entries: entries}}
+	entries = append(
+		entries,
+		bus.InteractionEntry{Action: "dashboard", Label: "↩️ Kembali"},
+		bus.InteractionEntry{Action: "close", Label: "✖️ Tutup"},
+	)
+	return &bus.StructuredContent{
+		Title:       fmt.Sprintf("Pending Memory · %d/%d", page+1, pages),
+		Paragraphs:  []string{strings.Join(lines, "\n")},
+		Interaction: &bus.InteractionMenu{Page: page, Pages: pages, Entries: entries},
+	}
 }
 
 func formatUserProfile(profile memory.UserProfileSnapshot) string {
@@ -842,7 +929,10 @@ func formatUserProfile(profile memory.UserProfileSnapshot) string {
 				value = strings.TrimSpace(field.Content)
 			}
 			value = truncateMemoryCommandText(memory.RedactMemoryText(value), 480)
-			lines = append(lines, fmt.Sprintf("- %s = %s [%s, confidence %.2f, source %s]", field.Key, value, field.EvidenceKind, field.Confidence, field.SourceID))
+			lines = append(lines, fmt.Sprintf(
+				"- %s = %s [%s, confidence %.2f, source %s]",
+				field.Key, value, field.EvidenceKind, field.Confidence, field.SourceID,
+			))
 		}
 	}
 	appendFields("Identity", profile.Identity)
@@ -853,12 +943,17 @@ func formatUserProfile(profile memory.UserProfileSnapshot) string {
 	if len(lines) == 1 {
 		lines = append(lines, "- (empty)")
 	}
-	lines = append(lines, fmt.Sprintf("Profile size: %d characters; sources: %d", profile.Characters, len(profile.SourceIDs)))
+	lines = append(lines, fmt.Sprintf(
+		"Profile size: %d characters; sources: %d", profile.Characters, len(profile.SourceIDs),
+	))
 	return strings.Join(lines, "\n")
 }
 
 func formatMemoryStats(stats memory.CuratedStats) string {
-	return fmt.Sprintf("%s: %d entries, %d/%d characters, %d pending", stats.Target, stats.Entries, stats.Characters, stats.Capacity, stats.PendingCount)
+	return fmt.Sprintf(
+		"%s: %d entries, %d/%d characters, %d pending",
+		stats.Target, stats.Entries, stats.Characters, stats.Capacity, stats.PendingCount,
+	)
 }
 
 func formatMemoryEntries(workspace, user []memory.CuratedEntry) string {
@@ -879,7 +974,11 @@ func formatMemoryEntries(workspace, user []memory.CuratedEntry) string {
 			content := truncateMemoryCommandText(memory.RedactMemoryText(entry.Content), remainingChars)
 			remainingChars -= len([]rune(content))
 			remainingEntries--
-			lines = append(lines, fmt.Sprintf("- `%s` [%s/%s%s] — %s", entry.ID, entry.EffectiveType(), entry.EffectiveStatus(), map[bool]string{true: ", pinned"}[entry.Pinned], content))
+			lines = append(lines, fmt.Sprintf(
+				"- `%s` [%s/%s%s] — %s",
+				entry.ID, entry.EffectiveType(), entry.EffectiveStatus(),
+				map[bool]string{true: ", pinned"}[entry.Pinned], content,
+			))
 		}
 	}
 	appendEntries("Workspace memory:", workspace)
@@ -904,7 +1003,12 @@ func truncateMemoryCommandText(value string, maximum int) string {
 	return string(runes[:maximum-1]) + "…"
 }
 
-func findMemoryEntryTarget(store *memory.CuratedStore, caller memory.CallerScope, id string, includeCurrentUser bool) (string, error) {
+func findMemoryEntryTarget(
+	store *memory.CuratedStore,
+	caller memory.CallerScope,
+	id string,
+	includeCurrentUser bool,
+) (string, error) {
 	if store == nil {
 		return "", fmt.Errorf("memory is not available")
 	}
@@ -937,7 +1041,10 @@ func formatPendingMemory(workspace, user []memory.PendingCuratedChange) string {
 	var lines []string
 	appendPending := func(target string, changes []memory.PendingCuratedChange) {
 		for _, change := range changes {
-			lines = append(lines, fmt.Sprintf("- `%s` (%s, %d operation(s), %s)", change.ID, target, len(change.Mutations), change.CreatedAt.UTC().Format("2006-01-02 15:04Z")))
+			lines = append(lines, fmt.Sprintf(
+				"- `%s` (%s, %d operation(s), %s)",
+				change.ID, target, len(change.Mutations), change.CreatedAt.UTC().Format("2006-01-02 15:04Z"),
+			))
 		}
 	}
 	appendPending("workspace", workspace)
@@ -948,7 +1055,13 @@ func formatPendingMemory(workspace, user []memory.PendingCuratedChange) string {
 	return "Pending memory changes:\n" + strings.Join(lines, "\n")
 }
 
-func resolvePendingMemory(store *memory.CuratedStore, caller memory.CallerScope, id string, approve bool, includeCurrentUser bool) (int, error) {
+func resolvePendingMemory(
+	store *memory.CuratedStore,
+	caller memory.CallerScope,
+	id string,
+	approve bool,
+	includeCurrentUser bool,
+) (int, error) {
 	count := 0
 	found := false
 	targets := []string{memory.CuratedTargetWorkspace}
