@@ -107,6 +107,20 @@ func TestNormalizeProcessOptions_UsesDispatchAsSourceOfTruth(t *testing.T) {
 	if opts.SessionScope == nil || opts.SessionScope.AgentID != "support" {
 		t.Fatalf("SessionScope = %#v, want support scope", opts.SessionScope)
 	}
+	if opts.Dispatch.InboundContext == nil || opts.Dispatch.InboundContext.Account != "workspace-a" {
+		t.Fatalf("Dispatch.InboundContext.Account = %#v, want workspace-a", opts.Dispatch.InboundContext)
+	}
+}
+
+func TestNormalizeProcessOptions_PreservesExplicitInboundAccount(t *testing.T) {
+	opts := normalizeProcessOptions(processOptions{Dispatch: DispatchRequest{
+		InboundContext: &bus.InboundContext{Channel: "telegram", Account: "bot-b", ChatID: "42", SenderID: "42"},
+		RouteResult:    &routing.ResolvedRoute{AgentID: "main", Channel: "telegram", AccountID: "bot-a"},
+	}})
+
+	if opts.Dispatch.InboundContext == nil || opts.Dispatch.InboundContext.Account != "bot-b" {
+		t.Fatalf("explicit inbound account was overwritten: %#v", opts.Dispatch.InboundContext)
+	}
 }
 
 func TestNormalizeProcessOptions_InfersLegacyChatTypeFromSessionScope(t *testing.T) {

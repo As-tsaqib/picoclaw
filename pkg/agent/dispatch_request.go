@@ -101,6 +101,15 @@ func normalizeProcessOptions(opts processOptions) processOptions {
 			}
 		}
 	}
+	if opts.Dispatch.InboundContext != nil && opts.Dispatch.RouteResult != nil {
+		routeAccount := strings.TrimSpace(opts.Dispatch.RouteResult.AccountID)
+		inboundAccount := strings.TrimSpace(opts.Dispatch.InboundContext.Account)
+		if inboundAccount == "" && routeAccount != "" {
+			trustedInbound := cloneInboundContext(opts.Dispatch.InboundContext)
+			trustedInbound.Account = routeAccount
+			opts.Dispatch.InboundContext = trustedInbound
+		}
+	}
 
 	// Keep legacy mirrors populated while the rest of the runtime migrates.
 	opts.SessionKey = opts.Dispatch.SessionKey

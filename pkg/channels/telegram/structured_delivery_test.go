@@ -878,3 +878,213 @@ func TestNativeStructuredLimitsFallBackSafely(t *testing.T) {
 	_, ok = buildNativeRichMessage(tooManyBytes)
 	assert.False(t, ok)
 }
+
+func testMemoryStructuredContent() *bus.StructuredContent {
+	inbound := bus.InboundContext{Channel: "telegram", ChatID: "12345", ChatType: "direct", SenderID: "42"}
+	return &bus.StructuredContent{
+		Kind:  "memory_dashboard",
+		Title: "Personal Memory",
+		Paragraphs: []string{
+			"Workspace entries: 3",
+			"User entries: 12",
+			"Pending review: 1",
+		},
+		Fallback: "Personal Memory\nWorkspace entries: 3\nUser entries: 12\nPending review: 1",
+		Interaction: &bus.InteractionMenu{
+			Kind:    "memory",
+			OwnerID: "42",
+			Channel: "telegram",
+			ChatID:  "12345",
+			AgentID: "main",
+			Inbound: inbound,
+			Entries: []bus.InteractionEntry{
+				{Label: "👤 My Profile", Action: "profile"},
+				{Label: "📚 Browse", Action: "browse"},
+				{Label: "🔎 Search", Action: "search"},
+				{Label: "📝 Pending", Action: "pending"},
+				{Label: "✖️ Tutup", Action: "close"},
+			},
+		},
+	}
+}
+
+func TestMemoryStructuredContentAndKeyboard(t *testing.T) {
+	content := testMemoryStructuredContent()
+	caller := &stubCaller{callFn: func(_ context.Context, url string, _ *ta.RequestData) (*ta.Response, error) {
+		switch {
+		case strings.Contains(url, "answerCallbackQuery"):
+			return callbackSuccessResponse(t), nil
+		case strings.Contains(url, "editMessageText"):
+			return successResponseWithMessageID(t, 91), nil
+		default:
+			return successResponseWithMessageID(t, 91), nil
+		}
+	}}
+	ch := newTestChannel(t, caller)
+	markup, pending, err := ch.structuredReplyMarkup(content, 12345, 0)
+	require.NoError(t, err)
+	require.NotNil(t, markup)
+	require.NotNil(t, pending)
+	assert.Equal(t, "memory", pending.menu.Kind)
+
+	var capturedReq *bus.InternalCallbackRequest
+	ch.SetInternalCallbackHandler(
+		func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
+			capturedReq = &req
+			return &bus.InternalCallbackResponse{Content: content}, nil
+		},
+	)
+
+	pending.messageID = 91
+	ch.storeSessionMenu(*pending)
+
+	button := markup.InlineKeyboard[0][0] // profile button
+	require.True(t, len([]byte(button.CallbackData)) <= 64)
+	query := &telego.CallbackQuery{
+		ID: "mem-callback-1", From: telego.User{ID: 42}, Data: button.CallbackData,
+		Message: &telego.Message{MessageID: 91, Chat: telego.Chat{ID: 12345}},
+	}
+	require.NoError(t, ch.handleCallbackQuery(context.Background(), query))
+	require.NotNil(t, capturedReq)
+	assert.Equal(t, "memory", capturedReq.Kind)
+	assert.Equal(t, "profile", capturedReq.Action)
+	assert.Equal(t, "42", capturedReq.OwnerID)
+}
+
+func TestEphemeralFormattedStructuredFallback_ParseRejectionFallback(t *testing.T) {
+	const (
+		chatID      = int64(-10055)
+		threadID    = 7
+		ownerID     = int64(42)
+		ephemeralID = 77
+	)
+	sendCalls := 0
+	caller := &stubCaller{callFn: func(_ context.Context, url string, req *ta.RequestData) (*ta.Response, error) {
+		if strings.Contains(url, "sendMessage") {
+			sendCalls++
+			if sendCalls == 1 {
+				// Reject formatting first
+				return nil, errors.New("Bad Request: can't parse entities in message")
+			}
+			return successEphemeralResponse(t, chatID, threadID, ownerID, ephemeralID), nil
+		}
+		return nil, errors.New("unexpected API call " + url)
+	}}
+	ch := newTestChannel(t, caller)
+	target := mustRegisterEphemeralTarget(t, ch, chatID, threadID, ownerID, 0, "origin-callback")
+	content := testMemoryStructuredContent()
+	content.Interaction.ChatID = strconvFormatChat(chatID, threadID)
+	content.Interaction.TopicID = strconv.Itoa(threadID)
+	content.Interaction.OwnerID = strconv.FormatInt(ownerID, 10)
+	content.Interaction.Inbound = privateOutboundContext(target)
+	content.Interaction.Inbound.PrivateSession = true
+
+	ids, err := ch.sendStructuredContent(
+		context.Background(),
+		bus.OutboundMessage{Content: content.FallbackText(), Structured: content},
+		chatID,
+		threadID,
+		&target,
+	)
+	require.NoError(t, err)
+	require.Len(t, ids, 1)
+	assert.Equal(t, 2, sendCalls)
+	// Verify sendRichMessage was never called
+	for _, call := range caller.calls {
+		assert.NotContains(t, call.URL, "sendRichMessage")
+	}
+}
+
+func TestMemoryForceReply_SearchAndEditFlows(t *testing.T) {
+	const (
+		chatID             = int64(-10055)
+		threadID           = 7
+		ownerID            = int64(42)
+		dashboardMessageID = 77
+		promptMessageID    = 78
+	)
+	sendMessageCalls := 0
+	caller := &stubCaller{callFn: func(_ context.Context, url string, _ *ta.RequestData) (*ta.Response, error) {
+		switch {
+		case strings.Contains(url, "sendMessage"):
+			sendMessageCalls++
+			if sendMessageCalls == 1 {
+				return successEphemeralResponse(t, chatID, threadID, ownerID, dashboardMessageID), nil
+			}
+			return successEphemeralResponse(t, chatID, threadID, ownerID, promptMessageID), nil
+		case strings.Contains(url, "answerCallbackQuery"), strings.Contains(url, "editEphemeralMessageText"):
+			return callbackSuccessResponse(t), nil
+		default:
+			return nil, errors.New("unexpected API call " + url)
+		}
+	}}
+	ch := newTestChannel(t, caller)
+	messageBus := bus.NewMessageBus()
+	ch.BaseChannel = channels.NewBaseChannel("telegram", nil, messageBus, nil)
+	target := mustRegisterEphemeralTarget(t, ch, chatID, threadID, ownerID, 0, "origin-callback")
+	content := testMemoryStructuredContent()
+	content.Interaction.ChatID = strconvFormatChat(chatID, threadID)
+	content.Interaction.TopicID = strconv.Itoa(threadID)
+	content.Interaction.OwnerID = strconv.FormatInt(ownerID, 10)
+	content.Interaction.Inbound = privateOutboundContext(target)
+	content.Interaction.Inbound.PrivateSession = true
+
+	_, err := ch.sendStructuredContent(
+		context.Background(),
+		bus.OutboundMessage{Content: content.FallbackText(), Structured: content},
+		chatID,
+		threadID,
+		&target,
+	)
+	require.NoError(t, err)
+
+	var capturedReq *bus.InternalCallbackRequest
+	ch.SetInternalCallbackHandler(
+		func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
+			capturedReq = &req
+			if strings.TrimSpace(req.Value) == "" {
+				return &bus.InternalCallbackResponse{Text: "Balas prompt pencarian."}, nil
+			}
+			updated := testMemoryStructuredContent()
+			updated.Title = "Hasil Pencarian: " + req.Value
+			return &bus.InternalCallbackResponse{Content: updated}, nil
+		},
+	)
+
+	var sent struct {
+		ReplyMarkup telego.InlineKeyboardMarkup `json:"reply_markup"`
+	}
+	require.NoError(t, json.Unmarshal(caller.calls[0].Data.BodyRaw, &sent))
+	searchBtn := findInlineButton(t, &sent.ReplyMarkup, "🔎 Search")
+
+	// 1. User clicks Search
+	require.NoError(t, ch.handleCallbackQuery(context.Background(), &telego.CallbackQuery{
+		ID: "search-click", From: telego.User{ID: ownerID}, Data: searchBtn.CallbackData,
+		Message: &telego.Message{
+			EphemeralMessageID: dashboardMessageID, MessageThreadID: threadID,
+			Chat: telego.Chat{ID: chatID, Type: telego.ChatTypeSupergroup, IsForum: true},
+		},
+	}))
+
+	// 2. User replies to ForceReply
+	reply := &telego.Message{
+		EphemeralMessageID: 80, MessageThreadID: threadID,
+		From: &telego.User{ID: ownerID}, Text: "golang concurrency",
+		Chat: telego.Chat{ID: chatID, Type: telego.ChatTypeSupergroup, IsForum: true},
+		ReplyToMessage: &telego.Message{
+			EphemeralMessageID: promptMessageID, MessageThreadID: threadID,
+			Chat: telego.Chat{ID: chatID},
+		},
+	}
+	require.NoError(t, ch.handleMessage(context.Background(), reply))
+	require.NotNil(t, capturedReq)
+	assert.Equal(t, "search", capturedReq.Action)
+	assert.Equal(t, "golang concurrency", capturedReq.Value)
+
+	// 3. Ensure no message leaked to inbound agent bus
+	select {
+	case inbound := <-messageBus.InboundChan():
+		t.Fatalf("search reply leaked to agent bus: %+v", inbound)
+	default:
+	}
+}

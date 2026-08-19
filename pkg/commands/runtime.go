@@ -101,4 +101,13 @@ type Runtime struct {
 	CheckpointForget   func(id string) (string, error)
 	SessionCommand     SessionCommandHandler
 	ModelCommand       ModelCommandHandler
+	MemoryCommand      MemoryCommandHandler
 }
+
+type MemoryCommandRequest struct {
+	Operation string
+	Argument  string
+	Content   string
+}
+
+type MemoryCommandHandler func(context.Context, MemoryCommandRequest) (*bus.StructuredContent, error)
