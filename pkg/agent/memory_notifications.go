@@ -10,11 +10,19 @@ import (
 
 	"github.com/As-tsaqib/picoclaw/pkg/bus"
 	"github.com/As-tsaqib/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/logger"
 	"github.com/As-tsaqib/picoclaw/pkg/memory"
 	"github.com/As-tsaqib/picoclaw/pkg/tools"
 )
 
+const (
+	memoryNotificationStoragePrefix = "\x00memory-notification:"
+	memoryNotificationAdhocFallback = 50 * time.Millisecond
+	memoryNotificationSafetyMargin  = 5 * time.Second
+)
+
 type turnNotificationEntry struct {
+	mu      sync.Mutex
 	turnKey string
 	caller  memory.CallerScope
 	channel string
@@ -25,25 +33,15 @@ type turnNotificationEntry struct {
 	pending []memory.CuratedMutation
 	applied []memory.CuratedEntry
 	timer   *time.Timer
+	closed  bool
 }
 
-var memoryTurnAggregator = struct {
-	sync.Mutex
-	items map[string]*turnNotificationEntry
-}{items: make(map[string]*turnNotificationEntry)}
+// resetMemoryTurnAggregatorForTest is retained for source compatibility with
+// older tests. Notification state is now owned by each AgentLoop, so there is
+// no package-global accumulator to reset.
+func resetMemoryTurnAggregatorForTest() {}
 
-func resetMemoryTurnAggregatorForTest() {
-	memoryTurnAggregator.Lock()
-	defer memoryTurnAggregator.Unlock()
-	for _, entry := range memoryTurnAggregator.items {
-		if entry.timer != nil {
-			entry.timer.Stop()
-		}
-	}
-	memoryTurnAggregator.items = make(map[string]*turnNotificationEntry)
-}
-
-func (al *AgentLoop) memoryChangeNotification(ctx context.Context, event tools.MemoryChangeEvent) {
+func (al *AgentLoop) memoryChangeNotification(_ context.Context, event tools.MemoryChangeEvent) {
 	if al == nil || al.bus == nil || al.cfg == nil {
 		return
 	}
@@ -61,18 +59,16 @@ func (al *AgentLoop) memoryChangeNotification(ctx context.Context, event tools.M
 	if turnID == "" {
 		turnID = strings.TrimSpace(event.Caller.MessageRef)
 	}
+	stableLogicalTurn := turnID != "" && strings.TrimSpace(event.Caller.SessionKey) != ""
 	if turnID == "" {
 		turnID = fmt.Sprintf("adhoc-%d", time.Now().UnixNano())
 	}
 
 	key := strings.Join([]string{event.Caller.AgentID, event.Caller.UserKey, event.Caller.SessionRef, turnID}, "|")
+	storageKey := memoryNotificationStorageKey(key)
 
-	memoryTurnAggregator.Lock()
-	defer memoryTurnAggregator.Unlock()
-
-	entry, exists := memoryTurnAggregator.items[key]
-	if !exists {
-		entry = &turnNotificationEntry{
+	for {
+		candidate := &turnNotificationEntry{
 			turnKey: key,
 			caller:  event.Caller,
 			channel: event.Caller.Channel,
@@ -81,21 +77,53 @@ func (al *AgentLoop) memoryChangeNotification(ctx context.Context, event tools.M
 			topicID: event.Caller.TopicID,
 			target:  event.Target,
 		}
-		memoryTurnAggregator.items[key] = entry
-	}
+		actual, loaded := al.pendingMemoryDeliveries.LoadOrStore(storageKey, candidate)
+		entry := candidate
+		if loaded {
+			var ok bool
+			entry, ok = actual.(*turnNotificationEntry)
+			if !ok {
+				// The NUL-prefixed key is reserved for notification state, so a
+				// different value indicates an internal collision. Fail closed.
+				return
+			}
+		}
 
-	if event.Result.Pending != nil {
-		entry.pending = append(entry.pending, event.Result.Pending.Mutations...)
+		entry.mu.Lock()
+		if entry.closed {
+			entry.mu.Unlock()
+			al.pendingMemoryDeliveries.CompareAndDelete(storageKey, entry)
+			continue
+		}
+		if event.Result.Pending != nil {
+			entry.pending = append(entry.pending, event.Result.Pending.Mutations...)
+		}
+		entry.applied = append(entry.applied, event.Result.Applied...)
+		if entry.timer == nil {
+			delay := memoryNotificationSafetyDelay(al.cfg, stableLogicalTurn)
+			entry.timer = time.AfterFunc(delay, func() {
+				al.flushTurnNotification(key)
+			})
+		}
+		entry.mu.Unlock()
+		return
 	}
-	entry.applied = append(entry.applied, event.Result.Applied...)
+}
 
-	if entry.timer != nil {
-		entry.timer.Stop()
+func memoryNotificationStorageKey(key string) string {
+	return memoryNotificationStoragePrefix + key
+}
+
+func memoryNotificationSafetyDelay(cfg *config.Config, stableLogicalTurn bool) time.Duration {
+	if !stableLogicalTurn || cfg == nil {
+		return memoryNotificationAdhocFallback
 	}
-
-	entry.timer = time.AfterFunc(50*time.Millisecond, func() {
-		al.flushTurnNotification(key)
-	})
+	// Correctness is driven by recordAndMaybeReviewMemory/startMemoryReview,
+	// which flush when the reviewer is not scheduled or when it completes.
+	// This timer exists only to bound orphaned state if that lifecycle is
+	// interrupted unexpectedly, and intentionally exceeds the reviewer timeout.
+	return time.Duration(cfg.Memory.BackgroundReview.EffectiveTimeoutSeconds())*time.Second +
+		memoryNotificationSafetyMargin
 }
 
 func (al *AgentLoop) flushTurnNotificationByTurnID(agentID string, caller memory.CallerScope, turnID string) {
@@ -114,20 +142,44 @@ func (al *AgentLoop) flushTurnNotificationByTurnID(agentID string, caller memory
 }
 
 func (al *AgentLoop) flushTurnNotification(key string) {
-	memoryTurnAggregator.Lock()
-	entry, exists := memoryTurnAggregator.items[key]
-	if !exists {
-		memoryTurnAggregator.Unlock()
+	if al == nil {
 		return
 	}
+	storageKey := memoryNotificationStorageKey(key)
+	value, exists := al.pendingMemoryDeliveries.Load(storageKey)
+	if !exists {
+		return
+	}
+	entry, ok := value.(*turnNotificationEntry)
+	if !ok {
+		return
+	}
+
+	entry.mu.Lock()
+	if entry.closed {
+		entry.mu.Unlock()
+		return
+	}
+	entry.closed = true
 	if entry.timer != nil {
 		entry.timer.Stop()
 		entry.timer = nil
 	}
-	delete(memoryTurnAggregator.items, key)
-	memoryTurnAggregator.Unlock()
+	snapshot := &turnNotificationEntry{
+		turnKey: entry.turnKey,
+		caller:  entry.caller,
+		channel: entry.channel,
+		account: entry.account,
+		chatID:  entry.chatID,
+		topicID: entry.topicID,
+		target:  entry.target,
+		pending: append([]memory.CuratedMutation(nil), entry.pending...),
+		applied: append([]memory.CuratedEntry(nil), entry.applied...),
+	}
+	entry.mu.Unlock()
+	al.pendingMemoryDeliveries.CompareAndDelete(storageKey, entry)
 
-	if len(entry.applied) == 0 && len(entry.pending) == 0 {
+	if len(snapshot.applied) == 0 && len(snapshot.pending) == 0 {
 		return
 	}
 
@@ -137,32 +189,32 @@ func (al *AgentLoop) flushTurnNotification(key string) {
 	}
 
 	message := "💾 Memory updated"
-	if len(entry.applied) == 0 && len(entry.pending) > 0 {
+	if len(snapshot.applied) == 0 && len(snapshot.pending) > 0 {
 		message = "💾 Memory change pending approval"
 	}
 
 	if mode == config.MemoryNotificationVerbose {
-		message += formatAggregatedMemoryPreview(entry)
+		message += formatAggregatedMemoryPreview(snapshot)
 	}
 
 	outboundCtx := bus.InboundContext{
-		Channel: entry.channel,
-		Account: entry.account,
-		ChatID:  entry.chatID,
-		TopicID: entry.topicID,
+		Channel: snapshot.channel,
+		Account: snapshot.account,
+		ChatID:  snapshot.chatID,
+		TopicID: snapshot.topicID,
 		Raw:     map[string]string{"memory_notification": "true"},
 	}
 
-	go func() {
-		pubCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
-			Context:    outboundCtx,
-			AgentID:    entry.caller.AgentID,
-			SessionKey: entry.caller.SessionKey,
-			Content:    message,
-		})
-	}()
+	pubCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
+		Context:    outboundCtx,
+		AgentID:    snapshot.caller.AgentID,
+		SessionKey: snapshot.caller.SessionKey,
+		Content:    message,
+	}); err != nil {
+		logger.WarnCF("memory", "Memory notification publish failed", map[string]any{"error": err.Error()})
+	}
 }
 
 func formatAggregatedMemoryPreview(entry *turnNotificationEntry) string {
