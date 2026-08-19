@@ -1,0 +1,110 @@
+name: PR16 Capability Policy Hardening
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/pr16-capability-policy.yml
+      - .github/scripts/pr16_capability_policy_fix.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr16-capability-policy-hardening
+  cancel-in-progress: true
+
+jobs:
+  fix-validate-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout published feature branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: feat/native-telegram-capabilities-memory-hardening
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install repository linter version
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1
+
+      - name: Apply capability policy hardening
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 .github/scripts/pr16_capability_policy_fix.py
+          golangci-lint fmt
+          git restore --source=HEAD -- pkg/providers/bedrock/provider_bedrock.go
+          python3 <<'PY'
+          import subprocess
+
+          allowed = {
+              "pkg/config/config.go",
+              "pkg/config/defaults.go",
+              "pkg/config/native_telegram_tools_test.go",
+              "pkg/capability/capability.go",
+              "pkg/capability/capability_policy_test.go",
+              "pkg/agent/pipeline_llm.go",
+              "pkg/agent/prompt.go",
+              "pkg/agent/prompt_turn.go",
+              "pkg/agent/prompt_contributors.go",
+              "pkg/agent/capability_policy_test.go",
+          }
+          changed = set(filter(None, subprocess.check_output(
+              ["git", "diff", "--name-only"], text=True
+          ).splitlines()))
+          unexpected = changed - allowed
+          missing = {
+              "pkg/config/config.go",
+              "pkg/config/defaults.go",
+              "pkg/capability/capability.go",
+              "pkg/agent/pipeline_llm.go",
+              "pkg/agent/prompt.go",
+              "pkg/agent/prompt_turn.go",
+              "pkg/agent/prompt_contributors.go",
+          } - changed
+          if unexpected:
+              raise SystemExit(f"formatter touched unexpected files: {sorted(unexpected)}")
+          if missing:
+              raise SystemExit(f"required capability-policy fixes missing: {sorted(missing)}")
+          print("validated changed files:", *sorted(changed), sep="\n- ")
+          PY
+
+      - name: Targeted policy tests
+        run: go test ./pkg/config ./pkg/capability ./pkg/agent
+
+      - name: Broader native regression tests
+        run: go test ./pkg/tools ./pkg/channels ./pkg/channels/telegram
+
+      - name: Exact repository linter
+        run: golangci-lint run --build-tags=goolm,stdjson
+
+      - name: Commit and push validated policy hardening
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            pkg/config/config.go \
+            pkg/config/defaults.go \
+            pkg/config/native_telegram_tools_test.go \
+            pkg/capability/capability.go \
+            pkg/capability/capability_policy_test.go \
+            pkg/agent/pipeline_llm.go \
+            pkg/agent/prompt.go \
+            pkg/agent/prompt_turn.go \
+            pkg/agent/prompt_contributors.go \
+            pkg/agent/capability_policy_test.go
+          if git diff --cached --quiet; then
+            echo "Expected validated capability-policy diff but staged diff is empty"
+            exit 1
+          fi
+          git commit -m "fix: apply native capability admin policy"
+          git push origin HEAD:feat/native-telegram-capabilities-memory-hardening
