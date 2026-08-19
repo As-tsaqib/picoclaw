@@ -1,0 +1,1246 @@
+name: PR16 Final Hardening Helper
+
+on:
+  push:
+    branches:
+      - feat/native-telegram-capabilities-memory-hardening
+    paths:
+      - .github/workflows/pr16-final-hardening.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/frontend/pnpm-lock.yaml
+
+      - name: Apply final hardening patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"expected snippet not found in {path}: {old[:120]!r}")
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected exactly one snippet in {path}, got {text.count(old)}")
+              p.write_text(text.replace(old, new, 1))
+
+          # Capability truth + transient downgrade hardening.
+          replace_once(
+              "pkg/capability/capability.go",
+              '''\t// Distinguish genuine unsupported method from transient network/auth/rate-limit errors
+\t// Do NOT downgrade on 401, 403, 429, timeout, network error
+\tif strings.Contains(errStr, "401") || strings.Contains(errStr, "403") ||
+\t\tstrings.Contains(errStr, "429") || strings.Contains(errStr, "too many requests") ||
+\t\tstrings.Contains(errStr, "timeout") || strings.Contains(errStr, "connection refused") ||
+\t\tstrings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "forbidden") {
+\t\treturn false
+\t}
+''',
+              '''\t// Distinguish genuine unsupported method/field responses from transient
+\t// transport, authentication, rate-limit, and server failures. A temporary
+\t// outage must never poison capability truth for the cache TTL.
+\tif strings.Contains(errStr, "401") || strings.Contains(errStr, "403") ||
+\t\tstrings.Contains(errStr, "429") || strings.Contains(errStr, "too many requests") ||
+\t\tstrings.Contains(errStr, "timeout") || strings.Contains(errStr, "timed out") ||
+\t\tstrings.Contains(errStr, "connection refused") || strings.Contains(errStr, "connection reset") ||
+\t\tstrings.Contains(errStr, "network is unreachable") || strings.Contains(errStr, "no such host") ||
+\t\tstrings.Contains(errStr, "temporary failure") || strings.Contains(errStr, "unauthorized") ||
+\t\tstrings.Contains(errStr, "forbidden") || containsHTTP5xx(errStr) {
+\t\treturn false
+\t}
+''')
+          replace_once(
+              "pkg/capability/capability.go",
+              '''func (c *NegativeCapabilityCache) RecordFailure(channel, account, serverID string, feature Feature, err error) bool {
+''',
+              '''func containsHTTP5xx(value string) bool {
+\tfor i := 0; i+2 < len(value); i++ {
+\t\tif value[i] != '5' || value[i+1] < '0' || value[i+1] > '9' || value[i+2] < '0' || value[i+2] > '9' {
+\t\t\tcontinue
+\t\t}
+\t\tbeforeDigit := i > 0 && value[i-1] >= '0' && value[i-1] <= '9'
+\t\tafterDigit := i+3 < len(value) && value[i+3] >= '0' && value[i+3] <= '9'
+\t\tif !beforeDigit && !afterDigit {
+\t\t\treturn true
+\t\t}
+\t}
+\treturn false
+}
+
+func (c *NegativeCapabilityCache) RecordFailure(channel, account, serverID string, feature Feature, err error) bool {
+''')
+          replace_once("pkg/capability/capability.go", "\t\t\tFeatureMessageStreamText,\n", "")
+          replace_once(
+              "pkg/capability/capability.go",
+              "\t\t\tFeatureMediaVideoNote,\n\t\t\tFeatureLocationPoint,\n",
+              "\t\t\tFeatureMediaVideoNote,\n\t\t\tFeatureMediaLivePhoto,\n\t\t\tFeatureLocationPoint,\n")
+          replace_once(
+              "pkg/capability/capability.go",
+              '''\t\t// Ephemeral delivery is conditional
+\t\tif route.IsEphemeral {
+\t\t\tset[FeatureMessageEphemeral] = CapabilityInfo{State: StateSupported}
+\t\t} else {
+\t\t\tset[FeatureMessageEphemeral] = CapabilityInfo{State: StateConditional, Condition: "ephemeral_route"}
+\t\t}
+
+\t\t// Checklist requires business connection
+\t\tif route.HasBusinessContext {
+\t\t\tset[FeatureChecklistNative] = CapabilityInfo{State: StateSupported}
+\t\t} else {
+\t\t\tset[FeatureChecklistNative] = CapabilityInfo{State: StateConditional, Condition: "business_connection"}
+\t\t}
+\t\tset[FeatureMediaLivePhoto] = CapabilityInfo{State: StateUnsupported, Condition: "not_implemented"}
+\t\tset[FeaturePollMedia] = CapabilityInfo{State: StateUnsupported, Condition: "not_implemented"}
+
+\t\t// Rich stream draft
+\t\tif cache != nil && cache.IsDowngraded(route.Channel, route.Account, route.ServerID, FeatureMessageStreamRich) {
+\t\t\tset[FeatureMessageStreamRich] = CapabilityInfo{State: StateUnsupported}
+\t\t} else {
+\t\t\tset[FeatureMessageStreamRich] = CapabilityInfo{State: StateUnsupported, Condition: "text_draft_only"}
+\t\t}
+''',
+              '''\t\t// Draft streaming deliberately fails closed on callback-private routes:
+\t\t// the draft APIs do not carry the receiver/callback authority required by
+\t\t// an ephemeral response. Persistent Telegram routes support both text and
+\t\t// typed rich drafts.
+\t\tif route.IsEphemeral {
+\t\t\tset[FeatureMessageStreamText] = CapabilityInfo{State: StateConditional, Condition: "non_ephemeral_route"}
+\t\t\tset[FeatureMessageStreamRich] = CapabilityInfo{State: StateConditional, Condition: "non_ephemeral_route"}
+\t\t\tset[FeatureMessageEphemeral] = CapabilityInfo{State: StateSupported}
+\t\t} else {
+\t\t\tset[FeatureMessageStreamText] = CapabilityInfo{State: StateSupported}
+\t\t\tif cache != nil && cache.IsDowngraded(route.Channel, route.Account, route.ServerID, FeatureMessageStreamRich) {
+\t\t\t\tset[FeatureMessageStreamRich] = CapabilityInfo{State: StateUnsupported, Condition: "downgraded_by_server"}
+\t\t\t} else {
+\t\t\t\tset[FeatureMessageStreamRich] = CapabilityInfo{State: StateSupported}
+\t\t\t}
+\t\t\tset[FeatureMessageEphemeral] = CapabilityInfo{State: StateConditional, Condition: "ephemeral_route"}
+\t\t}
+
+\t\t// Reply keyboards and checklists have no executable semantic path in
+\t\t// PicoClaw yet. In particular, a caller-supplied HasBusinessContext flag
+\t\t// must not turn checklist support on until trusted business authority is
+\t\t// carried end-to-end by the channel runtime.
+\t\tset[FeatureKeyboardReply] = CapabilityInfo{State: StateUnsupported, Condition: "not_implemented"}
+\t\tset[FeatureChecklistNative] = CapabilityInfo{State: StateConditional, Condition: "context_unavailable"}
+\t\tset[FeaturePollMedia] = CapabilityInfo{State: StateUnsupported, Condition: "not_implemented"}
+''')
+          replace_once(
+              "pkg/capability/capability.go",
+              '\t\t{FeatureMediaVideoNote, "video_note"},\n\t\t{FeatureLocationPoint, "location"},\n',
+              '\t\t{FeatureMediaVideoNote, "video_note"},\n\t\t{FeatureMediaLivePhoto, "live_photo"},\n\t\t{FeatureLocationPoint, "location"},\n')
+
+          # Tool reachability for Live Photo.
+          replace_once(
+              "pkg/agent/instance.go",
+              '''\tif cfg.Tools.IsToolEnabled("send_dice") {
+\t\ttoolsRegistry.Register(tools.NewSendDiceTool())
+\t}
+''',
+              '''\tif cfg.Tools.IsToolEnabled("send_dice") {
+\t\ttoolsRegistry.Register(tools.NewSendDiceTool())
+\t}
+\tif cfg.Tools.IsToolEnabled("send_live_photo") {
+\t\ttoolsRegistry.Register(tools.NewSendLivePhotoTool())
+\t}
+''')
+          replace_once(
+              "pkg/agent/pipeline_llm.go",
+              '''\tcase "send_dice":
+\t\treturn capSet.IsSupported(capability.FeatureDiceAnimated)
+\tdefault:
+''',
+              '''\tcase "send_dice":
+\t\treturn capSet.IsSupported(capability.FeatureDiceAnimated)
+\tcase "send_live_photo":
+\t\treturn capSet.IsSupported(capability.FeatureMediaLivePhoto)
+\tdefault:
+''')
+
+          # Migration-only metadata is process-local and never model-controlled.
+          replace_once(
+              "pkg/memory/curated_types.go",
+              '''\tLastConfirmedAt  *time.Time `json:"last_confirmed_at,omitempty"`
+\tProvenance       Provenance `json:"provenance"`
+}
+''',
+              '''\tLastConfirmedAt  *time.Time `json:"last_confirmed_at,omitempty"`
+\tProvenance       Provenance `json:"provenance"`
+
+\t// migrationPreserveMetadata is intentionally unexported. It allows the
+\t// trusted legacy-store migration path to retain historical timestamps,
+\t// counts, pin state, and provenance without exposing those controls to LLM
+\t// tool arguments or management JSON.
+\tmigrationPreserveMetadata bool
+\tmigrationCreatedAt        time.Time
+\tmigrationUpdatedAt        time.Time
+\tmigrationPinned           bool
+}
+''')
+
+          # Preserve migration metadata in the existing mutation engine.
+          replace_once(
+              "pkg/memory/curated_store.go",
+              '''\t\tmutation.Provenance.RecordedAt = now
+\t\tprepared = append(prepared, mutation)
+''',
+              '''\t\tif !mutation.migrationPreserveMetadata || mutation.Provenance.RecordedAt.IsZero() {
+\t\t\tmutation.Provenance.RecordedAt = now
+\t\t}
+\t\tprepared = append(prepared, mutation)
+''')
+          replace_once(
+              "pkg/memory/curated_store.go",
+              '''\t\t\tentry := CuratedEntry{
+\t\t\t\tID:               mutation.ID,
+\t\t\t\tContent:          mutation.Content,
+\t\t\t\tType:             NormalizeCuratedType(mutation.Type),
+\t\t\t\tStatus:           CuratedStatusActive,
+\t\t\t\tConfidence:       DefaultConfidenceForEvidence(evidence),
+''',
+              '''\t\t\tcreatedAt, updatedAt := now, now
+\t\t\tif mutation.migrationPreserveMetadata {
+\t\t\t\tif !mutation.migrationCreatedAt.IsZero() {
+\t\t\t\t\tcreatedAt = mutation.migrationCreatedAt
+\t\t\t\t}
+\t\t\t\tif !mutation.migrationUpdatedAt.IsZero() {
+\t\t\t\t\tupdatedAt = mutation.migrationUpdatedAt
+\t\t\t\t}
+\t\t\t}
+\t\t\tentry := CuratedEntry{
+\t\t\t\tID:               mutation.ID,
+\t\t\t\tContent:          mutation.Content,
+\t\t\t\tType:             NormalizeCuratedType(mutation.Type),
+\t\t\t\tStatus:           CuratedStatusActive,
+\t\t\t\tPinned:           mutation.migrationPinned,
+\t\t\t\tConfidence:       DefaultConfidenceForEvidence(evidence),
+''')
+          replace_once(
+              "pkg/memory/curated_store.go",
+              '''\t\t\t\tProvenance:       mutation.Provenance,
+\t\t\t\tCreatedAt:        now,
+\t\t\t\tUpdatedAt:        now,
+''',
+              '''\t\t\t\tProvenance:       mutation.Provenance,
+\t\t\t\tCreatedAt:        createdAt,
+\t\t\t\tUpdatedAt:        updatedAt,
+''')
+          replace_once(
+              "pkg/memory/curated_store.go",
+              '''\t\t\tif entry.EvidenceCount == 0 {
+\t\t\t\tentry.EvidenceCount = 1
+\t\t\t}
+\t\t\tif evidence == CuratedEvidenceObserved && entry.ObservationCount == 0 {
+\t\t\t\tentry.ObservationCount = entry.EvidenceCount
+\t\t\t}
+\t\t\tif entry.LastConfirmedAt == nil && entry.LastVerifiedAt != nil {
+\t\t\t\tentry.LastConfirmedAt = entry.LastVerifiedAt
+\t\t\t}
+\t\t\tif evidence == CuratedEvidenceExplicit && entry.LastConfirmedAt == nil {
+\t\t\t\tconfirmed := now
+\t\t\t\tentry.LastConfirmedAt = &confirmed
+\t\t\t\tentry.LastVerifiedAt = &confirmed
+\t\t\t}
+''',
+              '''\t\t\tif !mutation.migrationPreserveMetadata {
+\t\t\t\tif entry.EvidenceCount == 0 {
+\t\t\t\t\tentry.EvidenceCount = 1
+\t\t\t\t}
+\t\t\t\tif evidence == CuratedEvidenceObserved && entry.ObservationCount == 0 {
+\t\t\t\t\tentry.ObservationCount = entry.EvidenceCount
+\t\t\t\t}
+\t\t\t\tif entry.LastConfirmedAt == nil && entry.LastVerifiedAt != nil {
+\t\t\t\t\tentry.LastConfirmedAt = entry.LastVerifiedAt
+\t\t\t\t}
+\t\t\t\tif evidence == CuratedEvidenceExplicit && entry.LastConfirmedAt == nil {
+\t\t\t\t\tconfirmed := now
+\t\t\t\t\tentry.LastConfirmedAt = &confirmed
+\t\t\t\t\tentry.LastVerifiedAt = &confirmed
+\t\t\t\t}
+\t\t\t}
+''')
+          replace_once(
+              "pkg/memory/curated_store.go",
+              '''\t\t\tif mutation.EvidenceCount > 0 {
+\t\t\t\tentries[idx].EvidenceCount = mutation.EvidenceCount
+\t\t\t}
+\t\t\tif mutation.ObservationCount > 0 {
+\t\t\t\tentries[idx].ObservationCount = mutation.ObservationCount
+\t\t\t}
+''',
+              '''\t\t\tif mutation.migrationPreserveMetadata {
+\t\t\t\tentries[idx].EvidenceCount = mutation.EvidenceCount
+\t\t\t\tentries[idx].ObservationCount = mutation.ObservationCount
+\t\t\t\tentries[idx].Pinned = mutation.migrationPinned
+\t\t\t\tif !mutation.migrationCreatedAt.IsZero() {
+\t\t\t\t\tentries[idx].CreatedAt = mutation.migrationCreatedAt
+\t\t\t\t}
+\t\t\t} else {
+\t\t\t\tif mutation.EvidenceCount > 0 {
+\t\t\t\t\tentries[idx].EvidenceCount = mutation.EvidenceCount
+\t\t\t\t}
+\t\t\t\tif mutation.ObservationCount > 0 {
+\t\t\t\t\tentries[idx].ObservationCount = mutation.ObservationCount
+\t\t\t\t}
+\t\t\t}
+''')
+          replace_once(
+              "pkg/memory/curated_store.go",
+              '''\t\t\tif mutation.LastConfirmedAt != nil {
+\t\t\t\tentries[idx].LastConfirmedAt = mutation.LastConfirmedAt
+\t\t\t\tentries[idx].LastVerifiedAt = mutation.LastConfirmedAt
+\t\t\t} else if mutation.LastVerifiedAt != nil {
+\t\t\t\tentries[idx].LastVerifiedAt = mutation.LastVerifiedAt
+\t\t\t\tentries[idx].LastConfirmedAt = mutation.LastVerifiedAt
+\t\t\t} else if NormalizeEvidenceKind(mutation.EvidenceKind) == CuratedEvidenceExplicit {
+\t\t\t\t// Only a mutation that explicitly carries direct-user evidence refreshes
+\t\t\t\t// confirmation. A curator rewrite of an existing explicit memory does not.
+\t\t\t\tconfirmed := now
+\t\t\t\tentries[idx].LastConfirmedAt = &confirmed
+\t\t\t\tentries[idx].LastVerifiedAt = &confirmed
+\t\t\t} else if mutation.EvidenceKind != "" {
+\t\t\t\tentries[idx].LastConfirmedAt = nil
+\t\t\t\tentries[idx].LastVerifiedAt = nil
+\t\t\t}
+''',
+              '''\t\t\tif mutation.migrationPreserveMetadata {
+\t\t\t\tentries[idx].LastConfirmedAt = mutation.LastConfirmedAt
+\t\t\t\tentries[idx].LastVerifiedAt = mutation.LastVerifiedAt
+\t\t\t} else if mutation.LastConfirmedAt != nil {
+\t\t\t\tentries[idx].LastConfirmedAt = mutation.LastConfirmedAt
+\t\t\t\tentries[idx].LastVerifiedAt = mutation.LastConfirmedAt
+\t\t\t} else if mutation.LastVerifiedAt != nil {
+\t\t\t\tentries[idx].LastVerifiedAt = mutation.LastVerifiedAt
+\t\t\t\tentries[idx].LastConfirmedAt = mutation.LastVerifiedAt
+\t\t\t} else if NormalizeEvidenceKind(mutation.EvidenceKind) == CuratedEvidenceExplicit {
+\t\t\t\t// Only a mutation that explicitly carries direct-user evidence refreshes
+\t\t\t\t// confirmation. A curator rewrite of an existing explicit memory does not.
+\t\t\t\tconfirmed := now
+\t\t\t\tentries[idx].LastConfirmedAt = &confirmed
+\t\t\t\tentries[idx].LastVerifiedAt = &confirmed
+\t\t\t} else if mutation.EvidenceKind != "" {
+\t\t\t\tentries[idx].LastConfirmedAt = nil
+\t\t\t\tentries[idx].LastVerifiedAt = nil
+\t\t\t}
+''')
+          replace_once(
+              "pkg/memory/curated_store.go",
+              '''\t\t\tentries[idx].Provenance = mutation.Provenance
+\t\t\tentries[idx].UpdatedAt = now
+''',
+              '''\t\t\tentries[idx].Provenance = mutation.Provenance
+\t\t\tentries[idx].UpdatedAt = now
+\t\t\tif mutation.migrationPreserveMetadata && !mutation.migrationUpdatedAt.IsZero() {
+\t\t\t\tentries[idx].UpdatedAt = mutation.migrationUpdatedAt
+\t\t\t}
+''')
+
+          # Replace the process-global unbounded lock map with a ref-counted registry.
+          replace_once(
+              "pkg/memory/curated_store.go",
+              "var curatedDocumentLocks sync.Map\n",
+              '''type curatedDocumentLockEntry struct {
+\tmu   sync.Mutex
+\trefs int
+}
+
+var curatedDocumentLocks = struct {
+\tsync.Mutex
+\tentries map[string]*curatedDocumentLockEntry
+}{entries: make(map[string]*curatedDocumentLockEntry)}
+''')
+          lock_pattern = re.compile(r'''func lockCuratedDocument\(path string\) \(func\(\), error\) \{.*?\n\}\n\nfunc curatedDocumentLockPath''', re.S)
+          p = Path("pkg/memory/curated_store.go")
+          text = p.read_text()
+          new_lock = '''func lockCuratedDocument(path string) (func(), error) {
+\tcuratedDocumentLocks.Lock()
+\tentry := curatedDocumentLocks.entries[path]
+\tif entry == nil {
+\t\tentry = &curatedDocumentLockEntry{}
+\t\tcuratedDocumentLocks.entries[path] = entry
+\t}
+\tentry.refs++
+\tcuratedDocumentLocks.Unlock()
+
+\treleaseRef := func() {
+\t\tcuratedDocumentLocks.Lock()
+\t\tdefer curatedDocumentLocks.Unlock()
+\t\tentry.refs--
+\t\tif entry.refs == 0 && curatedDocumentLocks.entries[path] == entry {
+\t\t\tdelete(curatedDocumentLocks.entries, path)
+\t\t}
+\t}
+
+\tentry.mu.Lock()
+\tfileUnlock, err := fileutil.LockFile(curatedDocumentLockPath(path))
+\tif err != nil {
+\t\tentry.mu.Unlock()
+\t\treleaseRef()
+\t\treturn nil, fmt.Errorf("lock curated memory: %w", err)
+\t}
+\treturn func() {
+\t\t_ = fileUnlock()
+\t\tentry.mu.Unlock()
+\t\treleaseRef()
+\t}, nil
+}
+
+func curatedDocumentLockPath'''
+          text2, n = lock_pattern.subn(new_lock, text, count=1)
+          if n != 1:
+              raise SystemExit(f"lockCuratedDocument replacement count={n}")
+          p.write_text(text2)
+
+          # Replace migration implementation at EOF with deterministic, error-propagating semantics.
+          p = Path("pkg/memory/curated_store.go")
+          text = p.read_text()
+          marker = "// MigrateLegacyUserStoreToPersonScope merges entries from legacy channel-scoped user keys"
+          pos = text.find(marker)
+          if pos < 0:
+              raise SystemExit("migration marker not found")
+          migration = r'''// MigrateLegacyUserStoreToPersonScope merges entries from legacy channel-scoped user keys
+// into a consolidated person-scoped user key. Source stores are retained, so a
+// partial migration is safely repeatable after a crash. Entries are applied one
+// at a time through the normal CuratedStore transaction/reconciliation path;
+// this keeps every commit below the public batch limit and makes each successful
+// step durable before moving to the next source entry.
+func (s *CuratedStore) MigrateLegacyUserStoreToPersonScope(
+	legacyUserKeys []string,
+	personUserKey string,
+) (int, error) {
+	if s == nil || len(legacyUserKeys) == 0 || strings.TrimSpace(personUserKey) == "" {
+		return 0, nil
+	}
+	personUserKey = strings.TrimSpace(personUserKey)
+	if !strings.HasPrefix(strings.ToLower(personUserKey), "person:") {
+		return 0, fmt.Errorf("person-scoped user key is required")
+	}
+
+	legacySet := make(map[string]struct{}, len(legacyUserKeys))
+	for _, key := range legacyUserKeys {
+		key = strings.TrimSpace(key)
+		if key == "" || key == personUserKey {
+			continue
+		}
+		legacySet[key] = struct{}{}
+	}
+	orderedLegacyKeys := make([]string, 0, len(legacySet))
+	for key := range legacySet {
+		orderedLegacyKeys = append(orderedLegacyKeys, key)
+	}
+	sort.Strings(orderedLegacyKeys)
+
+	personCaller := CallerScope{AgentID: "migration", UserKey: personUserKey}
+	migrated := 0
+	for _, legacyKey := range orderedLegacyKeys {
+		legacyCaller := CallerScope{AgentID: "migration", UserKey: legacyKey}
+		legacyEntries, err := s.List(CuratedTargetCurrentUser, legacyCaller)
+		if err != nil {
+			return migrated, fmt.Errorf("read legacy user store %q: %w", legacyKey, err)
+		}
+		sort.SliceStable(legacyEntries, func(i, j int) bool {
+			if !legacyEntries[i].CreatedAt.Equal(legacyEntries[j].CreatedAt) {
+				return legacyEntries[i].CreatedAt.Before(legacyEntries[j].CreatedAt)
+			}
+			return legacyEntries[i].ID < legacyEntries[j].ID
+		})
+
+		for _, entry := range legacyEntries {
+			entry = normalizedCuratedEntry(entry)
+			if entry.EffectiveStatus() != CuratedStatusActive {
+				continue
+			}
+			current, listErr := s.List(CuratedTargetCurrentUser, personCaller)
+			if listErr != nil {
+				return migrated, fmt.Errorf("read person store %q: %w", personUserKey, listErr)
+			}
+
+			preferenceKey := NormalizePreferenceKey(entry.PreferenceKey)
+			preferenceValue := NormalizePreferenceValue(preferenceKey, entry.PreferenceValue)
+			skip := false
+			if preferenceKey != "" {
+				for _, existing := range current {
+					existing = normalizedCuratedEntry(existing)
+					if existing.EffectiveStatus() != CuratedStatusActive ||
+						NormalizePreferenceKey(existing.PreferenceKey) != preferenceKey {
+						continue
+					}
+					existingValue := NormalizePreferenceValue(preferenceKey, existing.PreferenceValue)
+					if existingValue == preferenceValue && existing.EvidenceAuthority() >= entry.EvidenceAuthority() {
+						skip = true
+						break
+					}
+					// An equally authoritative conflicting historical value is ambiguous.
+					// Preserve it in the source store instead of choosing a winner based
+					// on migration execution time. Stronger evidence may still supersede.
+					if existingValue != preferenceValue && existing.EvidenceAuthority() >= entry.EvidenceAuthority() {
+						skip = true
+						break
+					}
+				}
+			} else {
+				for _, existing := range current {
+					if existing.EffectiveStatus() == CuratedStatusActive &&
+						IsObviousFactDuplicate(existing.Content, entry.Content) {
+						skip = true
+						break
+					}
+				}
+			}
+			if skip {
+				continue
+			}
+
+			confidence := entry.EffectiveConfidence()
+			mutation := CuratedMutation{
+				Action:                    CuratedActionAdd,
+				Content:                   entry.Content,
+				Type:                      entry.EffectiveType(),
+				Confidence:                &confidence,
+				EvidenceKind:              entry.EffectiveEvidenceKind(),
+				Visibility:                entry.EffectiveVisibility(),
+				EvidenceCount:             entry.EvidenceCount,
+				ObservationCount:          entry.ObservationCount,
+				PreferenceKey:             preferenceKey,
+				PreferenceValue:           preferenceValue,
+				ExpiresAt:                 entry.ExpiresAt,
+				LastVerifiedAt:            entry.LastVerifiedAt,
+				LastConfirmedAt:           entry.LastConfirmedAt,
+				Provenance:                entry.Provenance,
+				migrationPreserveMetadata: true,
+				migrationCreatedAt:        entry.CreatedAt,
+				migrationUpdatedAt:        entry.UpdatedAt,
+				migrationPinned:           entry.Pinned,
+			}
+			result, applyErr := s.ApplyBatch(
+				CuratedTargetCurrentUser,
+				personCaller,
+				[]CuratedMutation{mutation},
+				false,
+			)
+			if errors.Is(applyErr, ErrCuratedDuplicate) {
+				continue
+			}
+			if applyErr != nil {
+				return migrated, fmt.Errorf("migrate legacy user store %q: %w", legacyKey, applyErr)
+			}
+			migrated += len(result.Applied)
+		}
+	}
+	return migrated, nil
+}
+
+// MigrateLegacyStoresFromConfig consolidates legacy user stores according to trusted identity links.
+func (s *CuratedStore) MigrateLegacyStoresFromConfig(identityLinks map[string][]string) (int, error) {
+	if s == nil || len(identityLinks) == 0 {
+		return 0, nil
+	}
+	canonicalNames := make([]string, 0, len(identityLinks))
+	for canonical := range identityLinks {
+		canonicalNames = append(canonicalNames, canonical)
+	}
+	sort.SliceStable(canonicalNames, func(i, j int) bool {
+		return strings.ToLower(strings.TrimSpace(canonicalNames[i])) <
+			strings.ToLower(strings.TrimSpace(canonicalNames[j]))
+	})
+
+	total := 0
+	for _, canonical := range canonicalNames {
+		canonicalName := strings.ToLower(strings.TrimSpace(canonical))
+		if canonicalName == "" {
+			continue
+		}
+		legacySet := make(map[string]struct{})
+		identities := append([]string(nil), identityLinks[canonical]...)
+		sort.SliceStable(identities, func(i, j int) bool {
+			return strings.ToLower(strings.TrimSpace(identities[i])) <
+				strings.ToLower(strings.TrimSpace(identities[j]))
+		})
+		for _, identity := range identities {
+			parts := strings.Split(strings.TrimSpace(identity), ":")
+			var channel, account, rawID string
+			switch len(parts) {
+			case 1:
+				channel, account, rawID = "unknown", "default", parts[0]
+			case 2:
+				channel, account, rawID = parts[0], "default", parts[1]
+			default:
+				channel, account, rawID = parts[0], parts[1], strings.Join(parts[2:], ":")
+			}
+			if strings.TrimSpace(rawID) == "" {
+				continue
+			}
+			legacySet[fmt.Sprintf(
+				"channel:%s|account:%s|user:%s",
+				strings.ToLower(strings.TrimSpace(channel)),
+				strings.ToLower(strings.TrimSpace(account)),
+				strings.ToLower(strings.TrimSpace(canonicalName)),
+			)] = struct{}{}
+			legacySet[fmt.Sprintf(
+				"channel:%s|account:%s|user:%s",
+				strings.ToLower(strings.TrimSpace(channel)),
+				strings.ToLower(strings.TrimSpace(account)),
+				strings.ToLower(strings.TrimSpace(rawID)),
+			)] = struct{}{}
+		}
+		legacyKeys := make([]string, 0, len(legacySet))
+		for key := range legacySet {
+			legacyKeys = append(legacyKeys, key)
+		}
+		sort.Strings(legacyKeys)
+		migrated, err := s.MigrateLegacyUserStoreToPersonScope(legacyKeys, "person:"+canonicalName)
+		if err != nil {
+			return total, fmt.Errorf("migrate identity %q: %w", canonicalName, err)
+		}
+		total += migrated
+	}
+	return total, nil
+}
+'''
+          p.write_text(text[:pos] + migration)
+
+          # Strict dashboard owner binding: alias + authenticated pico identity membership.
+          p = Path("web/backend/api/memory_evolution.go")
+          text = p.read_text()
+          start = text.index("func dashboardCurrentUserCaller(cfg *config.Config) memory.CallerScope {")
+          end = text.index("\nfunc (h *Handler) handleListWorkspaceMemory", start)
+          replacement = r'''func dashboardOwnerPersonKey(cfg *config.Config) (string, bool) {
+	if cfg == nil {
+		return "", false
+	}
+	owner := strings.ToLower(strings.TrimSpace(cfg.Memory.OwnerIdentity))
+	if owner == "" {
+		return "", false
+	}
+	var members []string
+	matches := 0
+	for canonical, identities := range cfg.Session.IdentityLinks {
+		if strings.ToLower(strings.TrimSpace(canonical)) != owner {
+			continue
+		}
+		matches++
+		members = identities
+	}
+	if matches != 1 {
+		return "", false
+	}
+	for _, identity := range members {
+		parts := strings.Split(strings.ToLower(strings.TrimSpace(identity)), ":")
+		if len(parts) == 2 && parts[0] == config.ChannelPico && parts[1] == "pico-user" {
+			return "person:" + owner, true
+		}
+		if len(parts) == 3 && parts[0] == config.ChannelPico &&
+			routing.NormalizeAccountID(parts[1]) == routing.DefaultAccountID && parts[2] == "pico-user" {
+			return "person:" + owner, true
+		}
+	}
+	return "", false
+}
+
+func dashboardCurrentUserCaller(cfg *config.Config) memory.CallerScope {
+	userKey, bound := dashboardOwnerPersonKey(cfg)
+	if !bound {
+		// Dashboard-local fallback deliberately ignores identity_links. Otherwise
+		// an unrelated alias containing pico-user could silently turn an
+		// unconfigured/invalid owner setting into a cross-channel person scope.
+		userKey = session.CanonicalUserScopeKey(
+			config.ChannelPico,
+			routing.DefaultAccountID,
+			"pico-user",
+			nil,
+		)
+	}
+	return memory.CallerScope{
+		AgentID: routing.DefaultAgentID,
+		UserKey: userKey,
+		Channel: config.ChannelPico,
+		Account: routing.DefaultAccountID,
+	}
+}
+'''
+          p.write_text(text[:start] + replacement + text[end:])
+
+          # Dashboard config must reject an owner alias that cannot prove the dashboard identity.
+          replace_once(
+              "web/backend/api/config.go",
+              '''\tif err := cfg.Memory.Validate(); err != nil {
+\t\terrs = append(errs, err.Error())
+\t}
+''',
+              '''\tif err := cfg.Memory.Validate(); err != nil {
+\t\terrs = append(errs, err.Error())
+\t}
+\tif strings.TrimSpace(cfg.Memory.OwnerIdentity) != "" {
+\t\tif _, ok := dashboardOwnerPersonKey(cfg); !ok {
+\t\t\terrs = append(errs, "memory.owner_identity must reference exactly one identity link containing pico:pico-user")
+\t\t}
+\t}
+''')
+
+          # Frontend capture_mode round-trip and minimal PATCH semantics.
+          replace_once(
+              "web/frontend/src/components/config/form-model.ts",
+              "  memoryEnabled: boolean\n  memoryBackgroundReviewEnabled: boolean\n",
+              "  memoryEnabled: boolean\n  memoryCaptureMode: MemoryCaptureMode\n  memoryBackgroundReviewEnabled: boolean\n")
+          replace_once(
+              "web/frontend/src/components/config/form-model.ts",
+              'export type MemoryNotificationMode = "off" | "on" | "verbose"\n\n',
+              'export type MemoryNotificationMode = "off" | "on" | "verbose"\nexport type MemoryCaptureMode = "automatic" | "explicit_only"\n\n')
+          replace_once(
+              "web/frontend/src/components/config/form-model.ts",
+              "  memoryEnabled: true,\n  memoryBackgroundReviewEnabled: true,\n",
+              '  memoryEnabled: true,\n  memoryCaptureMode: "automatic",\n  memoryBackgroundReviewEnabled: true,\n')
+          replace_once(
+              "web/frontend/src/components/config/form-model.ts",
+              '''function toMemoryNotificationMode(value: unknown): MemoryNotificationMode {
+''',
+              '''function toMemoryCaptureMode(value: unknown): MemoryCaptureMode {
+  return value === "explicit_only" ? "explicit_only" : "automatic"
+}
+
+function toMemoryNotificationMode(value: unknown): MemoryNotificationMode {
+''')
+          replace_once(
+              "web/frontend/src/components/config/form-model.ts",
+              '''    memoryEnabled:
+      memory.enabled === undefined
+        ? EMPTY_FORM.memoryEnabled
+        : asBool(memory.enabled),
+    memoryBackgroundReviewEnabled:
+''',
+              '''    memoryEnabled:
+      memory.enabled === undefined
+        ? EMPTY_FORM.memoryEnabled
+        : asBool(memory.enabled),
+    memoryCaptureMode: toMemoryCaptureMode(memory.capture_mode),
+    memoryBackgroundReviewEnabled:
+''')
+          replace_once(
+              "web/frontend/src/components/config/form-model.ts",
+              '''  if (!MEMORY_NOTIFICATION_OPTIONS.includes(form.memoryNotifications)) {
+    throw new Error("Notification mode is invalid.")
+  }
+''',
+              '''  if (!MEMORY_NOTIFICATION_OPTIONS.includes(form.memoryNotifications)) {
+    throw new Error("Notification mode is invalid.")
+  }
+  if (form.memoryCaptureMode !== "automatic" && form.memoryCaptureMode !== "explicit_only") {
+    throw new Error("Memory capture mode is invalid.")
+  }
+''')
+          replace_once(
+              "web/frontend/src/components/config/form-model.ts",
+              '''  const full: Record<string, unknown> = {
+    enabled: form.memoryEnabled,
+''',
+              '''  const full: Record<string, unknown> = {
+    enabled: form.memoryEnabled,
+    capture_mode: form.memoryCaptureMode,
+''')
+          replace_once(
+              "web/frontend/src/components/config/form-model.ts",
+              '''  if (form.memoryEnabled !== baseline.memoryEnabled) {
+    delta.enabled = form.memoryEnabled
+  }
+''',
+              '''  if (form.memoryEnabled !== baseline.memoryEnabled) {
+    delta.enabled = form.memoryEnabled
+  }
+  if (form.memoryCaptureMode !== baseline.memoryCaptureMode) {
+    delta.capture_mode = form.memoryCaptureMode
+  }
+''')
+
+          # Make dashboard labels reflect capture policy rather than reviewer on/off.
+          replace_once(
+              "web/frontend/src/components/config/config-sections.tsx",
+              '''  const learningMode = !form.memoryBackgroundReviewEnabled
+    ? "manual"
+    : form.memoryApprovalMode === "background_only" ||
+        form.memoryApprovalMode === "all_writes"
+      ? "review"
+      : "automatic"
+''',
+              '''  const learningMode =
+    form.memoryCaptureMode === "explicit_only"
+      ? "manual"
+      : form.memoryApprovalMode === "background_only" ||
+          form.memoryApprovalMode === "all_writes"
+        ? "review"
+        : "automatic"
+''')
+          replace_once(
+              "web/frontend/src/components/config/config-sections.tsx",
+              '''    if (mode === "automatic") {
+      onFieldChange("memoryBackgroundReviewEnabled", true)
+      onFieldChange("memoryApprovalMode", "off")
+      onFieldChange("memoryWriteApproval", false)
+    } else if (mode === "review") {
+      onFieldChange("memoryBackgroundReviewEnabled", true)
+      onFieldChange("memoryApprovalMode", "background_only")
+      onFieldChange("memoryWriteApproval", true)
+    } else {
+      onFieldChange("memoryBackgroundReviewEnabled", false)
+      onFieldChange("memoryApprovalMode", "off")
+      onFieldChange("memoryWriteApproval", false)
+    }
+''',
+              '''    if (mode === "automatic") {
+      onFieldChange("memoryCaptureMode", "automatic")
+      onFieldChange("memoryBackgroundReviewEnabled", true)
+      onFieldChange("memoryApprovalMode", "off")
+      onFieldChange("memoryWriteApproval", false)
+    } else if (mode === "review") {
+      onFieldChange("memoryCaptureMode", "automatic")
+      onFieldChange("memoryBackgroundReviewEnabled", true)
+      onFieldChange("memoryApprovalMode", "background_only")
+      onFieldChange("memoryWriteApproval", true)
+    } else {
+      onFieldChange("memoryCaptureMode", "explicit_only")
+      onFieldChange("memoryBackgroundReviewEnabled", false)
+      onFieldChange("memoryApprovalMode", "off")
+      onFieldChange("memoryWriteApproval", false)
+    }
+''')
+          replace_once(
+              "web/frontend/src/components/config/config-sections.tsx",
+              '''        checked={form.memoryBackgroundReviewEnabled}
+        onCheckedChange={(checked) =>
+          onFieldChange("memoryBackgroundReviewEnabled", checked)
+        }
+''',
+              '''        checked={form.memoryCaptureMode === "automatic"}
+        onCheckedChange={(checked) => {
+          onFieldChange(
+            "memoryCaptureMode",
+            checked ? "automatic" : "explicit_only",
+          )
+          if (!checked) {
+            onFieldChange("memoryBackgroundReviewEnabled", false)
+          }
+        }}
+''')
+
+          # Existing frontend acceptance workflow should run on this published branch.
+          replace_once(
+              ".github/workflows/curated-memory.yml",
+              '''      - feat/advanced-dashboard-settings
+      - chore/standalone-v1.0.0
+''',
+              '''      - feat/advanced-dashboard-settings
+      - feat/native-telegram-capabilities-memory-hardening
+      - chore/standalone-v1.0.0
+''')
+
+          # Remove formatter-only noise introduced by the earlier helper pass.
+          # These files contain no PR16 feature behavior.
+          PY
+          git checkout 9cdb96ee63bce5ba9ff7aff9f3e6ef6445922339 -- \
+            pkg/providers/bedrock/provider_bedrock.go \
+            web/frontend/src/components/chat/assistant-message.tsx \
+            web/frontend/src/components/channels/channel-forms/mqtt-form.tsx \
+            web/frontend/src/i18n/index.ts
+
+          cat > pkg/memory/curated_migration_hardening_test.go <<'EOF'
+          package memory
+
+          import (
+          	"os"
+          	"path/filepath"
+          	"testing"
+          	"time"
+          )
+
+          func TestMigrateLegacyUserStoreToPersonScopeBeyondBatchLimitAndIdempotent(t *testing.T) {
+          	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 200_000, 200_000)
+          	legacyKey := "channel:telegram|account:default|user:42"
+          	legacyCaller := CallerScope{AgentID: "migration", UserKey: legacyKey}
+          	for i := 0; i < MaxCuratedBatchMutations+7; i++ {
+          		_, err := store.ApplyBatch(CuratedTargetCurrentUser, legacyCaller, []CuratedMutation{{
+          			Action: CuratedActionAdd,
+          			Content: "unique migrated fact number " + time.Unix(int64(i+1), 0).UTC().Format(time.RFC3339Nano),
+          			Type: CuratedTypeOther,
+          		}}, false)
+          		if err != nil {
+          			t.Fatalf("seed legacy entry %d: %v", i, err)
+          		}
+          	}
+
+          	migrated, err := store.MigrateLegacyUserStoreToPersonScope([]string{legacyKey}, "person:owner")
+          	if err != nil {
+          		t.Fatalf("MigrateLegacyUserStoreToPersonScope() error = %v", err)
+          	}
+          	if want := MaxCuratedBatchMutations + 7; migrated != want {
+          		t.Fatalf("migrated = %d, want %d", migrated, want)
+          	}
+          	entries, err := store.List(CuratedTargetCurrentUser, CallerScope{AgentID: "migration", UserKey: "person:owner"})
+          	if err != nil || len(entries) != migrated {
+          		t.Fatalf("person entries = %d, err=%v, want %d", len(entries), err, migrated)
+          	}
+          	again, err := store.MigrateLegacyUserStoreToPersonScope([]string{legacyKey}, "person:owner")
+          	if err != nil || again != 0 {
+          		t.Fatalf("second migration = %d, err=%v, want idempotent zero", again, err)
+          	}
+          }
+
+          func TestMigrateLegacyUserStorePreservesHistoricalMetadata(t *testing.T) {
+          	root := filepath.Join(t.TempDir(), "curated")
+          	historical := time.Date(2025, 7, 4, 5, 6, 7, 0, time.UTC)
+          	seed, err := NewCuratedStore(root, CuratedStoreOptions{
+          		WorkspaceCharLimit: 100_000,
+          		PerUserCharLimit: 100_000,
+          		Now: func() time.Time { return historical },
+          	})
+          	if err != nil {
+          		t.Fatal(err)
+          	}
+          	legacyKey := "channel:telegram|account:default|user:owner"
+          	legacyCaller := CallerScope{AgentID: "migration", UserKey: legacyKey}
+          	confidence := 1.0
+          	seedResult, err := seed.ApplyBatch(CuratedTargetCurrentUser, legacyCaller, []CuratedMutation{{
+          		Action: CuratedActionAdd,
+          		Content: "Use Indonesian",
+          		Type: CuratedTypeCommunicationPreference,
+          		Confidence: &confidence,
+          		EvidenceKind: CuratedEvidenceExplicit,
+          		EvidenceCount: 7,
+          		PreferenceKey: "communication.language",
+          		PreferenceValue: "id",
+          		Provenance: Provenance{Source: "user_request", Channel: "telegram", MessageRef: "old-message"},
+          	}}, false)
+          	if err != nil || len(seedResult.Applied) != 1 {
+          		t.Fatalf("seed result=%#v err=%v", seedResult, err)
+          	}
+          	if _, err := seed.ApplyBatch(CuratedTargetCurrentUser, legacyCaller, []CuratedMutation{{
+          		Action: CuratedActionPin, ID: seedResult.Applied[0].ID,
+          	}}, false); err != nil {
+          		t.Fatal(err)
+          	}
+
+          	store := newTestCuratedStore(t, root, 100_000, 100_000)
+          	if _, err := store.MigrateLegacyUserStoreToPersonScope([]string{legacyKey}, "person:owner"); err != nil {
+          		t.Fatal(err)
+          	}
+          	entries, err := store.List(CuratedTargetCurrentUser, CallerScope{AgentID: "migration", UserKey: "person:owner"})
+          	if err != nil || len(entries) != 1 {
+          		t.Fatalf("entries=%#v err=%v", entries, err)
+          	}
+          	entry := entries[0]
+          	if entry.EvidenceKind != CuratedEvidenceExplicit || entry.EvidenceCount != 7 || !entry.Pinned {
+          		t.Fatalf("evidence/pin metadata not preserved: %#v", entry)
+          	}
+          	if entry.Provenance.Source != "user_request" || entry.Provenance.MessageRef != "old-message" ||
+          		!entry.Provenance.RecordedAt.Equal(historical) || !entry.CreatedAt.Equal(historical) ||
+          		!entry.UpdatedAt.Equal(historical) || entry.LastConfirmedAt == nil || !entry.LastConfirmedAt.Equal(historical) {
+          		t.Fatalf("historical metadata not preserved: %#v", entry)
+          	}
+          }
+
+          func TestMigrateLegacyUserStoreDoesNotOverwriteEqualOrStrongerPreference(t *testing.T) {
+          	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 100_000, 100_000)
+          	person := CallerScope{AgentID: "migration", UserKey: "person:owner"}
+          	legacyKey := "channel:telegram|account:default|user:42"
+          	legacy := CallerScope{AgentID: "migration", UserKey: legacyKey}
+          	explicitConfidence := 1.0
+          	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, person, []CuratedMutation{{
+          		Action: CuratedActionAdd, Content: "Prefer text quizzes",
+          		Type: CuratedTypeCommunicationPreference, Confidence: &explicitConfidence,
+          		EvidenceKind: CuratedEvidenceExplicit, PreferenceKey: "presentation.quiz.mode", PreferenceValue: "text",
+          	}}, false); err != nil {
+          		t.Fatal(err)
+          	}
+          	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, legacy, []CuratedMutation{{
+          		Action: CuratedActionAdd, Content: "Prefer native quizzes",
+          		Type: CuratedTypeCommunicationPreference,
+          		EvidenceKind: CuratedEvidenceInferred, PreferenceKey: "workflow.quiz_format", PreferenceValue: "telegram_native_quiz",
+          	}}, false); err != nil {
+          		t.Fatal(err)
+          	}
+          	migrated, err := store.MigrateLegacyUserStoreToPersonScope([]string{legacyKey}, "person:owner")
+          	if err != nil || migrated != 0 {
+          		t.Fatalf("migrated=%d err=%v, want weaker conflict preserved only in source", migrated, err)
+          	}
+          	entries, err := store.List(CuratedTargetCurrentUser, person)
+          	if err != nil || len(entries) != 1 || entries[0].PreferenceValue != "text" ||
+          		entries[0].EffectiveStatus() != CuratedStatusActive {
+          		t.Fatalf("person preference changed unexpectedly: %#v err=%v", entries, err)
+          	}
+          }
+
+          func TestMigrateLegacyUserStoreSurfacesMalformedSource(t *testing.T) {
+          	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 100_000, 100_000)
+          	legacyKey := "channel:telegram|account:default|user:42"
+          	legacyCaller := CallerScope{AgentID: "migration", UserKey: legacyKey}
+          	path, _, _, err := store.scopePath(CuratedTargetCurrentUser, legacyCaller)
+          	if err != nil {
+          		t.Fatal(err)
+          	}
+          	if err := os.WriteFile(path, []byte("{not-json"), 0o600); err != nil {
+          		t.Fatal(err)
+          	}
+          	if _, err := store.MigrateLegacyUserStoreToPersonScope([]string{legacyKey}, "person:owner"); err == nil {
+          		t.Fatal("migration silently ignored malformed legacy store")
+          	}
+          }
+
+          func TestCuratedDocumentLockRegistryReleasesIdlePaths(t *testing.T) {
+          	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 100_000, 100_000)
+          	for i := 0; i < 40; i++ {
+          		caller := CallerScope{AgentID: "main", UserKey: "person:test-" + time.Unix(int64(i+1), 0).UTC().Format("150405")}
+          		if _, err := store.List(CuratedTargetCurrentUser, caller); err != nil {
+          			t.Fatal(err)
+          		}
+          	}
+          	curatedDocumentLocks.Lock()
+          	remaining := len(curatedDocumentLocks.entries)
+          	curatedDocumentLocks.Unlock()
+          	if remaining != 0 {
+          		t.Fatalf("idle document locks retained = %d, want 0", remaining)
+          	}
+          }
+          EOF
+
+          cat >> pkg/capability/capability_test.go <<'EOF'
+
+          func TestResolveRouteCapabilities_ImplementedNativePathsAreTruthful(t *testing.T) {
+          	route := RouteContext{Channel: "telegram", Account: "default"}
+          	set := ResolveRouteCapabilities(route, nil)
+          	assert.True(t, set.IsSupported(FeatureMessageStreamRich))
+          	assert.True(t, set.IsSupported(FeatureMediaLivePhoto))
+          	assert.Equal(t, StateUnsupported, set[FeatureKeyboardReply].State)
+          	assert.Equal(t, "not_implemented", set[FeatureKeyboardReply].Condition)
+          	assert.Equal(t, StateConditional, set[FeatureChecklistNative].State)
+          	assert.Equal(t, "context_unavailable", set[FeatureChecklistNative].Condition)
+          }
+
+          func TestResolveRouteCapabilities_EphemeralDraftStreamingFailsClosed(t *testing.T) {
+          	set := ResolveRouteCapabilities(RouteContext{Channel: "telegram", IsEphemeral: true}, nil)
+          	assert.Equal(t, StateConditional, set[FeatureMessageStreamText].State)
+          	assert.Equal(t, "non_ephemeral_route", set[FeatureMessageStreamText].Condition)
+          	assert.Equal(t, StateConditional, set[FeatureMessageStreamRich].State)
+          	assert.Equal(t, "non_ephemeral_route", set[FeatureMessageStreamRich].Condition)
+          	assert.True(t, set.IsSupported(FeatureMessageEphemeral))
+          }
+
+          func TestResolveRouteCapabilities_RichAndLivePhotoServerDowngrade(t *testing.T) {
+          	cache := NewNegativeCapabilityCache(time.Minute)
+          	route := RouteContext{Channel: "telegram", Account: "legacy", ServerID: "http://legacy.example"}
+          	if !cache.RecordFailure(route.Channel, route.Account, route.ServerID, FeatureMessageStreamRich, errors.New("400 Bad Request: method not found")) {
+          		t.Fatal("rich draft unsupported failure was not cached")
+          	}
+          	if !cache.RecordFailure(route.Channel, route.Account, route.ServerID, FeatureMediaLivePhoto, errors.New("400 Bad Request: method not found")) {
+          		t.Fatal("live photo unsupported failure was not cached")
+          	}
+          	set := ResolveRouteCapabilities(route, cache)
+          	assert.Equal(t, StateUnsupported, set[FeatureMessageStreamRich].State)
+          	assert.Equal(t, "downgraded_by_server", set[FeatureMessageStreamRich].Condition)
+          	assert.Equal(t, StateUnsupported, set[FeatureMediaLivePhoto].State)
+          	assert.True(t, set.IsSupported(FeaturePollRegular))
+          }
+          EOF
+
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path("pkg/capability/capability_test.go")
+          text = p.read_text()
+          text = text.replace('assert.True(t, set.IsSupported(FeatureDiceAnimated))\n', 'assert.True(t, set.IsSupported(FeatureDiceAnimated))\n\tassert.True(t, set.IsSupported(FeatureMessageStreamRich))\n\tassert.True(t, set.IsSupported(FeatureMediaLivePhoto))\n', 1)
+          text = text.replace('// Checklist is conditional on business context\n\tassert.False(t, set.IsSupported(FeatureChecklistNative))\n\tassert.Equal(t, StateConditional, set[FeatureChecklistNative].State)\n\tassert.Equal(t, "business_connection", set[FeatureChecklistNative].Condition)\n\n\t// Rich stream is unsupported/text-only by default\n\tassert.False(t, set.IsSupported(FeatureMessageStreamRich))\n\tassert.Equal(t, StateUnsupported, set[FeatureMessageStreamRich].State)\n', '// Checklist stays conditional until trusted business authority is wired end-to-end.\n\tassert.False(t, set.IsSupported(FeatureChecklistNative))\n\tassert.Equal(t, StateConditional, set[FeatureChecklistNative].State)\n\tassert.Equal(t, "context_unavailable", set[FeatureChecklistNative].Condition)\n')
+          text = text.replace('assert.True(t, set.IsSupported(FeatureChecklistNative))', 'assert.Equal(t, StateConditional, set[FeatureChecklistNative].State)\n\tassert.Equal(t, "context_unavailable", set[FeatureChecklistNative].Condition)', 1)
+          text = text.replace('errors.New("connection refused"),\n', 'errors.New("connection refused"),\n\t\terrors.New("api: 500 Internal Server Error: method not implemented"),\n\t\terrors.New("api: 502 Bad Gateway: unsupported method"),\n\t\terrors.New("network is unreachable"),\n\t\terrors.New("lookup api.telegram.local: no such host"),\n', 1)
+          text = text.replace('assert.Contains(t, prompt, "rich_stream=unsupported")', 'assert.Contains(t, prompt, "rich_stream=supported")')
+          text = text.replace('assert.Contains(t, prompt, "checklist=conditional:business_connection")', 'assert.Contains(t, prompt, "live_photo=supported")\n\tassert.Contains(t, prompt, "checklist=conditional:context_unavailable")')
+          p.write_text(text)
+          PY
+
+          cat >> pkg/agent/capability_route_test.go <<'EOF'
+
+          func TestRouteAwareToolAvailability_LivePhoto(t *testing.T) {
+          	capability.GlobalNegativeCache.Clear()
+          	t.Cleanup(capability.GlobalNegativeCache.Clear)
+          	al := &AgentLoop{cfg: config.DefaultConfig()}
+          	telegram := &turnState{
+          		channel: "telegram",
+          		chatID: "123",
+          		opts: processOptions{Dispatch: DispatchRequest{InboundContext: &bus.InboundContext{
+          			Channel: "telegram", Account: "default", ChatID: "123", SenderID: "u1",
+          		}}},
+          	}
+          	if !isToolAllowedByRoute(al, telegram, "send_live_photo") {
+          		t.Fatal("send_live_photo should be available on a supported Telegram route")
+          	}
+          	pico := &turnState{channel: "pico", chatID: "p1", opts: processOptions{Dispatch: DispatchRequest{
+          		InboundContext: &bus.InboundContext{Channel: "pico", Account: "default", ChatID: "p1", SenderID: "u1"},
+          	}}}
+          	if isToolAllowedByRoute(al, pico, "send_live_photo") {
+          		t.Fatal("send_live_photo leaked to non-Telegram route")
+          	}
+          	legacy := &turnState{
+          		channel: "telegram", chatID: "123",
+          		opts: processOptions{Dispatch: DispatchRequest{InboundContext: &bus.InboundContext{
+          			Channel: "telegram", Account: "legacy", ChatID: "123", SenderID: "u1",
+          			Raw: map[string]string{"server_id": "http://legacy-live-photo"},
+          		}}},
+          	}
+          	capability.GlobalNegativeCache.RecordFailure(
+          		"telegram", "legacy", "http://legacy-live-photo", capability.FeatureMediaLivePhoto,
+          		errors.New("400 Bad Request: method not found"),
+          	)
+          	if isToolAllowedByRoute(al, legacy, "send_live_photo") {
+          		t.Fatal("send_live_photo should be filtered after server downgrade")
+          	}
+          }
+          EOF
+
+          cat >> web/backend/api/config_memory_test.go <<'EOF'
+
+          func TestHandlePatchConfigRejectsUnprovenDashboardOwnerBinding(t *testing.T) {
+          	configPath, cleanup := setupOAuthTestEnv(t)
+          	defer cleanup()
+          	h := NewHandler(configPath)
+          	mux := http.NewServeMux()
+          	h.RegisterRoutes(mux)
+
+          	bad := `{"session":{"identity_links":{"owner":["telegram:42"]}},"memory":{"owner_identity":"owner"}}`
+          	req := httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(bad))
+          	req.Header.Set("Content-Type", "application/json")
+          	rec := httptest.NewRecorder()
+          	mux.ServeHTTP(rec, req)
+          	if rec.Code != http.StatusBadRequest {
+          		t.Fatalf("unproven owner PATCH status=%d body=%s", rec.Code, rec.Body.String())
+          	}
+
+          	good := `{"session":{"identity_links":{"owner":["telegram:42","pico:pico-user"]}},"memory":{"owner_identity":"owner"}}`
+          	req = httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(good))
+          	req.Header.Set("Content-Type", "application/json")
+          	rec = httptest.NewRecorder()
+          	mux.ServeHTTP(rec, req)
+          	if rec.Code != http.StatusOK {
+          		t.Fatalf("proven owner PATCH status=%d body=%s", rec.Code, rec.Body.String())
+          	}
+          }
+          EOF
+
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path("web/backend/api/memory_evolution_test.go")
+          text = p.read_text()
+          needle = '''\t// Case 3: Configured owner NOT in identity links and pico-user not linked -> falls back to Dashboard-local profile\n'''
+          insertion = '''\t// Case 3: owner alias exists but does not contain the authenticated dashboard identity -> local only.\n\tcfg.Session.IdentityLinks = map[string][]string{\n\t\t"alice": {"telegram:42"},\n\t}\n\tcfg.Memory.OwnerIdentity = "alice"\n\tif err := config.SaveConfig(harness.configPath, cfg); err != nil {\n\t\tt.Fatal(err)\n\t}\n\th3 := NewHandler(harness.configPath)\n\tmux3 := http.NewServeMux()\n\th3.RegisterRoutes(mux3)\n\tres3 := managementRequest(t, mux3, http.MethodGet, "/api/memory/current-user", "")\n\tif res3.Code != http.StatusOK || !strings.Contains(res3.Body.String(), `"scope_label":"Dashboard-local profile"`) {\n\t\tt.Fatalf("unproven owner body=%s, want Dashboard-local profile", res3.Body.String())\n\t}\n\n\t// Case 4: Configured owner NOT in identity links and pico-user not linked -> falls back to Dashboard-local profile\n'''
+          if needle not in text:
+              raise SystemExit("owner binding case marker not found")
+          text = text.replace(needle, insertion, 1)
+          text = text.replace('''\th3 := NewHandler(harness.configPath)\n\tmux3 := http.NewServeMux()\n\th3.RegisterRoutes(mux3)\n\tres3 := managementRequest(t, mux3, http.MethodGet, "/api/memory/current-user", "")\n\tif res3.Code != http.StatusOK {\n\t\tt.Fatalf("GET /api/memory/current-user status=%d", res3.Code)\n\t}\n\tif !strings.Contains(res3.Body.String(), `"scope_label":"Dashboard-local profile"`) {\n\t\tt.Fatalf("unlinked owner scope_label body=%s, want Dashboard-local profile", res3.Body.String())\n\t}\n''', '''\th4 := NewHandler(harness.configPath)\n\tmux4 := http.NewServeMux()\n\th4.RegisterRoutes(mux4)\n\tres4 := managementRequest(t, mux4, http.MethodGet, "/api/memory/current-user", "")\n\tif res4.Code != http.StatusOK {\n\t\tt.Fatalf("GET /api/memory/current-user status=%d", res4.Code)\n\t}\n\tif !strings.Contains(res4.Body.String(), `"scope_label":"Dashboard-local profile"`) {\n\t\tt.Fatalf("unlinked owner scope_label body=%s, want Dashboard-local profile", res4.Body.String())\n\t}\n''', 1)
+          p.write_text(text)
+          PY
+
+          cat >> web/frontend/tests/form-model.test.ts <<'EOF'
+
+          test("memory capture mode round trips and delta patch changes only capture policy", () => {
+            const original = {
+              memory: {
+                enabled: true,
+                capture_mode: "automatic",
+                background_review: { enabled: true, interval: 19, timeout_seconds: 71 },
+                retrieval: { recency_weight: 0.61, fuzzy_weight: 0.83 },
+              },
+            }
+            const baseline = buildFormFromConfig(original)
+            assert.equal(baseline.memoryCaptureMode, "automatic")
+            const modified = { ...baseline, memoryCaptureMode: "explicit_only" as const }
+            const patch = buildMemoryConfigPatch(modified, baseline)
+            assert.deepEqual(patch, { capture_mode: "explicit_only" })
+            const merged = mergePatch(original, { memory: patch })
+            const reloaded = buildFormFromConfig(merged)
+            assert.equal(reloaded.memoryCaptureMode, "explicit_only")
+            assert.equal(reloaded.memoryReviewInterval, "19")
+            assert.equal(reloaded.memoryReviewTimeoutSeconds, "71")
+            assert.equal(reloaded.memoryRetrievalRecencyWeight, "0.61")
+            assert.equal(reloaded.memoryRetrievalFuzzyWeight, "0.83")
+          })
+          EOF
+
+          gofmt -w \
+            pkg/capability/capability.go \
+            pkg/capability/capability_test.go \
+            pkg/agent/instance.go \
+            pkg/agent/pipeline_llm.go \
+            pkg/agent/capability_route_test.go \
+            pkg/memory/curated_types.go \
+            pkg/memory/curated_store.go \
+            pkg/memory/curated_migration_hardening_test.go \
+            web/backend/api/config.go \
+            web/backend/api/config_memory_test.go \
+            web/backend/api/memory_evolution.go \
+            web/backend/api/memory_evolution_test.go
+
+      - name: Targeted Go validation
+        run: go test ./pkg/capability ./pkg/agent ./pkg/memory ./web/backend/api
+
+      - name: Install frontend dependencies
+        working-directory: web/frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend configuration tests
+        working-directory: web/frontend
+        run: pnpm test:config
+
+      - name: Frontend browser tests
+        working-directory: web/frontend
+        run: pnpm exec vitest run src
+
+      - name: Frontend lint
+        working-directory: web/frontend
+        run: pnpm lint
+
+      - name: Frontend changed-file formatting
+        working-directory: web/frontend
+        run: pnpm exec prettier --check src/components/config/form-model.ts src/components/config/config-sections.tsx tests/form-model.test.ts vite.config.ts
+
+      - name: Frontend production build
+        working-directory: web/frontend
+        run: pnpm build
+
+      - name: Commit validated hardening
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No source changes to commit"
+            exit 0
+          fi
+          git commit -m "fix: close final native capability and memory hardening gaps"
+          git push origin HEAD:feat/native-telegram-capabilities-memory-hardening
