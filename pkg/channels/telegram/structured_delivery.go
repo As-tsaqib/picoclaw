@@ -213,42 +213,31 @@ func (c *TelegramChannel) sendStructuredFallback(
 	if fallback == "" {
 		fallback = "Structured response is unavailable on this Telegram server."
 	}
-	formattedFallback := fallback
-	if hasTelegramRichTable(fallback) {
-		formattedFallback = telegramTableFallbackPlainText(fallback)
-	}
-	
-	mdv2Fallback := markdownToTelegramMarkdownV2(formattedFallback)
-
-	chunks := channels.SplitMessage(mdv2Fallback, 3500)
-	plainChunks := channels.SplitMessage(formattedFallback, 3500)
+	useMarkdownV2 := c.tgCfg.UseMarkdownV2
+	chunks := channels.SplitMessage(fallback, 3500)
 	if len(chunks) == 0 {
-		chunks = []string{mdv2Fallback}
+		chunks = []string{fallback}
 	}
-	if len(plainChunks) == 0 {
-		plainChunks = []string{formattedFallback}
-	}
-	
-	usePlain := false
 	messageIDs := make([]string, 0, len(chunks))
-	
-	for i := 0; i < len(chunks); i++ {
-		text := chunks[i]
-		parseMode := telego.ModeMarkdownV2
-		
-		if usePlain {
-			if i < len(plainChunks) {
-				text = plainChunks[i]
-			} else {
-				continue
-			}
-			parseMode = ""
+	for i, chunk := range chunks {
+		mdFallback := chunk
+		content := chunk
+		if hasTelegramRichTable(chunk) {
+			fallbackMarkdown := telegramTableFallbackMarkdown(chunk)
+			content = parseContent(fallbackMarkdown, useMarkdownV2)
+			mdFallback = telegramTableFallbackPlainText(chunk)
+		} else {
+			content = parseContent(chunk, useMarkdownV2)
 		}
-		
-		params := tu.Message(tu.ID(chatID), text)
+
+		params := tu.Message(tu.ID(chatID), content)
 		params.MessageThreadID = threadID
-		params.ParseMode = parseMode
-		
+		if useMarkdownV2 {
+			params.WithParseMode(telego.ModeMarkdownV2)
+		} else {
+			params.WithParseMode(telego.ModeHTML)
+		}
+
 		if i == 0 && markup != nil {
 			params.ReplyMarkup = markup
 		}
@@ -257,23 +246,30 @@ func (c *TelegramChannel) sendStructuredFallback(
 			currentReply = replyToID
 		}
 		applyEphemeralSendMessage(params, ephemeral, currentReply)
+
 		pMsg, err := c.bot.SendMessage(ctx, params)
-		
-		if err != nil && !usePlain && isTelegramParseRejection(err) {
-			usePlain = true
-			if i < len(plainChunks) {
-				params.Text = plainChunks[i]
-			}
-			params.ParseMode = ""
-			pMsg, err = c.bot.SendMessage(ctx, params)
-		}
-		
 		if err != nil {
 			if ephemeral != nil {
-				return nil, ephemeralDeliveryError("structured fallback", err)
+				if !isTelegramParseRejection(err) {
+					return nil, ephemeralDeliveryError("structured fallback", err)
+				}
+				params.Text = mdFallback
+				params.ParseMode = ""
+				pMsg, err = c.bot.SendMessage(ctx, params)
+				if err != nil {
+					return nil, ephemeralDeliveryError("structured format fallback", err)
+				}
+			} else {
+				logParseFailed(err, useMarkdownV2)
+				params.Text = mdFallback
+				params.ParseMode = ""
+				pMsg, err = c.bot.SendMessage(ctx, params)
+				if err != nil {
+					return nil, fmt.Errorf("telegram structured fallback: %w", channels.ErrTemporary)
+				}
 			}
-			return nil, fmt.Errorf("telegram structured fallback: %w", channels.ErrTemporary)
 		}
+
 		encodedID, err := validateEphemeralSendResult(pMsg, ephemeral)
 		if err != nil {
 			return nil, err
@@ -287,26 +283,6 @@ func (c *TelegramChannel) sendStructuredFallback(
 				pending.messageID = pMsg.MessageID
 			}
 			c.storeSessionMenu(*pending)
-		}
-	}
-	
-	if usePlain && len(plainChunks) > len(chunks) {
-		for i := len(chunks); i < len(plainChunks); i++ {
-			params := tu.Message(tu.ID(chatID), plainChunks[i])
-			params.MessageThreadID = threadID
-			applyEphemeralSendMessage(params, ephemeral, "")
-			pMsg, err := c.bot.SendMessage(ctx, params)
-			if err != nil {
-				if ephemeral != nil {
-					return nil, ephemeralDeliveryError("structured fallback", err)
-				}
-				return nil, fmt.Errorf("telegram structured fallback: %w", channels.ErrTemporary)
-			}
-			encodedID, err := validateEphemeralSendResult(pMsg, ephemeral)
-			if err != nil {
-				return nil, err
-			}
-			messageIDs = append(messageIDs, encodedID)
 		}
 	}
 
@@ -461,9 +437,33 @@ func sessionInteractionKeyboard(
 }
 
 func memoryInteractionKeyboard(menu bus.InteractionMenu, callback func(string) string) [][]telego.InlineKeyboardButton {
-	keyboard := make([][]telego.InlineKeyboardButton, 0, 4)
-	
-	appendGrouped := func(indices []int, size int, style string) {
+	keyboard := make([][]telego.InlineKeyboardButton, 0, 6)
+
+	selects := make([]int, 0, 5)
+	pages := make([]int, 0, 3)
+	actions := make([]int, 0, 8)
+	dangerActions := make([]int, 0, 2)
+	closeEntries := make([]int, 0, 1)
+
+	for idx, entry := range menu.Entries {
+		action := strings.ToLower(strings.TrimSpace(entry.Action))
+		switch action {
+		case "close":
+			closeEntries = append(closeEntries, idx)
+		case "page", "noop":
+			pages = append(pages, idx)
+		case "forget", "forget_confirm", "reject":
+			dangerActions = append(dangerActions, idx)
+		default:
+			if len(entry.Label) <= 4 && action == "detail" {
+				selects = append(selects, idx)
+			} else {
+				actions = append(actions, idx)
+			}
+		}
+	}
+
+	appendGrouped := func(indices []int, size int, defaultStyle string) {
 		for len(indices) > 0 {
 			n := size
 			if len(indices) < n {
@@ -472,6 +472,12 @@ func memoryInteractionKeyboard(menu bus.InteractionMenu, callback func(string) s
 			row := make([]telego.InlineKeyboardButton, 0, n)
 			for _, idx := range indices[:n] {
 				entry := menu.Entries[idx]
+				style := defaultStyle
+				if entry.Action == "forget" || entry.Action == "reject" || entry.Action == "close" {
+					style = telego.ButtonStyleDanger
+				} else if entry.Action == "approve" || entry.Action == "restore" {
+					style = telego.ButtonStyleSuccess
+				}
 				row = append(row, telego.InlineKeyboardButton{
 					Text: entry.Label, CallbackData: callback("e" + strconv.Itoa(idx)), Style: style,
 				})
@@ -481,24 +487,12 @@ func memoryInteractionKeyboard(menu bus.InteractionMenu, callback func(string) s
 		}
 	}
 
-	actions := make([]int, 0, len(menu.Entries))
-	pages := make([]int, 0, len(menu.Entries))
-	closeEntries := make([]int, 0, 1)
-
-	for idx, entry := range menu.Entries {
-		if entry.Action == "close" {
-			closeEntries = append(closeEntries, idx)
-		} else if entry.Action == "page" {
-			pages = append(pages, idx)
-		} else {
-			actions = append(actions, idx)
-		}
-	}
-
-	appendGrouped(actions, 2, telego.ButtonStylePrimary)
+	appendGrouped(selects, 5, "")
 	appendGrouped(pages, 3, telego.ButtonStylePrimary)
+	appendGrouped(actions, 2, telego.ButtonStylePrimary)
+	appendGrouped(dangerActions, 2, telego.ButtonStyleDanger)
 	appendGrouped(closeEntries, 1, telego.ButtonStyleDanger)
-	
+
 	return keyboard
 }
 
@@ -637,13 +631,21 @@ func (c *TelegramChannel) beginSessionRenamePrompt(
 ) error {
 	promptText = strings.TrimSpace(promptText)
 	if promptText == "" {
-		promptText = "Balas pesan ini dengan nama baru untuk session aktif."
+		promptText = "Balas pesan ini dengan input baru."
+	}
+	placeholder := "Input baru"
+	if action == "rename" {
+		placeholder = "Nama session baru"
+	} else if action == "search" {
+		placeholder = "Kata kunci pencarian"
+	} else if action == "edit" {
+		placeholder = "Konten baru"
 	}
 	params := tu.Message(tu.ID(menu.chatID), promptText)
 	params.MessageThreadID = menu.threadID
 	params.ReplyMarkup = &telego.ForceReply{
 		ForceReply:            true,
-		InputFieldPlaceholder: "Nama session baru",
+		InputFieldPlaceholder: placeholder,
 		Selective:             true,
 	}
 	if menu.ephemeralID > 0 {
@@ -695,8 +697,6 @@ func (c *TelegramChannel) storeSessionRenamePrompt(
 		if existing.menu.chatID == prompt.menu.chatID && existing.menu.threadID == prompt.menu.threadID &&
 			existing.menu.menu.OwnerID == prompt.menu.menu.OwnerID &&
 			existing.menu.menu.AgentID == prompt.menu.menu.AgentID &&
-			existing.menu.menu.Scope == prompt.menu.menu.Scope &&
-			existing.menu.menu.Current == prompt.menu.menu.Current &&
 			existing.action == prompt.action && !existing.consumed {
 			existing.consumed = true
 			c.sessionRenamePrompts[existingKey] = existing
@@ -783,9 +783,18 @@ func (c *TelegramChannel) claimSessionRenamePrompt(
 		strconv.FormatInt(message.From.ID, 10) != strings.TrimSpace(prompt.menu.menu.OwnerID) ||
 		(prompt.menu.receiverUserID > 0 && message.From.ID != prompt.menu.receiverUserID) ||
 		(prompt.menu.menu.Channel != "" && prompt.menu.menu.Channel != c.Name()) ||
-		strings.TrimSpace(prompt.menu.menu.AgentID) == "" || strings.TrimSpace(prompt.menu.menu.Scope) == "" ||
-		strings.TrimSpace(prompt.menu.menu.Current) == "" {
+		strings.TrimSpace(prompt.menu.menu.AgentID) == "" {
 		return prompt, sessionRenameClaimRejected
+	}
+	if strings.EqualFold(prompt.menu.menu.Kind, "session") || strings.EqualFold(prompt.menu.menu.Kind, "model") {
+		if strings.TrimSpace(prompt.menu.menu.Scope) == "" {
+			return prompt, sessionRenameClaimRejected
+		}
+	}
+	if strings.EqualFold(prompt.menu.menu.Kind, "session") && prompt.action == "rename" {
+		if strings.TrimSpace(prompt.menu.menu.Current) == "" {
+			return prompt, sessionRenameClaimRejected
+		}
 	}
 	senderID := strconv.FormatInt(message.From.ID, 10)
 	if !c.IsAllowedSender(bus.SenderInfo{
@@ -813,18 +822,32 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(
 	case sessionRenameClaimRejected, sessionRenameClaimReplay:
 		return true, nil
 	case sessionRenameClaimExpired:
-		return true, c.sendSessionRenameNotice(
-			ctx,
-			message,
-			"Permintaan rename sudah kedaluwarsa. Jalankan /session lagi.",
-		)
+		noticeText := "Permintaan sudah kedaluwarsa. Jalankan command lagi."
+		if prompt.menu.menu.Kind == "session" {
+			noticeText = "Permintaan rename sudah kedaluwarsa. Jalankan /session lagi."
+		} else if prompt.menu.menu.Kind == "memory" {
+			noticeText = "Permintaan memory sudah kedaluwarsa. Jalankan /memory lagi."
+		}
+		return true, c.sendSessionRenameNotice(ctx, message, noticeText)
 	case sessionRenameClaimInvalid:
-		return true, c.sendSessionRenameNotice(ctx, message, "Nama session harus berupa teks yang tidak kosong.")
+		invalidText := "Input harus berupa teks yang tidak kosong."
+		if prompt.menu.menu.Kind == "session" {
+			invalidText = "Nama session harus berupa teks yang tidak kosong."
+		} else if prompt.menu.menu.Kind == "memory" {
+			invalidText = "Input memory harus berupa teks yang tidak kosong."
+		}
+		return true, c.sendSessionRenameNotice(ctx, message, invalidText)
 	}
 
 	handler := c.currentInternalCallbackHandler()
 	if handler == nil {
-		return true, c.sendSessionRenameNotice(ctx, message, "Rename session sedang tidak tersedia.")
+		unavailableText := "Layanan sedang tidak tersedia."
+		if prompt.menu.menu.Kind == "session" {
+			unavailableText = "Rename session sedang tidak tersedia."
+		} else if prompt.menu.menu.Kind == "memory" {
+			unavailableText = "Layanan memory sedang tidak tersedia."
+		}
+		return true, c.sendSessionRenameNotice(ctx, message, unavailableText)
 	}
 	inbound := prompt.menu.menu.Inbound
 	inbound.MessageID = strconv.Itoa(message.MessageID)
@@ -856,27 +879,38 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(
 		SessionKey: prompt.menu.menu.Current,
 	})
 	if err != nil {
-		logger.WarnCF("telegram", "Session rename reply was rejected", map[string]any{
+		logger.WarnCF("telegram", "Prompt reply was rejected", map[string]any{
 			"reason": "scope_or_state_validation",
 		})
-		return true, c.sendSessionRenameNotice(ctx, message, "Session tidak dapat di-rename. Jalankan /session lagi.")
+		failText := "Permintaan tidak dapat diproses. Jalankan command lagi."
+		if prompt.menu.menu.Kind == "session" {
+			failText = "Session tidak dapat di-rename. Jalankan /session lagi."
+		} else if prompt.menu.menu.Kind == "memory" {
+			failText = "Gagal memproses input memory. Jalankan /memory lagi."
+		}
+		return true, c.sendSessionRenameNotice(ctx, message, failText)
 	}
 	if response == nil || response.Content == nil {
-		text := "Nama session berhasil diubah."
+		text := "Perubahan berhasil disimpan."
+		if prompt.menu.menu.Kind == "session" {
+			text = "Nama session berhasil diubah."
+		}
 		if response != nil && strings.TrimSpace(response.Text) != "" {
 			text = strings.TrimSpace(response.Text)
 		}
 		return true, c.sendSessionRenameNotice(ctx, message, text)
 	}
 	if err := c.refreshSessionMenuAfterRename(ctx, prompt, response.Content); err != nil {
-		logger.WarnCF("telegram", "Session menu refresh after rename failed", map[string]any{
+		logger.WarnCF("telegram", "Menu refresh after prompt reply failed", map[string]any{
 			"reason": "telegram_edit_failed",
 		})
-		return true, c.sendSessionRenameNotice(
-			ctx,
-			message,
-			"Nama session berhasil diubah. Jalankan /session untuk memperbarui dashboard.",
-		)
+		fallbackText := "Perubahan berhasil disimpan."
+		if prompt.menu.menu.Kind == "session" {
+			fallbackText = "Nama session berhasil diubah. Jalankan /session untuk memperbarui dashboard."
+		} else if prompt.menu.menu.Kind == "memory" {
+			fallbackText = "Perubahan memory berhasil disimpan. Jalankan /memory untuk melihat dashboard."
+		}
+		return true, c.sendSessionRenameNotice(ctx, message, fallbackText)
 	}
 	return true, nil
 }
@@ -891,7 +925,7 @@ func (c *TelegramChannel) refreshSessionMenuAfterRename(
 		return err
 	}
 	if pending == nil {
-		return fmt.Errorf("renamed session response has no interaction menu")
+		return fmt.Errorf("prompt reply response has no interaction menu")
 	}
 	message := &telego.Message{
 		MessageID: prompt.menu.messageID,
@@ -1167,26 +1201,39 @@ func (c *TelegramChannel) editStructuredSessionMenu(
 	content *bus.StructuredContent,
 	markup *telego.InlineKeyboardMarkup,
 ) error {
+	useMarkdownV2 := c.tgCfg.UseMarkdownV2
 	if menu.ephemeralID > 0 {
 		fallback := content.FallbackText()
+		plainFallback := fallback
 		if hasTelegramRichTable(fallback) {
-			fallback = telegramTableFallbackPlainText(fallback)
+			fallback = telegramTableFallbackMarkdown(fallback)
+			plainFallback = telegramTableFallbackPlainText(plainFallback)
 		}
 		params := &telego.EditEphemeralMessageTextParams{
 			ChatID:             tu.ID(menu.chatID),
 			ReceiverUserID:     menu.receiverUserID,
 			EphemeralMessageID: menu.ephemeralID,
-			Text:               fallback,
+			Text:               parseContent(fallback, useMarkdownV2),
 			ReplyMarkup:        markup,
 		}
-		if err := c.bot.EditEphemeralMessageText(
-			ctx,
-			params,
-		); err != nil &&
-			!strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
-			return err
+		if useMarkdownV2 {
+			params.ParseMode = telego.ModeMarkdownV2
+		} else {
+			params.ParseMode = telego.ModeHTML
 		}
-		return nil
+		err := c.bot.EditEphemeralMessageText(ctx, params)
+		if err == nil || strings.Contains(strings.ToLower(errorString(err)), "message is not modified") {
+			return nil
+		}
+		if isTelegramParseRejection(err) {
+			params.Text = plainFallback
+			params.ParseMode = ""
+			err = c.bot.EditEphemeralMessageText(ctx, params)
+			if err == nil || strings.Contains(strings.ToLower(errorString(err)), "message is not modified") {
+				return nil
+			}
+		}
+		return err
 	}
 
 	if rich, ok := buildNativeRichMessage(content); ok {
@@ -1202,18 +1249,33 @@ func (c *TelegramChannel) editStructuredSessionMenu(
 		}
 	}
 	fallback := content.FallbackText()
+	plainFallback := fallback
 	if hasTelegramRichTable(fallback) {
-		fallback = telegramTableFallbackPlainText(fallback)
+		fallback = telegramTableFallbackMarkdown(fallback)
+		plainFallback = telegramTableFallbackPlainText(plainFallback)
 	}
 	params := &telego.EditMessageTextParams{
 		ChatID: tu.ID(menu.chatID), MessageID: message.MessageID,
-		Text: fallback, ReplyMarkup: markup,
+		Text: parseContent(fallback, useMarkdownV2), ReplyMarkup: markup,
+	}
+	if useMarkdownV2 {
+		params.ParseMode = telego.ModeMarkdownV2
+	} else {
+		params.ParseMode = telego.ModeHTML
 	}
 	_, err := c.bot.EditMessageText(ctx, params)
-	if err != nil && !strings.Contains(strings.ToLower(errorString(err)), "message is not modified") {
-		return err
+	if err == nil || strings.Contains(strings.ToLower(errorString(err)), "message is not modified") {
+		return nil
 	}
-	return nil
+	if isTelegramParseRejection(err) {
+		params.Text = plainFallback
+		params.ParseMode = ""
+		_, err = c.bot.EditMessageText(ctx, params)
+		if err == nil || strings.Contains(strings.ToLower(errorString(err)), "message is not modified") {
+			return nil
+		}
+	}
+	return err
 }
 
 func (c *TelegramChannel) clearSessionMenuKeyboard(

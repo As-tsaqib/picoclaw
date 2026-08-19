@@ -3,6 +3,8 @@ package commands
 import (
 	"context"
 	"testing"
+
+	"github.com/As-tsaqib/picoclaw/pkg/bus"
 )
 
 func TestMemoryAndCheckpointCommandsDispatchRuntimeControls(t *testing.T) {
@@ -70,6 +72,40 @@ func TestMemoryAndCheckpointCommandsDispatchRuntimeControls(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestMemoryRootCommand_DispatchesStructuredDashboard(t *testing.T) {
+	called := false
+	runtime := &Runtime{
+		MemoryCommand: func(ctx context.Context, req MemoryCommandRequest) (*bus.StructuredContent, error) {
+			if req.Operation != "dashboard" {
+				t.Fatalf("unexpected operation: %s", req.Operation)
+			}
+			called = true
+			return &bus.StructuredContent{
+				Title:      "Personal Memory",
+				Paragraphs: []string{"Active: 10 entries"},
+			}, nil
+		},
+	}
+	executor := NewExecutor(NewRegistry(BuiltinDefinitions()), runtime)
+	var structured bus.StructuredContent
+	result := executor.Execute(context.Background(), Request{
+		Channel: "telegram", Text: "/memory",
+		ReplyStructured: func(content bus.StructuredContent) error {
+			structured = content
+			return nil
+		},
+	})
+	if result.Outcome != OutcomeHandled || result.Err != nil {
+		t.Fatalf("Execute(/memory) outcome=%v err=%v", result.Outcome, result.Err)
+	}
+	if !called {
+		t.Fatalf("expected MemoryCommand handler to be called")
+	}
+	if structured.Title != "Personal Memory" {
+		t.Fatalf("expected title 'Personal Memory', got %q", structured.Title)
 	}
 }
 
