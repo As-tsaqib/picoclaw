@@ -1403,6 +1403,13 @@ type ToolsConfig struct {
 	ReadFile        ReadFileToolConfig `json:"read_file"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_READ_FILE_"`
 	Serial          ToolConfig         `json:"serial"            yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SERIAL_"`
 	SendFile        ToolConfig         `json:"send_file"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_FILE_"`
+	SendAnimation   ToolConfig         `json:"send_animation"    yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_ANIMATION_"`
+	SendSticker     ToolConfig         `json:"send_sticker"      yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_STICKER_"`
+	SendVideoNote   ToolConfig         `json:"send_video_note"   yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_VIDEO_NOTE_"`
+	SendLivePhoto   ToolConfig         `json:"send_live_photo"   yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_LIVE_PHOTO_"`
+	SendLocation    ToolConfig         `json:"send_location"     yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_LOCATION_"`
+	SendContact     ToolConfig         `json:"send_contact"      yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_CONTACT_"`
+	SendDice        ToolConfig         `json:"send_dice"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_DICE_"`
 	SendPoll        ToolConfig         `json:"send_poll"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_POLL_"`
 	SendQuiz        ToolConfig         `json:"send_quiz"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_QUIZ_"`
 	StopPoll        ToolConfig         `json:"stop_poll"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_STOP_POLL_"`
@@ -2175,6 +2182,20 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.WebFetch.Enabled
 	case "send_file":
 		return t.SendFile.Enabled
+	case "send_animation":
+		return t.SendAnimation.Enabled
+	case "send_sticker":
+		return t.SendSticker.Enabled
+	case "send_video_note":
+		return t.SendVideoNote.Enabled
+	case "send_live_photo":
+		return t.SendLivePhoto.Enabled
+	case "send_location":
+		return t.SendLocation.Enabled
+	case "send_contact":
+		return t.SendContact.Enabled
+	case "send_dice":
+		return t.SendDice.Enabled
 	case "send_poll":
 		return t.SendPoll.Enabled
 	case "send_quiz":

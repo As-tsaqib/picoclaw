@@ -80,6 +80,7 @@ type RouteContext struct {
 	ServerID           string
 	HasBusinessContext bool
 	IsEphemeral        bool
+	DisabledFeatures   map[Feature]bool
 }
 
 const (
@@ -307,6 +308,15 @@ func ResolveRouteCapabilities(route RouteContext, cache *NegativeCapabilityCache
 		set[FeatureKeyboardReply] = CapabilityInfo{State: StateUnsupported, Condition: "not_implemented"}
 		set[FeatureChecklistNative] = CapabilityInfo{State: StateConditional, Condition: "context_unavailable"}
 		set[FeaturePollMedia] = CapabilityInfo{State: StateUnsupported, Condition: "not_implemented"}
+
+		for feature, disabled := range route.DisabledFeatures {
+			if !disabled {
+				continue
+			}
+			if _, declared := set[feature]; declared {
+				set[feature] = CapabilityInfo{State: StateUnsupported, Condition: "disabled_by_policy"}
+			}
+		}
 	} else if channel == "pico" {
 		set[FeatureMessageText] = CapabilityInfo{State: StateSupported}
 		set[FeatureMessageStreamText] = CapabilityInfo{State: StateSupported}

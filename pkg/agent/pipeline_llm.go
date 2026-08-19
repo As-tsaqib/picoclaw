@@ -775,6 +775,35 @@ func transientLLMRetryReason(err error) (string, bool) {
 	return "", false
 }
 
+func capabilityPolicyDisabledFeatures(cfg *config.Config) map[capability.Feature]bool {
+	if cfg == nil {
+		return nil
+	}
+	disabled := make(map[capability.Feature]bool)
+	disable := func(tool string, features ...capability.Feature) {
+		if cfg.Tools.IsToolEnabled(tool) {
+			return
+		}
+		for _, feature := range features {
+			disabled[feature] = true
+		}
+	}
+	disable("send_poll", capability.FeaturePollRegular)
+	disable("send_quiz", capability.FeaturePollQuiz, capability.FeaturePollMultipleCorrect)
+	disable("stop_poll", capability.FeaturePollStop)
+	disable("send_location", capability.FeatureLocationPoint, capability.FeatureLocationVenue)
+	disable("send_contact", capability.FeatureContactCard)
+	disable("send_dice", capability.FeatureDiceAnimated)
+	disable("send_live_photo", capability.FeatureMediaLivePhoto)
+	disable("send_animation", capability.FeatureMediaAnimation)
+	disable("send_sticker", capability.FeatureMediaSticker)
+	disable("send_video_note", capability.FeatureMediaVideoNote)
+	if len(disabled) == 0 {
+		return nil
+	}
+	return disabled
+}
+
 func filterToolsByRouteCapabilities(
 	toolDefs []providers.ToolDefinition,
 	al *AgentLoop,
@@ -788,11 +817,12 @@ func filterToolsByRouteCapabilities(
 		account = ts.opts.Dispatch.InboundContext.Account
 	}
 	routeCtx := capability.RouteContext{
-		Channel:     ts.channel,
-		Account:     account,
-		ChatID:      ts.chatID,
-		SenderID:    ts.opts.Dispatch.SenderID(),
-		IsEphemeral: turnStateIsPrivate(ts),
+		Channel:          ts.channel,
+		Account:          account,
+		ChatID:           ts.chatID,
+		SenderID:         ts.opts.Dispatch.SenderID(),
+		IsEphemeral:      turnStateIsPrivate(ts),
+		DisabledFeatures: capabilityPolicyDisabledFeatures(al.cfg),
 	}
 	if ts.opts.Dispatch.InboundContext != nil && ts.opts.Dispatch.InboundContext.Raw != nil {
 		routeCtx.ServerID = ts.opts.Dispatch.InboundContext.Raw["server_id"]
@@ -859,11 +889,12 @@ func isToolAllowedByRoute(al *AgentLoop, ts *turnState, toolName string) bool {
 		account = ts.opts.Dispatch.InboundContext.Account
 	}
 	routeCtx := capability.RouteContext{
-		Channel:     ts.channel,
-		Account:     account,
-		ChatID:      ts.chatID,
-		SenderID:    ts.opts.Dispatch.SenderID(),
-		IsEphemeral: turnStateIsPrivate(ts),
+		Channel:          ts.channel,
+		Account:          account,
+		ChatID:           ts.chatID,
+		SenderID:         ts.opts.Dispatch.SenderID(),
+		IsEphemeral:      turnStateIsPrivate(ts),
+		DisabledFeatures: capabilityPolicyDisabledFeatures(al.cfg),
 	}
 	if ts.opts.Dispatch.InboundContext != nil && ts.opts.Dispatch.InboundContext.Raw != nil {
 		routeCtx.ServerID = ts.opts.Dispatch.InboundContext.Raw["server_id"]

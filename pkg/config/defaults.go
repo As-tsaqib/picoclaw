@@ -476,6 +476,27 @@ func DefaultConfig() *Config {
 			SendFile: ToolConfig{
 				Enabled: true,
 			},
+			SendAnimation: ToolConfig{
+				Enabled: true,
+			},
+			SendSticker: ToolConfig{
+				Enabled: true,
+			},
+			SendVideoNote: ToolConfig{
+				Enabled: true,
+			},
+			SendLivePhoto: ToolConfig{
+				Enabled: true,
+			},
+			SendLocation: ToolConfig{
+				Enabled: true,
+			},
+			SendContact: ToolConfig{
+				Enabled: true,
+			},
+			SendDice: ToolConfig{
+				Enabled: true,
+			},
 			SendPoll: ToolConfig{
 				Enabled: true,
 			},

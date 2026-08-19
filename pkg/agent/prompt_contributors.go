@@ -40,12 +40,13 @@ func (telegramOutputPromptContributor) ContributePrompt(
 	}
 
 	route := capability.RouteContext{
-		Channel:     req.Channel,
-		Account:     req.MemoryScope.Account,
-		ChatID:      req.ChatID,
-		SenderID:    req.SenderID,
-		ServerID:    req.ServerID,
-		IsEphemeral: req.PrivateContext,
+		Channel:          req.Channel,
+		Account:          req.MemoryScope.Account,
+		ChatID:           req.ChatID,
+		SenderID:         req.SenderID,
+		ServerID:         req.ServerID,
+		IsEphemeral:      req.PrivateContext,
+		DisabledFeatures: req.DisabledCapabilities,
 	}
 	set := capability.ResolveRouteCapabilities(route, capability.GlobalNegativeCache)
 	capPrompt := capability.FormatCapabilityPrompt(set, req.Channel)

@@ -32,6 +32,7 @@ func promptBuildRequestForTurn(
 	memoryParts, private := memoryPromptPartsForTurn(ts, cfg, req.MemoryScope)
 	req.Overlays = append(req.Overlays, memoryParts...)
 	req.PrivateContext = private
+	req.DisabledCapabilities = capabilityPolicyDisabledFeatures(cfg)
 	if ts.opts.Dispatch.InboundContext != nil && ts.opts.Dispatch.InboundContext.Raw != nil {
 		req.ServerID = ts.opts.Dispatch.InboundContext.Raw["server_id"]
 	}
