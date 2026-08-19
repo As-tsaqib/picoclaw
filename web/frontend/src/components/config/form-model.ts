@@ -861,7 +861,10 @@ export function buildMemoryConfigPatch(
   if (!MEMORY_NOTIFICATION_OPTIONS.includes(form.memoryNotifications)) {
     throw new Error("Notification mode is invalid.")
   }
-  if (form.memoryCaptureMode !== "automatic" && form.memoryCaptureMode !== "explicit_only") {
+  if (
+    form.memoryCaptureMode !== "automatic" &&
+    form.memoryCaptureMode !== "explicit_only"
+  ) {
     throw new Error("Memory capture mode is invalid.")
   }
   if (!MEMORY_RECALL_OPTIONS.includes(form.memoryRecallMode)) {
