@@ -20,21 +20,25 @@ type sendNativeSingleMediaTool struct {
 
 func NewSendAnimationTool() Tool {
 	return &sendNativeSingleMediaTool{
-		name: "send_animation", kind: bus.NativeSingleMediaAnimation, caption: true,
+		name:        "send_animation",
+		kind:        bus.NativeSingleMediaAnimation,
+		caption:     true,
 		description: "Send an existing PicoClaw media:// ref as a native Telegram animation on the current trusted route.",
 	}
 }
 
 func NewSendStickerTool() Tool {
 	return &sendNativeSingleMediaTool{
-		name: "send_sticker", kind: bus.NativeSingleMediaSticker,
+		name:        "send_sticker",
+		kind:        bus.NativeSingleMediaSticker,
 		description: "Send an existing PicoClaw media:// ref as a native Telegram sticker on the current trusted route.",
 	}
 }
 
 func NewSendVideoNoteTool() Tool {
 	return &sendNativeSingleMediaTool{
-		name: "send_video_note", kind: bus.NativeSingleMediaVideoNote,
+		name:        "send_video_note",
+		kind:        bus.NativeSingleMediaVideoNote,
 		description: "Send an existing PicoClaw media:// ref as a native Telegram video note on the current trusted route.",
 	}
 }

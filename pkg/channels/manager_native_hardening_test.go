@@ -43,7 +43,10 @@ type semanticMediaTestChannel struct {
 	semanticCalls   int
 }
 
-func (c *semanticMediaTestChannel) SendSemanticMedia(_ context.Context, _ bus.OutboundMediaMessage) ([]string, bool, error) {
+func (c *semanticMediaTestChannel) SendSemanticMedia(
+	_ context.Context,
+	_ bus.OutboundMediaMessage,
+) ([]string, bool, error) {
 	c.semanticCalls++
 	return []string{"semantic"}, c.semanticHandled, c.semanticErr
 }
@@ -75,6 +78,12 @@ func TestManagerSemanticMediaDelegatesWhenUnhandled(t *testing.T) {
 		Context: bus.InboundContext{Channel: "telegram"}, Parts: []bus.MediaPart{{Ref: "media://ordinary"}},
 	})
 	if err != nil || len(ids) != 1 || ids[0] != "ordinary" || ch.semanticCalls != 1 || len(ch.sentMediaMessages) != 1 {
-		t.Fatalf("ids=%v err=%v semanticCalls=%d ordinaryCalls=%d", ids, err, ch.semanticCalls, len(ch.sentMediaMessages))
+		t.Fatalf(
+			"ids=%v err=%v semanticCalls=%d ordinaryCalls=%d",
+			ids,
+			err,
+			ch.semanticCalls,
+			len(ch.sentMediaMessages),
+		)
 	}
 }

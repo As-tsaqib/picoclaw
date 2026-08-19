@@ -418,7 +418,10 @@ func validateConfig(cfg *config.Config) []string {
 	}
 	if strings.TrimSpace(cfg.Memory.OwnerIdentity) != "" {
 		if _, ok := dashboardOwnerPersonKey(cfg); !ok {
-			errs = append(errs, "memory.owner_identity must reference exactly one identity link containing pico:pico-user")
+			errs = append(
+				errs,
+				"memory.owner_identity must reference exactly one identity link containing pico:pico-user",
+			)
 		}
 	}
 	if err := cfg.Evolution.Validate(); err != nil {

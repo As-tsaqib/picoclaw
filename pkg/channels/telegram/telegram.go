@@ -1021,7 +1021,12 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 					serverID = c.tgCfg.BaseURL
 				}
 				if capability.GlobalNegativeCache.RecordFailure("telegram", account, serverID, feature, err) {
-					return nil, fmt.Errorf("native %s is unsupported by this Telegram server: %v: %w", part.Type, err, channels.ErrSendFailed)
+					return nil, fmt.Errorf(
+						"native %s is unsupported by this Telegram server: %v: %w",
+						part.Type,
+						err,
+						channels.ErrSendFailed,
+					)
 				}
 			}
 			if ephemeralTarget != nil {

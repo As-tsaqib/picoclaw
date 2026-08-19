@@ -42,18 +42,18 @@ func TestMigrateLegacyUserStoreToPersonScopeBeyondBatchLimitAndIdempotent(t *tes
 func TestMigrateLegacyUserStorePreservesHistoricalMetadata(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "curated")
 	historical := time.Date(2025, 7, 4, 5, 6, 7, 0, time.UTC)
-	seed, err := NewCuratedStore(root, CuratedStoreOptions{
+	seed, seedErr := NewCuratedStore(root, CuratedStoreOptions{
 		WorkspaceCharLimit: 100_000,
 		PerUserCharLimit:   100_000,
 		Now:                func() time.Time { return historical },
 	})
-	if err != nil {
-		t.Fatal(err)
+	if seedErr != nil {
+		t.Fatal(seedErr)
 	}
 	legacyKey := "channel:telegram|account:default|user:owner"
 	legacyCaller := CallerScope{AgentID: "migration", UserKey: legacyKey}
 	confidence := 1.0
-	seedResult, err := seed.ApplyBatch(CuratedTargetCurrentUser, legacyCaller, []CuratedMutation{{
+	seedResult, seedApplyErr := seed.ApplyBatch(CuratedTargetCurrentUser, legacyCaller, []CuratedMutation{{
 		Action:          CuratedActionAdd,
 		Content:         "Use Indonesian",
 		Type:            CuratedTypeCommunicationPreference,
@@ -64,27 +64,33 @@ func TestMigrateLegacyUserStorePreservesHistoricalMetadata(t *testing.T) {
 		PreferenceValue: "id",
 		Provenance:      Provenance{Source: "user_request", Channel: "telegram", MessageRef: "old-message"},
 	}}, false)
-	if err != nil || len(seedResult.Applied) != 1 {
-		t.Fatalf("seed result=%#v err=%v", seedResult, err)
+	if seedApplyErr != nil || len(seedResult.Applied) != 1 {
+		t.Fatalf("seed result=%#v err=%v", seedResult, seedApplyErr)
 	}
-	if _, err := seed.ApplyBatch(CuratedTargetCurrentUser, legacyCaller, []CuratedMutation{{
+	if _, pinErr := seed.ApplyBatch(CuratedTargetCurrentUser, legacyCaller, []CuratedMutation{{
 		Action: CuratedActionPin, ID: seedResult.Applied[0].ID,
-	}}, false); err != nil {
-		t.Fatal(err)
+	}}, false); pinErr != nil {
+		t.Fatal(pinErr)
 	}
-	legacyEntries, err := seed.List(CuratedTargetCurrentUser, legacyCaller)
-	if err != nil || len(legacyEntries) != 1 {
-		t.Fatalf("legacy entries=%#v err=%v", legacyEntries, err)
+	legacyEntries, legacyListErr := seed.List(CuratedTargetCurrentUser, legacyCaller)
+	if legacyListErr != nil || len(legacyEntries) != 1 {
+		t.Fatalf("legacy entries=%#v err=%v", legacyEntries, legacyListErr)
 	}
 	legacyEntry := legacyEntries[0]
 
 	store := newTestCuratedStore(t, root, 100_000, 100_000)
-	if _, err := store.MigrateLegacyUserStoreToPersonScope([]string{legacyKey}, "person:owner"); err != nil {
-		t.Fatal(err)
+	if _, migrateErr := store.MigrateLegacyUserStoreToPersonScope(
+		[]string{legacyKey},
+		"person:owner",
+	); migrateErr != nil {
+		t.Fatal(migrateErr)
 	}
-	entries, err := store.List(CuratedTargetCurrentUser, CallerScope{AgentID: "migration", UserKey: "person:owner"})
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("entries=%#v err=%v", entries, err)
+	entries, personListErr := store.List(
+		CuratedTargetCurrentUser,
+		CallerScope{AgentID: "migration", UserKey: "person:owner"},
+	)
+	if personListErr != nil || len(entries) != 1 {
+		t.Fatalf("entries=%#v err=%v", entries, personListErr)
 	}
 	entry := entries[0]
 	if entry.EvidenceKind != CuratedEvidenceExplicit || entry.EvidenceCount != 7 || !entry.Pinned {
@@ -112,11 +118,16 @@ func TestMigrateLegacyUserStoreDoesNotOverwriteEqualOrStrongerPreference(t *test
 	}}, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, legacy, []CuratedMutation{{
-		Action: CuratedActionAdd, Content: "Prefer native quizzes",
-		Type:         CuratedTypeCommunicationPreference,
-		EvidenceKind: CuratedEvidenceInferred, PreferenceKey: "workflow.quiz_format", PreferenceValue: "telegram_native_quiz",
-	}}, false); err != nil {
+	if _, err := store.ApplyBatch(CuratedTargetCurrentUser, legacy, []CuratedMutation{
+		{
+			Action:          CuratedActionAdd,
+			Content:         "Prefer native quizzes",
+			Type:            CuratedTypeCommunicationPreference,
+			EvidenceKind:    CuratedEvidenceInferred,
+			PreferenceKey:   "workflow.quiz_format",
+			PreferenceValue: "telegram_native_quiz",
+		},
+	}, false); err != nil {
 		t.Fatal(err)
 	}
 	migrated, err := store.MigrateLegacyUserStoreToPersonScope([]string{legacyKey}, "person:owner")
@@ -149,7 +160,10 @@ func TestMigrateLegacyUserStoreSurfacesMalformedSource(t *testing.T) {
 func TestCuratedDocumentLockRegistryReleasesIdlePaths(t *testing.T) {
 	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 100_000, 100_000)
 	for i := 0; i < 40; i++ {
-		caller := CallerScope{AgentID: "main", UserKey: "person:test-" + time.Unix(int64(i+1), 0).UTC().Format("150405")}
+		caller := CallerScope{
+			AgentID: "main",
+			UserKey: "person:test-" + time.Unix(int64(i+1), 0).UTC().Format("150405"),
+		}
 		if _, err := store.List(CuratedTargetCurrentUser, caller); err != nil {
 			t.Fatal(err)
 		}

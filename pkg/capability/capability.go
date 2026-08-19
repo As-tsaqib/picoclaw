@@ -288,8 +288,12 @@ func ResolveRouteCapabilities(route RouteContext, cache *NegativeCapabilityCache
 			set[FeatureMessageEphemeral] = CapabilityInfo{State: StateSupported}
 		} else {
 			set[FeatureMessageStreamText] = CapabilityInfo{State: StateSupported}
-			if cache != nil && cache.IsDowngraded(route.Channel, route.Account, route.ServerID, FeatureMessageStreamRich) {
-				set[FeatureMessageStreamRich] = CapabilityInfo{State: StateUnsupported, Condition: "downgraded_by_server"}
+			if cache != nil &&
+				cache.IsDowngraded(route.Channel, route.Account, route.ServerID, FeatureMessageStreamRich) {
+				set[FeatureMessageStreamRich] = CapabilityInfo{
+					State:     StateUnsupported,
+					Condition: "downgraded_by_server",
+				}
 			} else {
 				set[FeatureMessageStreamRich] = CapabilityInfo{State: StateSupported}
 			}

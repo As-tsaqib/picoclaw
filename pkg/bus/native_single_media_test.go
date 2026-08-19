@@ -21,10 +21,14 @@ func TestNativeSingleMediaRefRoundTrip(t *testing.T) {
 }
 
 func TestNativeSingleMediaRefRejectsAuthorityAndInvalidCaptionShape(t *testing.T) {
-	if _, ok := EncodeNativeSingleMediaRef(NativeSingleMediaPayload{Kind: NativeSingleMediaAnimation, Ref: "https://example.com/a.gif"}); ok {
+	if _, ok := EncodeNativeSingleMediaRef(
+		NativeSingleMediaPayload{Kind: NativeSingleMediaAnimation, Ref: "https://example.com/a.gif"},
+	); ok {
 		t.Fatal("URL escaped MediaStore boundary")
 	}
-	if _, ok := EncodeNativeSingleMediaRef(NativeSingleMediaPayload{Kind: NativeSingleMediaSticker, Ref: "media://s", Caption: "not allowed"}); ok {
+	if _, ok := EncodeNativeSingleMediaRef(
+		NativeSingleMediaPayload{Kind: NativeSingleMediaSticker, Ref: "media://s", Caption: "not allowed"},
+	); ok {
 		t.Fatal("sticker caption unexpectedly accepted")
 	}
 }

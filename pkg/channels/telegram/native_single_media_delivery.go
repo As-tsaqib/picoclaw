@@ -12,19 +12,6 @@ import (
 	"github.com/As-tsaqib/picoclaw/pkg/media"
 )
 
-func nativeSingleMediaCapability(kind bus.NativeSingleMediaKind) (capability.Feature, bool) {
-	switch kind {
-	case bus.NativeSingleMediaAnimation:
-		return capability.FeatureMediaAnimation, true
-	case bus.NativeSingleMediaSticker:
-		return capability.FeatureMediaSticker, true
-	case bus.NativeSingleMediaVideoNote:
-		return capability.FeatureMediaVideoNote, true
-	default:
-		return "", false
-	}
-}
-
 func telegramMediaCapability(partType string) (capability.Feature, bool) {
 	switch strings.ToLower(strings.TrimSpace(partType)) {
 	case "animation":

@@ -112,7 +112,7 @@ func TestSendQuizTool_CurrentValidation(t *testing.T) {
 		"question": "Test?", "options": []any{"A"}, "correct_option_ids": []any{float64(1)},
 	})
 	if !result.IsError {
-		t.Fatal("expected error for out-of-range correct_option_id")
+		t.Fatal("expected error for out-of-range correct option ID")
 	}
 
 	result = tool.Execute(context.Background(), map[string]any{

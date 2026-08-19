@@ -36,14 +36,25 @@ func TestTelegramSemanticNativeSingleMedia(t *testing.T) {
 			path := filepath.Join(t.TempDir(), tc.filename)
 			require.NoError(t, os.WriteFile(path, []byte("media"), 0o600))
 			ch.SetMediaStore(&livePhotoTestStore{entries: map[string]livePhotoTestMedia{
-				"media://asset": {path: path, meta: media.MediaMeta{Filename: tc.filename, ContentType: tc.contentType}},
+				"media://asset": {
+					path: path,
+					meta: media.MediaMeta{Filename: tc.filename, ContentType: tc.contentType},
+				},
 			}})
-			encoded, ok := bus.EncodeNativeSingleMediaRef(bus.NativeSingleMediaPayload{Kind: tc.kind, Ref: "media://asset"})
+			encoded, ok := bus.EncodeNativeSingleMediaRef(
+				bus.NativeSingleMediaPayload{Kind: tc.kind, Ref: "media://asset"},
+			)
 			require.True(t, ok)
 			ids, handled, err := ch.SendSemanticMedia(context.Background(), bus.OutboundMediaMessage{
-				ChatID:  "-100123/42",
-				Context: bus.InboundContext{Channel: "telegram", Account: ch.Name(), ChatID: "-100123", TopicID: "42", ReplyToMessageID: "7"},
-				Parts:   []bus.MediaPart{{Ref: encoded}},
+				ChatID: "-100123/42",
+				Context: bus.InboundContext{
+					Channel:          "telegram",
+					Account:          ch.Name(),
+					ChatID:           "-100123",
+					TopicID:          "42",
+					ReplyToMessageID: "7",
+				},
+				Parts: []bus.MediaPart{{Ref: encoded}},
 			})
 			require.NoError(t, err)
 			require.True(t, handled)
@@ -60,7 +71,9 @@ func TestTelegramSemanticNativeSingleMediaRejectsWrongShape(t *testing.T) {
 	ch.SetMediaStore(&livePhotoTestStore{entries: map[string]livePhotoTestMedia{
 		"media://asset": {path: path, meta: media.MediaMeta{Filename: "bad.mp4", ContentType: "video/mp4"}},
 	}})
-	encoded, _ := bus.EncodeNativeSingleMediaRef(bus.NativeSingleMediaPayload{Kind: bus.NativeSingleMediaSticker, Ref: "media://asset"})
+	encoded, _ := bus.EncodeNativeSingleMediaRef(
+		bus.NativeSingleMediaPayload{Kind: bus.NativeSingleMediaSticker, Ref: "media://asset"},
+	)
 	_, handled, err := ch.SendSemanticMedia(context.Background(), bus.OutboundMediaMessage{
 		ChatID: "123", Context: bus.InboundContext{Channel: "telegram", Account: ch.Name(), ChatID: "123"},
 		Parts: []bus.MediaPart{{Ref: encoded}},
@@ -84,13 +97,31 @@ func TestTelegramNativeSingleMediaUnsupportedDowngradesOnlyFeature(t *testing.T)
 	ch.SetMediaStore(&livePhotoTestStore{entries: map[string]livePhotoTestMedia{
 		"media://asset": {path: path, meta: media.MediaMeta{Filename: "s.webp", ContentType: "image/webp"}},
 	}})
-	encoded, _ := bus.EncodeNativeSingleMediaRef(bus.NativeSingleMediaPayload{Kind: bus.NativeSingleMediaSticker, Ref: "media://asset"})
+	encoded, _ := bus.EncodeNativeSingleMediaRef(
+		bus.NativeSingleMediaPayload{Kind: bus.NativeSingleMediaSticker, Ref: "media://asset"},
+	)
 	_, handled, err := ch.SendSemanticMedia(context.Background(), bus.OutboundMediaMessage{
 		ChatID: "123", Context: bus.InboundContext{Channel: "telegram", Account: ch.Name(), ChatID: "123"},
 		Parts: []bus.MediaPart{{Ref: encoded}},
 	})
 	require.True(t, handled)
 	require.ErrorIs(t, err, channels.ErrSendFailed)
-	require.True(t, capability.GlobalNegativeCache.IsDowngraded("telegram", ch.Name(), ch.tgCfg.BaseURL, capability.FeatureMediaSticker))
-	require.False(t, capability.GlobalNegativeCache.IsDowngraded("telegram", ch.Name(), ch.tgCfg.BaseURL, capability.FeatureMediaAnimation))
+	require.True(
+		t,
+		capability.GlobalNegativeCache.IsDowngraded(
+			"telegram",
+			ch.Name(),
+			ch.tgCfg.BaseURL,
+			capability.FeatureMediaSticker,
+		),
+	)
+	require.False(
+		t,
+		capability.GlobalNegativeCache.IsDowngraded(
+			"telegram",
+			ch.Name(),
+			ch.tgCfg.BaseURL,
+			capability.FeatureMediaAnimation,
+		),
+	)
 }

@@ -208,10 +208,22 @@ func TestResolveRouteCapabilities_EphemeralDraftStreamingFailsClosed(t *testing.
 func TestResolveRouteCapabilities_RichAndLivePhotoServerDowngrade(t *testing.T) {
 	cache := NewNegativeCapabilityCache(time.Minute)
 	route := RouteContext{Channel: "telegram", Account: "legacy", ServerID: "http://legacy.example"}
-	if !cache.RecordFailure(route.Channel, route.Account, route.ServerID, FeatureMessageStreamRich, errors.New("400 Bad Request: method not found")) {
+	if !cache.RecordFailure(
+		route.Channel,
+		route.Account,
+		route.ServerID,
+		FeatureMessageStreamRich,
+		errors.New("400 Bad Request: method not found"),
+	) {
 		t.Fatal("rich draft unsupported failure was not cached")
 	}
-	if !cache.RecordFailure(route.Channel, route.Account, route.ServerID, FeatureMediaLivePhoto, errors.New("400 Bad Request: method not found")) {
+	if !cache.RecordFailure(
+		route.Channel,
+		route.Account,
+		route.ServerID,
+		FeatureMediaLivePhoto,
+		errors.New("400 Bad Request: method not found"),
+	) {
 		t.Fatal("live photo unsupported failure was not cached")
 	}
 	set := ResolveRouteCapabilities(route, cache)
