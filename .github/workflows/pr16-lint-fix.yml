@@ -40,6 +40,11 @@ jobs:
           set -Eeuo pipefail
           python3 .github/scripts/pr16_lint_fix.py
           golangci-lint fmt
+          # Formatter v2 also rewrites a pre-existing build-tagged Bedrock file
+          # that is outside this PR. Restore that baseline file, then run the
+          # exact linter below to prove the restore does not hide an applicable
+          # lint failure.
+          git restore --source=HEAD -- pkg/providers/bedrock/provider_bedrock.go
           python3 <<'PY'
           import subprocess
 
