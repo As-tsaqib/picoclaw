@@ -67,6 +67,14 @@ type SessionStreamingCapable interface {
 	BeginStreamForSession(ctx context.Context, chatID, sessionKey string) (Streamer, error)
 }
 
+// PreferredSessionStreamingCapable allows a channel to opt into a newer
+// session-aware streaming implementation while retaining its legacy streaming
+// methods for source compatibility. Manager prefers this interface when both
+// are implemented.
+type PreferredSessionStreamingCapable interface {
+	BeginPreferredStreamForSession(ctx context.Context, chatID, sessionKey string) (Streamer, error)
+}
+
 // PrivateSessionCapable lets the manager identify a private session before
 // running public placeholder or stream cleanup. This is needed when an
 // outbound message still has its session key but no longer has inbound facts.
