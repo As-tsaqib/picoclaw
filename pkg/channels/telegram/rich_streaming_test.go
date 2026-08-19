@@ -47,13 +47,13 @@ func TestPreferredRichStreamUsesStableDraftAndPersistentFinal(t *testing.T) {
 	assert.Equal(t, 42, draft.MessageThreadID)
 	assert.NotZero(t, draft.DraftID)
 
-	var clear struct {
+	var clearedDraft struct {
 		DraftID int    `json:"draft_id"`
 		Text    string `json:"text"`
 	}
-	require.NoError(t, json.Unmarshal(caller.calls[2].Data.BodyRaw, &clear))
-	assert.Equal(t, draft.DraftID, clear.DraftID)
-	assert.Equal(t, " ", clear.Text)
+	require.NoError(t, json.Unmarshal(caller.calls[2].Data.BodyRaw, &clearedDraft))
+	assert.Equal(t, draft.DraftID, clearedDraft.DraftID)
+	assert.Equal(t, " ", clearedDraft.Text)
 }
 
 func TestPreferredRichStreamFallsBackToTextDraftButKeepsRichFinal(t *testing.T) {
