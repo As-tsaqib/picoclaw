@@ -1,9 +1,9 @@
 import {
   Children,
-  Fragment,
-  type ReactNode,
   cloneElement,
+  Fragment,
   isValidElement,
+  type ReactNode,
 } from "react"
 
 export interface MarkdownNode {
@@ -74,8 +74,7 @@ export function extractTextFromMarkdownNode(
 
 export function extractCodeBlockLanguage(className: unknown): string | null {
   const languageToken = toClassNameTokens(className).find(
-    (token) =>
-      token.startsWith("language-") && token.length > "language-".length,
+    (token) => token.startsWith("language-") && token.length > "language-".length,
   )
 
   return languageToken ? languageToken.slice("language-".length) : null
@@ -92,9 +91,7 @@ export function extractCodeBlockFromPreNode(node: MarkdownNode | undefined): {
   const codeNode = findFirstDescendantByTagName(node, "code")
 
   return {
-    code: stripSingleTrailingLineBreak(
-      extractTextFromMarkdownNode(codeNode ?? node),
-    ),
+    code: stripSingleTrailingLineBreak(extractTextFromMarkdownNode(codeNode ?? node)),
     language: extractCodeBlockLanguage(codeNode?.properties?.className),
   }
 }
@@ -148,11 +145,9 @@ function mergeNodeLineGroups(
 
 function splitDomNodeIntoLines(node: Node, ownerDocument: Document): Node[][] {
   if (node.nodeType === Node.TEXT_NODE) {
-    return (node.textContent ?? "")
-      .split("\n")
-      .map((line) =>
-        line.length > 0 ? [ownerDocument.createTextNode(line)] : [],
-      )
+    return (node.textContent ?? "").split("\n").map((line) =>
+      line.length > 0 ? [ownerDocument.createTextNode(line)] : [],
+    )
   }
 
   if (node.nodeType !== Node.ELEMENT_NODE) {
@@ -161,7 +156,10 @@ function splitDomNodeIntoLines(node: Node, ownerDocument: Document): Node[][] {
 
   const element = node as Element
   if (element.tagName.toLowerCase() === "br") {
-    return [[], []]
+    return [
+      [],
+      [],
+    ]
   }
 
   const childLines = splitHighlightedHtmlIntoNodeLines(
@@ -199,9 +197,7 @@ export function splitCodeIntoLines(code: string): string[] {
   return code.split("\n")
 }
 
-export function splitHighlightedHtmlIntoLines(
-  highlightedHtml: string,
-): string[] {
+export function splitHighlightedHtmlIntoLines(highlightedHtml: string): string[] {
   if (typeof document === "undefined") {
     return splitCodeIntoLines(highlightedHtml)
   }
@@ -282,9 +278,7 @@ function mergeReactLineGroups(
 }
 
 function splitTextNodeIntoLines(value: string | number): ReactNode[][] {
-  return String(value)
-    .split("\n")
-    .map((line) => (line.length > 0 ? [line] : []))
+  return String(value).split("\n").map((line) => (line.length > 0 ? [line] : []))
 }
 
 function splitReactNodeIntoLines(node: ReactNode): ReactNode[][] {
@@ -305,13 +299,14 @@ function splitReactNodeIntoLines(node: ReactNode): ReactNode[][] {
   }
 
   if (node.type === Fragment) {
-    return splitRenderedCodeContentIntoLines(
-      Children.toArray(node.props.children),
-    )
+    return splitRenderedCodeContentIntoLines(Children.toArray(node.props.children))
   }
 
   if (typeof node.type === "string" && node.type === "br") {
-    return [[], []]
+    return [
+      [],
+      [],
+    ]
   }
 
   const childLines = splitRenderedCodeContentIntoLines(
