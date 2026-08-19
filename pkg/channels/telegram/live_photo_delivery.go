@@ -17,7 +17,10 @@ import (
 	"github.com/As-tsaqib/picoclaw/pkg/media"
 )
 
-const telegramLivePhotoMaxBytes int64 = 10 * 1024 * 1024
+const (
+	telegramLivePhotoMaxBytes       int64 = 10 * 1024 * 1024
+	telegramLivePhotoCaptionMaxChars      = 1024
+)
 
 // SendSemanticMedia recognizes the channel-neutral live-photo envelope. Other
 // media is delegated to the existing SendMedia path by returning handled=false.
@@ -44,8 +47,12 @@ func (c *TelegramChannel) sendLivePhoto(
 	if !c.IsRunning() {
 		return nil, channels.ErrNotRunning
 	}
-	if utf8.RuneCountInString(payload.Caption) > livePhotoCaptionMaxChars {
-		return nil, fmt.Errorf("live photo caption exceeds %d characters: %w", livePhotoCaptionMaxChars, channels.ErrSendFailed)
+	if utf8.RuneCountInString(payload.Caption) > telegramLivePhotoCaptionMaxChars {
+		return nil, fmt.Errorf(
+			"live photo caption exceeds %d characters: %w",
+			telegramLivePhotoCaptionMaxChars,
+			channels.ErrSendFailed,
+		)
 	}
 
 	chatID, threadID, err := resolveTelegramOutboundTarget(msg.ChatID, &msg.Context)
@@ -116,7 +123,11 @@ func (c *TelegramChannel) sendLivePhoto(
 		if capability.GlobalNegativeCache.RecordFailure(
 			"telegram", account, serverID, capability.FeatureMediaLivePhoto, sendErr,
 		) {
-			return nil, fmt.Errorf("native live photo is unsupported by this Telegram server: %v: %w", sendErr, channels.ErrSendFailed)
+			return nil, fmt.Errorf(
+				"native live photo is unsupported by this Telegram server: %v: %w",
+				sendErr,
+				channels.ErrSendFailed,
+			)
 		}
 		return nil, fmt.Errorf("telegram send live photo: %v: %w", sendErr, channels.ErrTemporary)
 	}
