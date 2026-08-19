@@ -329,8 +329,12 @@ func buildMemoryDashboardContent(
 			if err == nil {
 				paragraphs = append(paragraphs, fmt.Sprintf("User entries: %d", user.Entries))
 			}
-			if workspace.PendingCount > 0 || (err == nil && user.PendingCount > 0) {
-				paragraphs = append(paragraphs, fmt.Sprintf("Pending review: %d", workspace.PendingCount+user.PendingCount))
+			pendingCount := workspace.PendingCount
+			if err == nil {
+				pendingCount += user.PendingCount
+			}
+			if pendingCount > 0 {
+				paragraphs = append(paragraphs, fmt.Sprintf("Pending review: %d", pendingCount))
 			}
 		}
 	} else {
@@ -467,11 +471,17 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 		}
 
 		if page > 0 {
-			entries = append(entries, bus.InteractionEntry{Action: "page", Label: "◀️", Value: fmt.Sprintf("%d", page-1)})
+			entries = append(entries, bus.InteractionEntry{
+				Action: "page", Label: "◀️", Value: fmt.Sprintf("%d", page-1),
+			})
 		}
-		entries = append(entries, bus.InteractionEntry{Action: "noop", Label: fmt.Sprintf("%d/%d", page+1, pages)})
+		entries = append(entries, bus.InteractionEntry{
+			Action: "noop", Label: fmt.Sprintf("%d/%d", page+1, pages),
+		})
 		if page < pages-1 {
-			entries = append(entries, bus.InteractionEntry{Action: "page", Label: "▶️", Value: fmt.Sprintf("%d", page+1)})
+			entries = append(entries, bus.InteractionEntry{
+				Action: "page", Label: "▶️", Value: fmt.Sprintf("%d", page+1),
+			})
 		}
 
 		entries = append(entries, bus.InteractionEntry{Action: "search", Label: "🔎 Search"})
@@ -515,7 +525,8 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 		detailLines = append(detailLines, fmt.Sprintf("Status: %s", matched.EffectiveStatus()))
 		detailLines = append(detailLines, fmt.Sprintf("Pinned: %v", matched.Pinned))
 		detailLines = append(detailLines, "")
-		detailLines = append(detailLines, truncateMemoryCommandText(memory.RedactMemoryText(matched.Content), 480))
+		contentSnippet := truncateMemoryCommandText(memory.RedactMemoryText(matched.Content), 480)
+		detailLines = append(detailLines, contentSnippet)
 
 		var actions []bus.InteractionEntry
 		actions = append(actions, bus.InteractionEntry{Action: "edit", Label: "✏️ Edit", Value: matched.ID})
@@ -525,11 +536,17 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 			actions = append(actions, bus.InteractionEntry{Action: "pin", Label: "📌 Pin", Value: matched.ID})
 		}
 		if matched.EffectiveStatus() == memory.CuratedStatusArchived {
-			actions = append(actions, bus.InteractionEntry{Action: "restore", Label: "♻️ Restore", Value: matched.ID})
+			actions = append(actions, bus.InteractionEntry{
+				Action: "restore", Label: "♻️ Restore", Value: matched.ID,
+			})
 		} else {
-			actions = append(actions, bus.InteractionEntry{Action: "archive", Label: "🗄 Archive", Value: matched.ID})
+			actions = append(actions, bus.InteractionEntry{
+				Action: "archive", Label: "🗄 Archive", Value: matched.ID,
+			})
 		}
-		actions = append(actions, bus.InteractionEntry{Action: "forget_confirm", Label: "🗑 Forget", Value: matched.ID})
+		actions = append(actions, bus.InteractionEntry{
+			Action: "forget_confirm", Label: "🗑 Forget", Value: matched.ID,
+		})
 		actions = append(actions, bus.InteractionEntry{Action: "browse", Label: "↩️ Kembali"})
 		actions = append(actions, bus.InteractionEntry{Action: "close", Label: "✖️ Tutup"})
 
