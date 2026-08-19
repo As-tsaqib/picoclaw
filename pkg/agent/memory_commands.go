@@ -695,11 +695,17 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 		})
 	case "search":
 		if strings.TrimSpace(req.Value) == "" {
-			return &bus.InternalCallbackResponse{Text: "Balas pesan ini dengan kata kunci pencarian:"}, nil
+			return &bus.InternalCallbackResponse{
+				Text: "Balas pesan ini dengan kata kunci pencarian:",
+			}, nil
 		}
 
-		workspace, _ := agent.CuratedMemory.Search(memory.CuratedTargetWorkspace, caller, req.Value, 20)
-		user, _ := agent.CuratedMemory.Search(memory.CuratedTargetCurrentUser, caller, req.Value, 20)
+		workspace, _ := agent.CuratedMemory.Search(
+			memory.CuratedTargetWorkspace, caller, req.Value, 20,
+		)
+		user, _ := agent.CuratedMemory.Search(
+			memory.CuratedTargetCurrentUser, caller, req.Value, 20,
+		)
 
 		allResults := append(workspace, user...)
 		var lines []string
@@ -737,7 +743,9 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 		return &bus.InternalCallbackResponse{Content: content}, nil
 	case "edit":
 		if strings.TrimSpace(req.Value) == "" {
-			return &bus.InternalCallbackResponse{Text: "Balas pesan ini dengan konten baru untuk entri memori ini:"}, nil
+			return &bus.InternalCallbackResponse{
+				Text: "Balas pesan ini dengan konten baru untuk entri memori ini:",
+			}, nil
 		}
 		id := req.SessionKey
 		editedContent := strings.TrimSpace(req.Value)
