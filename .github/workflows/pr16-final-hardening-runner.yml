@@ -1,0 +1,101 @@
+name: PR16 Final Hardening Runner
+
+on:
+  push:
+    branches:
+      - feat/native-telegram-capabilities-memory-hardening
+    paths:
+      - .github/workflows/pr16-final-hardening-runner.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/frontend/pnpm-lock.yaml
+
+      - name: Extract and apply hardening patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/pr16-final-hardening.yml').read_text()
+          start_marker = '      - name: Apply final hardening patch\n        shell: bash\n        run: |\n'
+          end_marker = '\n      - name: Targeted Go validation'
+          start = source.index(start_marker) + len(start_marker)
+          end = source.index(end_marker, start)
+          block = source[start:end]
+          lines = []
+          for line in block.splitlines():
+              lines.append(line[10:] if line.startswith('          ') else line)
+          Path('/tmp/pr16-hardening.sh').write_text('\n'.join(lines) + '\n')
+          PY
+          bash /tmp/pr16-hardening.sh
+
+      - name: Targeted Go validation
+        run: go test ./pkg/capability ./pkg/agent ./pkg/memory ./web/backend/api
+
+      - name: Install frontend dependencies
+        working-directory: web/frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend configuration tests
+        working-directory: web/frontend
+        run: pnpm test:config
+
+      - name: Frontend browser tests
+        working-directory: web/frontend
+        run: pnpm exec vitest run src
+
+      - name: Frontend lint
+        working-directory: web/frontend
+        run: pnpm lint
+
+      - name: Frontend changed-file formatting
+        working-directory: web/frontend
+        run: pnpm exec prettier --check src/components/config/form-model.ts src/components/config/config-sections.tsx tests/form-model.test.ts vite.config.ts
+
+      - name: Frontend production build
+        working-directory: web/frontend
+        run: pnpm build
+
+      - name: Commit validated hardening
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git reset .github/workflows/pr16-final-hardening.yml .github/workflows/pr16-final-hardening-runner.yml
+          if git diff --cached --quiet; then
+            echo "No source changes to commit"
+            exit 0
+          fi
+          git commit -m "fix: close final native capability and memory hardening gaps"
+          git push origin HEAD:feat/native-telegram-capabilities-memory-hardening
