@@ -1044,7 +1044,10 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(ctx context.Context, m
 	})
 	if err != nil {
 		logger.WarnCF("telegram", "Prompt reply was rejected", map[string]any{"reason": "scope_or_state_validation"})
-		return true, c.sendSessionRenameNotice(ctx, message, prompt, "Permintaan tidak dapat diproses. Jalankan command lagi.")
+		return true, c.sendSessionRenameNotice(
+			ctx, message, prompt,
+			"Permintaan tidak dapat diproses. Jalankan command lagi.",
+		)
 	}
 	if response == nil || response.Content == nil {
 		text := "Perubahan berhasil disimpan."
