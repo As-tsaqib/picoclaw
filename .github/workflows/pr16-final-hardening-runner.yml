@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/pr16-final-hardening-runner.yml
       - .github/scripts/pr16_hardening_runner.py
+      - .github/scripts/pr16_fix_extractor.py
 
 permissions:
   contents: write
@@ -41,7 +42,9 @@ jobs:
           cache-dependency-path: web/frontend/pnpm-lock.yaml
 
       - name: Apply audited hardening
-        run: python3 .github/scripts/pr16_hardening_runner.py
+        run: |
+          python3 .github/scripts/pr16_fix_extractor.py
+          python3 .github/scripts/pr16_hardening_runner.py
 
       - name: Targeted Go validation
         run: go test ./pkg/bus ./pkg/tools ./pkg/capability ./pkg/channels ./pkg/channels/telegram ./pkg/agent ./pkg/memory ./web/backend/api
@@ -72,6 +75,7 @@ jobs:
       - name: Commit validated source hardening
         run: |
           set -Eeuo pipefail
+          rm -f .github/scripts/pr16_fix_extractor.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
