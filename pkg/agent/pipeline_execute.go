@@ -525,10 +525,27 @@ toolLoop:
 		toolCallID := tc.ID
 		asyncToolName := toolName
 		asyncCallback := func(_ context.Context, result *tools.ToolResult) {
-			if !result.Silent && result.ForUser != "" {
+			if (!result.Silent && result.ForUser != "") || result.Poll != nil || result.StopPollID != "" ||
+				result.Location != nil || result.Contact != nil || result.Dice != nil {
 				outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer outCancel()
-				_ = al.bus.PublishOutbound(outCtx, outboundMessageForTurn(ts, result.ForUser))
+				msg := outboundMessageForTurn(ts, result.ForUser)
+				if result.Poll != nil {
+					msg.Poll = result.Poll
+				}
+				if result.StopPollID != "" {
+					msg.StopPollID = result.StopPollID
+				}
+				if result.Location != nil {
+					msg.Location = result.Location
+				}
+				if result.Contact != nil {
+					msg.Contact = result.Contact
+				}
+				if result.Dice != nil {
+					msg.Dice = result.Dice
+				}
+				_ = al.bus.PublishOutbound(outCtx, msg)
 			}
 			if turnStateIsPrivate(ts) {
 				// The legacy async follow-up path reconstructs a public origin from
@@ -592,14 +609,19 @@ toolLoop:
 		)
 		execCtx = tools.WithToolCallerScope(execCtx, callerScopeForTurn(ts.agent.ID, p.Cfg, ts.opts))
 		execCtx = tools.WithToolTurnID(execCtx, ts.turnID)
-		toolResult := ts.agent.Tools.ExecuteWithContext(
-			execCtx,
-			toolName,
-			toolArgs,
-			ts.channel,
-			ts.chatID,
-			asyncCallback,
-		)
+		var toolResult *tools.ToolResult
+		if !isToolAllowedByRoute(al, ts, toolName) {
+			toolResult = tools.ErrorResult(fmt.Sprintf("tool %s is not supported on channel %s", toolName, ts.channel))
+		} else {
+			toolResult = ts.agent.Tools.ExecuteWithContext(
+				execCtx,
+				toolName,
+				toolArgs,
+				ts.channel,
+				ts.chatID,
+				asyncCallback,
+			)
+		}
 		toolDuration := time.Since(toolStart)
 
 		if ts.hardAbortRequested() {
@@ -706,11 +728,57 @@ toolLoop:
 			toolResult.ForUser != "" &&
 			(ts.opts.SendResponse || toolResult.ResponseHandled)
 		if shouldSendForUser {
-			al.bus.PublishOutbound(ctx, outboundMessageForTurn(ts, toolResult.ForUser))
+			msg := outboundMessageForTurn(ts, toolResult.ForUser)
+			if toolResult.Poll != nil {
+				msg.Poll = toolResult.Poll
+			}
+			al.bus.PublishOutbound(ctx, msg)
 			logger.DebugCF("agent", "Sent tool result to user",
 				map[string]any{
 					"tool":        toolName,
 					"content_len": len(toolResult.ForUser),
+					"has_poll":    toolResult.Poll != nil,
+				})
+		} else if toolResult.Poll != nil && (ts.opts.SendResponse || toolResult.ResponseHandled) {
+			// Send poll without text
+			msg := outboundMessageForTurn(ts, "")
+			msg.Poll = toolResult.Poll
+			al.bus.PublishOutbound(ctx, msg)
+			logger.DebugCF("agent", "Sent tool poll to user",
+				map[string]any{
+					"tool": toolName,
+				})
+		} else if toolResult.Location != nil && (ts.opts.SendResponse || toolResult.ResponseHandled) {
+			msg := outboundMessageForTurn(ts, "")
+			msg.Location = toolResult.Location
+			al.bus.PublishOutbound(ctx, msg)
+			logger.DebugCF("agent", "Sent tool location to user",
+				map[string]any{
+					"tool": toolName,
+				})
+		} else if toolResult.Contact != nil && (ts.opts.SendResponse || toolResult.ResponseHandled) {
+			msg := outboundMessageForTurn(ts, "")
+			msg.Contact = toolResult.Contact
+			al.bus.PublishOutbound(ctx, msg)
+			logger.DebugCF("agent", "Sent tool contact to user",
+				map[string]any{
+					"tool": toolName,
+				})
+		} else if toolResult.Dice != nil && (ts.opts.SendResponse || toolResult.ResponseHandled) {
+			msg := outboundMessageForTurn(ts, "")
+			msg.Dice = toolResult.Dice
+			al.bus.PublishOutbound(ctx, msg)
+			logger.DebugCF("agent", "Sent tool dice to user",
+				map[string]any{
+					"tool": toolName,
+				})
+		} else if toolResult.StopPollID != "" && (ts.opts.SendResponse || toolResult.ResponseHandled) {
+			msg := outboundMessageForTurn(ts, "")
+			msg.StopPollID = toolResult.StopPollID
+			al.bus.PublishOutbound(ctx, msg)
+			logger.DebugCF("agent", "Sent tool stop_poll to user",
+				map[string]any{
+					"tool": toolName,
 				})
 		}
 		contentForLLM := toolResult.ContentForLLM()

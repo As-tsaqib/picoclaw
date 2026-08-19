@@ -293,3 +293,58 @@ func TestHandleUpdateConfigWithoutMemoryAppliesActiveDefaults(t *testing.T) {
 		t.Fatalf("PUT evolution defaults = %#v, want disabled safe defaults", updated.Evolution)
 	}
 }
+
+func TestHandlePatchConfig_MemoryDeltaPatchPreservesHiddenExpertValues(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	// Seed custom expert configuration
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	cfg.Memory.Enabled = true
+	cfg.Memory.Retrieval.RecencyWeight = 0.77
+	cfg.Memory.Retrieval.MinimumScore = 0.65
+	cfg.Memory.Profile.MinConfidence = 0.88
+	cfg.Memory.BackgroundReview.TimeoutSeconds = 99
+	if saveErr := config.SaveConfig(configPath, cfg); saveErr != nil {
+		t.Fatalf("SaveConfig() error = %v", saveErr)
+	}
+
+	// Send delta patch toggling ONLY memory.enabled
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	patch := `{"memory": {"enabled": false}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(patch))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	// Verify enabled is false but all hidden expert values remain identical
+	updated, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig(updated) error = %v", err)
+	}
+	if updated.Memory.Enabled {
+		t.Fatal("expected memory.enabled to be false")
+	}
+	if updated.Memory.Retrieval.RecencyWeight != 0.77 {
+		t.Fatalf("recency_weight = %f, want 0.77", updated.Memory.Retrieval.RecencyWeight)
+	}
+	if updated.Memory.Retrieval.MinimumScore != 0.65 {
+		t.Fatalf("minimum_score = %f, want 0.65", updated.Memory.Retrieval.MinimumScore)
+	}
+	if updated.Memory.Profile.MinConfidence != 0.88 {
+		t.Fatalf("min_confidence = %f, want 0.88", updated.Memory.Profile.MinConfidence)
+	}
+	if updated.Memory.BackgroundReview.TimeoutSeconds != 99 {
+		t.Fatalf("timeout_seconds = %d, want 99", updated.Memory.BackgroundReview.TimeoutSeconds)
+	}
+}

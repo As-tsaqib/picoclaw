@@ -174,9 +174,19 @@ func CanonicalSessionIdentityID(channel, rawID string, identityLinks map[string]
 // not accept request- or model-selected scope information. Ambiguous identity
 // links fail closed instead of picking a canonical owner by Go map iteration.
 func CanonicalUserScopeKey(channel, account, rawID string, identityLinks map[string][]string) string {
-	if _, ambiguous := resolveLinkedPeerID(identityLinks, channel, rawID); ambiguous {
+	normalizedID := strings.TrimSpace(rawID)
+	if normalizedID == "" {
 		return ""
 	}
+
+	linked, ambiguous := resolveLinkedPeerID(identityLinks, channel, normalizedID)
+	if ambiguous {
+		return ""
+	}
+	if linked != "" {
+		return fmt.Sprintf("person:%s", strings.ToLower(linked))
+	}
+
 	canonical := CanonicalSessionIdentityID(channel, rawID, identityLinks)
 	if canonical == "" {
 		return ""

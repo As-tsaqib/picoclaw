@@ -366,7 +366,7 @@ export function ConfigPage() {
         )
         const turnProfile = buildTurnProfilePatch(form.turnProfile)
         const advancedAgentDefaultsPatch = buildAdvancedAgentDefaultsPatch(form)
-        const memoryConfigPatch = buildMemoryConfigPatch(form)
+        const memoryConfigPatch = buildMemoryConfigPatch(form, baseline)
         const evolutionConfigPatch = buildEvolutionConfigPatch(form)
         const heartbeatInterval = parseIntField(
           form.heartbeatInterval,

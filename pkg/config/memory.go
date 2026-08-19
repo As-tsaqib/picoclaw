@@ -72,6 +72,7 @@ type MemoryConfig struct {
 	WriteApproval      bool                   `json:"write_approval,omitempty"       env:"PICOCLAW_MEMORY_WRITE_APPROVAL"`
 	ApprovalMode       string                 `json:"approval_mode,omitempty"        env:"PICOCLAW_MEMORY_APPROVAL_MODE"`
 	Notifications      string                 `json:"notifications,omitempty"        env:"PICOCLAW_MEMORY_NOTIFICATIONS"`
+	OwnerIdentity      string                 `json:"owner_identity,omitempty"       env:"PICOCLAW_MEMORY_OWNER_IDENTITY"`
 	BackgroundReview   MemoryReviewConfig     `json:"background_review,omitempty"`
 	Profile            MemoryProfileConfig    `json:"profile,omitempty"`
 	Retrieval          MemoryRetrievalConfig  `json:"retrieval,omitempty"`

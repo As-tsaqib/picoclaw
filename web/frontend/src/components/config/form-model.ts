@@ -848,6 +848,7 @@ export function buildMemoryReviewOptions(config: unknown): {
 
 export function buildMemoryConfigPatch(
   form: CoreConfigForm,
+  baseline?: CoreConfigForm,
 ): Record<string, unknown> {
   if (!MEMORY_NOTIFICATION_OPTIONS.includes(form.memoryNotifications)) {
     throw new Error("Notification mode is invalid.")
@@ -864,7 +865,8 @@ export function buildMemoryConfigPatch(
 
   const provider = form.memoryReviewProvider.trim()
   const model = form.memoryReviewModel.trim()
-  return {
+
+  const full: Record<string, unknown> = {
     enabled: form.memoryEnabled,
     workspace_char_limit: parseIntField(
       form.memoryWorkspaceCharLimit,
@@ -1014,6 +1016,237 @@ export function buildMemoryConfigPatch(
       ),
     },
   }
+
+  if (!baseline) {
+    return full
+  }
+
+  // Calculate delta patch against baseline
+  const delta: Record<string, unknown> = {}
+  if (form.memoryEnabled !== baseline.memoryEnabled) {
+    delta.enabled = form.memoryEnabled
+  }
+  if (form.memoryWorkspaceCharLimit !== baseline.memoryWorkspaceCharLimit) {
+    delta.workspace_char_limit = full.workspace_char_limit
+  }
+  if (form.memoryPerUserCharLimit !== baseline.memoryPerUserCharLimit) {
+    delta.per_user_char_limit = full.per_user_char_limit
+  }
+  if (form.memoryApprovalMode !== baseline.memoryApprovalMode) {
+    delta.approval_mode = form.memoryApprovalMode
+    delta.write_approval = form.memoryApprovalMode !== "off"
+  }
+  if (form.memoryNotifications !== baseline.memoryNotifications) {
+    delta.notifications = form.memoryNotifications
+  }
+
+  // Profile delta
+  const profileDelta: Record<string, unknown> = {}
+  if (form.memoryProfileEnabled !== baseline.memoryProfileEnabled) {
+    profileDelta.enabled = form.memoryProfileEnabled
+  }
+  if (form.memoryProfileMaxChars !== baseline.memoryProfileMaxChars) {
+    profileDelta.max_chars = (full.profile as Record<string, unknown>).max_chars
+  }
+  if (form.memoryProfileMinConfidence !== baseline.memoryProfileMinConfidence) {
+    profileDelta.min_confidence = (
+      full.profile as Record<string, unknown>
+    ).min_confidence
+  }
+  if (Object.keys(profileDelta).length > 0) {
+    delta.profile = profileDelta
+  }
+
+  // Background review delta
+  const reviewDelta: Record<string, unknown> = {}
+  if (
+    form.memoryBackgroundReviewEnabled !==
+    baseline.memoryBackgroundReviewEnabled
+  ) {
+    reviewDelta.enabled = form.memoryBackgroundReviewEnabled
+  }
+  if (form.memoryReviewInterval !== baseline.memoryReviewInterval) {
+    reviewDelta.interval = (
+      full.background_review as Record<string, unknown>
+    ).interval
+  }
+  if (form.memoryReviewProvider !== baseline.memoryReviewProvider) {
+    reviewDelta.provider = provider || null
+  }
+  if (form.memoryReviewModel !== baseline.memoryReviewModel) {
+    reviewDelta.model = model || null
+  }
+  if (form.memoryReviewTimeoutSeconds !== baseline.memoryReviewTimeoutSeconds) {
+    reviewDelta.timeout_seconds = (
+      full.background_review as Record<string, unknown>
+    ).timeout_seconds
+  }
+  if (form.memoryReviewMaxIterations !== baseline.memoryReviewMaxIterations) {
+    reviewDelta.max_iterations = (
+      full.background_review as Record<string, unknown>
+    ).max_iterations
+  }
+  if (Object.keys(reviewDelta).length > 0) {
+    delta.background_review = reviewDelta
+  }
+
+  // Retrieval delta
+  const retrievalDelta: Record<string, unknown> = {}
+  if (form.memoryRetrievalEnabled !== baseline.memoryRetrievalEnabled) {
+    retrievalDelta.enabled = form.memoryRetrievalEnabled
+  }
+  if (form.memoryRetrievalEngine !== baseline.memoryRetrievalEngine) {
+    retrievalDelta.engine = form.memoryRetrievalEngine
+  }
+  if (
+    form.memoryRetrievalMaxWorkspaceResults !==
+    baseline.memoryRetrievalMaxWorkspaceResults
+  ) {
+    retrievalDelta.max_workspace_results = (
+      full.retrieval as Record<string, unknown>
+    ).max_workspace_results
+  }
+  if (
+    form.memoryRetrievalMaxUserResults !==
+    baseline.memoryRetrievalMaxUserResults
+  ) {
+    retrievalDelta.max_user_results = (
+      full.retrieval as Record<string, unknown>
+    ).max_user_results
+  }
+  if (
+    form.memoryRetrievalMaxTotalChars !== baseline.memoryRetrievalMaxTotalChars
+  ) {
+    retrievalDelta.max_total_chars = (
+      full.retrieval as Record<string, unknown>
+    ).max_total_chars
+  }
+  if (
+    form.memoryRetrievalPinnedCharBudget !==
+    baseline.memoryRetrievalPinnedCharBudget
+  ) {
+    retrievalDelta.pinned_char_budget = (
+      full.retrieval as Record<string, unknown>
+    ).pinned_char_budget
+  }
+  if (
+    form.memoryRetrievalMinimumScore !== baseline.memoryRetrievalMinimumScore
+  ) {
+    retrievalDelta.minimum_relevance_score = (
+      full.retrieval as Record<string, unknown>
+    ).minimum_relevance_score
+  }
+  if (
+    form.memoryRetrievalRecencyWeight !== baseline.memoryRetrievalRecencyWeight
+  ) {
+    retrievalDelta.recency_weight = (
+      full.retrieval as Record<string, unknown>
+    ).recency_weight
+  }
+  if (
+    form.memoryRetrievalRecencyHalfLifeDays !==
+    baseline.memoryRetrievalRecencyHalfLifeDays
+  ) {
+    retrievalDelta.recency_half_life_days = (
+      full.retrieval as Record<string, unknown>
+    ).recency_half_life_days
+  }
+  if (form.memoryRetrievalFuzzyWeight !== baseline.memoryRetrievalFuzzyWeight) {
+    retrievalDelta.fuzzy_weight = (
+      full.retrieval as Record<string, unknown>
+    ).fuzzy_weight
+  }
+  if (
+    form.memoryRetrievalRecentFallbackCount !==
+    baseline.memoryRetrievalRecentFallbackCount
+  ) {
+    retrievalDelta.recent_fallback_count = (
+      full.retrieval as Record<string, unknown>
+    ).recent_fallback_count
+  }
+  if (form.memoryRetrievalUserShare !== baseline.memoryRetrievalUserShare) {
+    retrievalDelta.user_share = (
+      full.retrieval as Record<string, unknown>
+    ).user_share
+  }
+  if (Object.keys(retrievalDelta).length > 0) {
+    delta.retrieval = retrievalDelta
+  }
+
+  // Lifecycle delta
+  const lifecycleDelta: Record<string, unknown> = {}
+  if (
+    form.memoryArchivedRetentionDays !== baseline.memoryArchivedRetentionDays
+  ) {
+    lifecycleDelta.archived_retention_days = (
+      full.lifecycle as Record<string, unknown>
+    ).archived_retention_days
+  }
+  if (form.memoryStaleThresholdDays !== baseline.memoryStaleThresholdDays) {
+    lifecycleDelta.stale_threshold_days = (
+      full.lifecycle as Record<string, unknown>
+    ).stale_threshold_days
+  }
+  if (form.memoryAutoArchiveExpired !== baseline.memoryAutoArchiveExpired) {
+    lifecycleDelta.auto_archive_expired = form.memoryAutoArchiveExpired
+  }
+  if (Object.keys(lifecycleDelta).length > 0) {
+    delta.lifecycle = lifecycleDelta
+  }
+
+  // Recall delta
+  const recallDelta: Record<string, unknown> = {}
+  if (form.memoryRecallMode !== baseline.memoryRecallMode) {
+    recallDelta.mode = form.memoryRecallMode
+  }
+  if (form.memoryRecallMaxResults !== baseline.memoryRecallMaxResults) {
+    recallDelta.max_results = (
+      full.recall as Record<string, unknown>
+    ).max_results
+  }
+  if (form.memoryRecallMaxChars !== baseline.memoryRecallMaxChars) {
+    recallDelta.max_chars = (full.recall as Record<string, unknown>).max_chars
+  }
+  if (form.memoryRecallMaxRecords !== baseline.memoryRecallMaxRecords) {
+    recallDelta.max_records = (
+      full.recall as Record<string, unknown>
+    ).max_records
+  }
+  if (Object.keys(recallDelta).length > 0) {
+    delta.recall = recallDelta
+  }
+
+  // Checkpoints delta
+  const checkpointDelta: Record<string, unknown> = {}
+  if (form.memoryCheckpointsEnabled !== baseline.memoryCheckpointsEnabled) {
+    checkpointDelta.enabled = form.memoryCheckpointsEnabled
+  }
+  if (form.memoryCheckpointMaxCount !== baseline.memoryCheckpointMaxCount) {
+    checkpointDelta.max_count = (
+      full.checkpoints as Record<string, unknown>
+    ).max_count
+  }
+  if (
+    form.memoryCheckpointMaxContextChars !==
+    baseline.memoryCheckpointMaxContextChars
+  ) {
+    checkpointDelta.max_context_chars = (
+      full.checkpoints as Record<string, unknown>
+    ).max_context_chars
+  }
+  if (
+    form.memoryCheckpointCompletedRetentionDays !==
+    baseline.memoryCheckpointCompletedRetentionDays
+  ) {
+    checkpointDelta.completed_retention_days = (
+      full.checkpoints as Record<string, unknown>
+    ).completed_retention_days
+  }
+  if (Object.keys(checkpointDelta).length > 0) {
+    delta.checkpoints = checkpointDelta
+  }
+
+  return delta
 }
 
 export function buildAdvancedAgentDefaultsPatch(

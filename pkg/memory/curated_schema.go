@@ -70,8 +70,51 @@ func ValidEvidenceKind(value string) bool {
 	return ok
 }
 
+var canonicalPreferenceAliases = map[string]string{
+	"formatting.response_style":    "communication.response_format",
+	"communication.response_style": "communication.response_format",
+	"formatting.style":             "communication.response_format",
+	"communication.format":         "communication.response_format",
+	"workflow.quiz_format":         "presentation.quiz.mode",
+	"presentation.quiz_format":     "presentation.quiz.mode",
+	"presentation.quiz":            "presentation.quiz.mode",
+	"workflow.poll_format":         "presentation.poll.mode",
+	"presentation.poll_format":     "presentation.poll.mode",
+	"presentation.poll":            "presentation.poll.mode",
+	"interaction.buttons":          "interaction.button_style",
+	"interaction.keyboard":         "interaction.button_style",
+	"language.primary":             "communication.language",
+	"language.preferred":           "communication.language",
+	"language":                     "communication.language",
+	"communication.lang":           "communication.language",
+	"communication.style":          "communication.verbosity",
+	"workflow.verbosity":           "communication.verbosity",
+	"coding.style":                 "coding.formatting",
+	"tooling.style":                "tooling.mode",
+}
+
 func NormalizePreferenceKey(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
+	k := strings.ToLower(strings.TrimSpace(value))
+	if canonical, ok := canonicalPreferenceAliases[k]; ok {
+		return canonical
+	}
+	return k
+}
+
+func NormalizePreferenceValue(key, value string) string {
+	key = NormalizePreferenceKey(key)
+	val := strings.ToLower(strings.TrimSpace(value))
+	if key == "presentation.quiz.mode" || key == "presentation.poll.mode" {
+		switch val {
+		case "telegram_native_quiz", "telegram_native", "native_quiz", "native":
+			return "native"
+		case "text_quiz", "plain_text", "plain", "text":
+			return "text"
+		case "automatic", "auto", "default":
+			return "auto"
+		}
+	}
+	return strings.TrimSpace(value)
 }
 
 func ValidPreferenceKey(value string) bool {
@@ -218,7 +261,7 @@ func normalizedCuratedEntry(entry CuratedEntry) CuratedEntry {
 	entry.EvidenceKind = entry.EffectiveEvidenceKind()
 	entry.Visibility = entry.EffectiveVisibility()
 	entry.PreferenceKey = NormalizePreferenceKey(entry.PreferenceKey)
-	entry.PreferenceValue = strings.TrimSpace(entry.PreferenceValue)
+	entry.PreferenceValue = NormalizePreferenceValue(entry.PreferenceKey, entry.PreferenceValue)
 	if entry.EvidenceCount < 0 {
 		entry.EvidenceCount = 0
 	}
@@ -251,4 +294,105 @@ func normalizedCuratedEntry(entry CuratedEntry) CuratedEntry {
 		entry.LastVerifiedAt = nil
 	}
 	return entry
+}
+
+// NormalizeFactText standardizes text for conservative fact deduplication.
+func NormalizeFactText(text string) string {
+	text = strings.ToLower(strings.TrimSpace(text))
+	var sb strings.Builder
+	for _, r := range text {
+		switch r {
+		case '.', '!', '?', ',', ';', ':', '"', '\'', '(', ')':
+			sb.WriteRune(' ')
+			continue
+		}
+		sb.WriteRune(r)
+	}
+	return strings.Join(strings.Fields(sb.String()), " ")
+}
+
+// IsObviousFactDuplicate conservatively identifies whether two fact statements are duplicates.
+// Contradictory or distinct facts are never merged.
+func IsObviousFactDuplicate(fact1, fact2 string) bool {
+	norm1 := NormalizeFactText(fact1)
+	norm2 := NormalizeFactText(fact2)
+	if norm1 == "" || norm2 == "" {
+		return false
+	}
+	if norm1 == norm2 {
+		return true
+	}
+
+	words1 := strings.Fields(norm1)
+	words2 := strings.Fields(norm2)
+
+	// Identify polarity/negation tokens to avoid merging contradictions
+	polarityTokens := map[string]struct{}{
+		"not": {}, "no": {}, "never": {}, "un": {}, "unavailable": {}, "available": {},
+		"disabled": {}, "enabled": {}, "failed": {}, "success": {}, "error": {},
+		"broken": {}, "stop": {}, "stopped": {}, "started": {}, "none": {},
+	}
+
+	pol1 := make(map[string]struct{})
+	for _, w := range words1 {
+		if _, ok := polarityTokens[w]; ok {
+			pol1[w] = struct{}{}
+		}
+	}
+	pol2 := make(map[string]struct{})
+	for _, w := range words2 {
+		if _, ok := polarityTokens[w]; ok {
+			pol2[w] = struct{}{}
+		}
+	}
+
+	// If polarity keywords differ, keep them separate
+	if len(pol1) != len(pol2) {
+		return false
+	}
+	for p := range pol1 {
+		if _, ok := pol2[p]; !ok {
+			return false
+		}
+	}
+
+	// Filter common stop words
+	stopWords := map[string]struct{}{
+		"a": {}, "an": {}, "the": {}, "is": {}, "are": {}, "was": {}, "were": {},
+		"in": {}, "on": {}, "at": {}, "to": {}, "for": {}, "of": {}, "by": {},
+		"through": {}, "it": {}, "its": {},
+	}
+
+	sig1 := make(map[string]struct{})
+	for _, w := range words1 {
+		if _, isStop := stopWords[w]; !isStop {
+			sig1[w] = struct{}{}
+		}
+	}
+	sig2 := make(map[string]struct{})
+	for _, w := range words2 {
+		if _, isStop := stopWords[w]; !isStop {
+			sig2[w] = struct{}{}
+		}
+	}
+
+	if len(sig1) == 0 || len(sig2) == 0 {
+		return false
+	}
+
+	// If significant non-stopwords match exactly
+	if len(sig1) == len(sig2) {
+		matchesAll := true
+		for w := range sig1 {
+			if _, ok := sig2[w]; !ok {
+				matchesAll = false
+				break
+			}
+		}
+		if matchesAll {
+			return true
+		}
+	}
+
+	return false
 }

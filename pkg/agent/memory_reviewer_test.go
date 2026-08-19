@@ -158,7 +158,7 @@ func TestMemoryReviewerUsesRestrictedToolsAndDoesNotTouchSessionHistory(t *testi
 	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
 		t.Fatalf("RecordSuccessfulTurn() error = %v", err)
 	}
-	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller, "turn-1"); reviewErr != nil {
 		t.Fatalf("runMemoryReview() error = %v", reviewErr)
 	}
 
@@ -201,7 +201,7 @@ func TestMemoryReviewerStagesBackgroundWritesWhenApprovalEnabled(t *testing.T) {
 	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
 		t.Fatalf("RecordSuccessfulTurn() error = %v", err)
 	}
-	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller, "turn-1"); reviewErr != nil {
 		t.Fatalf("runMemoryReview() error = %v", reviewErr)
 	}
 	entries, err := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
@@ -254,7 +254,7 @@ func TestRunMemoryReviewerRejectsMismatchedAgentScope(t *testing.T) {
 
 	otherAgentCaller := caller
 	otherAgentCaller.AgentID = "other-agent"
-	if err := al.runMemoryReview(context.Background(), agent, otherAgentCaller); err == nil {
+	if err := al.runMemoryReview(context.Background(), agent, otherAgentCaller, "private-turn"); err == nil {
 		t.Fatal("deep reviewer accepted a mismatched agent scope")
 	}
 	if calls, _, _ := provider.snapshot(); calls != 0 {
@@ -288,7 +288,7 @@ func TestMemoryReviewerRejectsUnrelatedToolAndKeepsCursor(t *testing.T) {
 	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
 		t.Fatalf("RecordSuccessfulTurn() error = %v", err)
 	}
-	err := al.runMemoryReview(context.Background(), agent, caller)
+	err := al.runMemoryReview(context.Background(), agent, caller, "turn-1")
 	if err == nil {
 		t.Fatal("runMemoryReview() error = nil, want disallowed tool failure")
 	}
@@ -304,18 +304,18 @@ func TestMemoryReviewerTriggersAtIntervalAndOnlyOneRuns(t *testing.T) {
 	}
 	al, agent, caller := newMemoryReviewerHarness(t, provider)
 	appendReviewerTurn(t, agent, caller, "turn-1")
-	al.recordAndMaybeReviewMemory(agent, caller, 1, "ordinary message")
+	al.recordAndMaybeReviewMemory(agent, caller, 1, "ordinary message", "turn-1")
 	if calls, _, _ := provider.snapshot(); calls != 0 {
 		t.Fatalf("review triggered before interval: %d calls", calls)
 	}
 	appendReviewerTurn(t, agent, caller, "turn-2")
-	al.recordAndMaybeReviewMemory(agent, caller, 2, "ordinary message")
+	al.recordAndMaybeReviewMemory(agent, caller, 2, "ordinary message", "turn-2")
 	select {
 	case <-provider.started:
 	case <-time.After(2 * time.Second):
 		t.Fatal("review did not trigger at configured interval")
 	}
-	started, err := al.startMemoryReview(agent, caller, false)
+	started, err := al.startMemoryReview(agent, caller, false, "turn-2")
 	if err != nil || started {
 		t.Fatalf("second concurrent review started=%t err=%v", started, err)
 	}
@@ -425,7 +425,7 @@ func TestMemoryReviewerTimeoutIsBestEffort(t *testing.T) {
 	al, agent, caller := newMemoryReviewerHarness(t, provider)
 	al.cfg.Memory.BackgroundReview.TimeoutSeconds = 1
 	appendReviewerTurn(t, agent, caller, "turn-1")
-	started, err := al.startMemoryReview(agent, caller, true)
+	started, err := al.startMemoryReview(agent, caller, true, "turn-1")
 	if err != nil || !started {
 		t.Fatalf("startMemoryReview() started=%t err=%v", started, err)
 	}
@@ -444,54 +444,67 @@ func TestMemoryReviewerTimeoutIsBestEffort(t *testing.T) {
 }
 
 func resetMemoryNotificationClaimsForTest() {
-	memoryNotificationClaims.Lock()
-	memoryNotificationClaims.items = make(map[string]time.Time)
-	memoryNotificationClaims.Unlock()
+	resetMemoryTurnAggregatorForTest()
 }
 
 func TestMemoryNotificationCoalescesForegroundAndReviewerForSameLogicalTurn(t *testing.T) {
 	resetMemoryNotificationClaimsForTest()
 	t.Cleanup(resetMemoryNotificationClaimsForTest)
+
+	cfg := config.DefaultConfig()
+	cfg.Memory.Notifications = config.MemoryNotificationVerbose
+	messageBus := bus.NewMessageBus()
+	al := &AgentLoop{cfg: cfg, bus: messageBus}
+
 	base := tools.MemoryChangeEvent{
 		TurnID: "foreground-turn",
 		Caller: memory.CallerScope{
 			AgentID: "main", UserKey: "telegram:user-a", SessionRef: "session-a",
-			MessageRef: "message-42",
+			Channel: "telegram", ChatID: "123", MessageRef: "message-42",
 		},
 		Target: memory.CuratedTargetCurrentUser,
-		Result: memory.CuratedBatchResult{Applied: []memory.CuratedEntry{{ID: "mem_1"}}},
+		Result: memory.CuratedBatchResult{Applied: []memory.CuratedEntry{{ID: "mem_1", Content: "Fact one"}}},
 	}
-	if !claimMemoryNotification(base) {
-		t.Fatal("first logical-turn notification was not claimed")
-	}
+
+	// First event
+	al.memoryChangeNotification(context.Background(), base)
+
+	// Second event in same turn (e.g. background reviewer or second mutation)
 	background := base
-	background.TurnID = "background-review"
-	background.Result.Applied = []memory.CuratedEntry{{ID: "mem_2"}}
-	if claimMemoryNotification(background) {
-		t.Fatal("background reviewer emitted a second notification for the same inbound message")
+	background.Result.Applied = []memory.CuratedEntry{{ID: "mem_2", Content: "Fact two"}}
+	al.memoryChangeNotification(context.Background(), background)
+
+	// Wait for debounce flush
+	time.Sleep(100 * time.Millisecond)
+
+	// Check published outbound: should be exactly ONE message with aggregated facts
+	select {
+	case msg := <-messageBus.OutboundChan():
+		if !strings.Contains(msg.Content, "💾 Memory updated") {
+			t.Fatalf("expected memory notification, got %q", msg.Content)
+		}
+		if !strings.Contains(msg.Content, "mem_1") || !strings.Contains(msg.Content, "mem_2") {
+			t.Fatalf("expected aggregated summary of both mutations, got %q", msg.Content)
+		}
+	default:
+		t.Fatal("expected one aggregated outbound memory notification")
 	}
-	next := base
-	next.Caller.MessageRef = "message-43"
-	if !claimMemoryNotification(next) {
-		t.Fatal("distinct logical turn was incorrectly coalesced")
-	}
-	noop := base
-	noop.Caller.MessageRef = "message-44"
-	noop.Result = memory.CuratedBatchResult{}
-	if claimMemoryNotification(noop) {
-		t.Fatal("no-op memory change claimed a notification")
+
+	// Verify no second notification was published
+	select {
+	case extra := <-messageBus.OutboundChan():
+		t.Fatalf("unexpected extra notification: %q", extra.Content)
+	default:
 	}
 }
 
 func TestMemoryNotificationPreviewDoesNotExposePrivateGroupContent(t *testing.T) {
-	event := tools.MemoryChangeEvent{
-		Caller: memory.CallerScope{GroupID: "group-1"},
-		Target: memory.CuratedTargetCurrentUser,
-		Result: memory.CuratedBatchResult{Applied: []memory.CuratedEntry{{
-			ID: "mem_0000000000000000", Content: "Private timezone is Asia/Makassar",
-		}}},
+	entry := &turnNotificationEntry{
+		caller:  memory.CallerScope{GroupID: "group-1"},
+		target:  memory.CuratedTargetCurrentUser,
+		applied: []memory.CuratedEntry{{ID: "mem_0000000000000000", Content: "Private timezone is Asia/Makassar"}},
 	}
-	preview := formatMemoryChangePreview(event)
+	preview := formatAggregatedMemoryPreview(entry)
 	if preview == "" || containsAny(preview, "timezone", "Makassar") {
 		t.Fatalf("private group notification preview = %q", preview)
 	}
@@ -513,6 +526,8 @@ func TestVerboseMemoryNotificationIsRedactedAndUsesTrustedAccount(t *testing.T) 
 		}}},
 	}
 	al.memoryChangeNotification(context.Background(), event)
+	time.Sleep(100 * time.Millisecond)
+
 	select {
 	case outbound := <-messageBus.OutboundChan():
 		if outbound.Context.Account != "personal" || outbound.Context.TopicID != "10" {
@@ -555,7 +570,7 @@ func TestMemoryReviewerHighSalienceCanTriggerBeforeInterval(t *testing.T) {
 	provider := &scriptedMemoryReviewProvider{started: make(chan struct{}), finished: make(chan struct{}), block: true}
 	al, agent, caller := newMemoryReviewerHarness(t, provider)
 	appendReviewerTurn(t, agent, caller, "turn-1")
-	al.recordAndMaybeReviewMemory(agent, caller, 1, "Mulai sekarang saya lebih suka jawaban singkat")
+	al.recordAndMaybeReviewMemory(agent, caller, 1, "Mulai sekarang saya lebih suka jawaban singkat", "turn-1")
 	select {
 	case <-provider.started:
 	case <-time.After(2 * time.Second):
@@ -647,7 +662,7 @@ func TestUnreviewedRecallSurvivesStoreRestartAndCanBeCurated(t *testing.T) {
 		Tools: tools.NewToolRegistry(), CuratedMemory: reopenedCurated, RecallMemory: reopenedRecall,
 		MemoryReviewState: reopenedReview, memoryReviewer: &memoryReviewController{},
 	}
-	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller, "post-restart-turn"); reviewErr != nil {
 		t.Fatalf("post-restart review failed: %v", reviewErr)
 	}
 	entries, err := reopenedCurated.List(memory.CuratedTargetCurrentUser, caller)
@@ -671,11 +686,11 @@ func TestRepeatedReviewWithoutNewRecallDoesNotDuplicateMemory(t *testing.T) {
 	if _, err := agent.MemoryReviewState.RecordSuccessfulTurn(caller); err != nil {
 		t.Fatal(err)
 	}
-	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller, "turn-once"); reviewErr != nil {
 		t.Fatal(reviewErr)
 	}
 	callsAfterFirst, _, _ := provider.snapshot()
-	if reviewErr := al.runMemoryReview(context.Background(), agent, caller); reviewErr != nil {
+	if reviewErr := al.runMemoryReview(context.Background(), agent, caller, "turn-once"); reviewErr != nil {
 		t.Fatal(reviewErr)
 	}
 	callsAfterSecond, _, _ := provider.snapshot()
@@ -700,7 +715,7 @@ func TestLifecycleFlushRunsWhenScheduledReviewerIsDisabled(t *testing.T) {
 	al, agent, caller := newMemoryReviewerHarness(t, provider)
 	al.cfg.Memory.BackgroundReview.Enabled = false
 	appendReviewerTurn(t, agent, caller, "turn-before-compression")
-	al.recordAndMaybeReviewMemory(agent, caller, 1, "I prefer detailed setup explanations")
+	al.recordAndMaybeReviewMemory(agent, caller, 1, "I prefer detailed setup explanations", "turn-before-compression")
 	if calls, _, _ := provider.snapshot(); calls != 0 {
 		t.Fatalf("disabled scheduled reviewer made %d calls before lifecycle flush", calls)
 	}
@@ -800,7 +815,7 @@ func TestCompressionLifecycleFlushesBeforeCompaction(t *testing.T) {
 	})
 	caller := callerScopeForTurn(agent.ID, al.cfg, opts)
 	appendReviewerTurn(t, agent, caller, ts.turnID)
-	al.recordAndMaybeReviewMemory(agent, caller, 1, "I prefer concise progress updates")
+	al.recordAndMaybeReviewMemory(agent, caller, 1, "I prefer concise progress updates", ts.turnID)
 	if calls, _, _ := provider.snapshot(); calls != 0 {
 		t.Fatalf("disabled scheduled reviewer made %d calls before compaction", calls)
 	}
@@ -886,5 +901,79 @@ func TestRegistryFlushNeverFallsBackAcrossAgentRoots(t *testing.T) {
 	}
 	if calls, _, _ := provider.snapshot(); calls != 0 {
 		t.Fatalf("removed-agent scope made %d provider calls", calls)
+	}
+}
+
+func TestLogicalTurnForegroundAndReviewerSingleNotification(t *testing.T) {
+	resetMemoryTurnAggregatorForTest()
+
+	// Reviewer will mutate workspace memory
+	provider := &scriptedMemoryReviewProvider{mutation: map[string]any{
+		"action":        "add",
+		"target":        "workspace",
+		"content":       "Project uses Go 1.25",
+		"evidence_kind": memory.CuratedEvidenceExplicit,
+	}}
+	al, agent, caller := newMemoryReviewerHarness(t, provider)
+	al.cfg.Memory.Notifications = config.MemoryNotificationOn
+	msgBus := bus.NewMessageBus()
+	al.bus = msgBus
+
+	turnID := "turn-logical-123"
+
+	// 1. Foreground memory tool executes with turnID
+	toolCtx := tools.WithToolCallerScope(context.Background(), caller)
+	toolCtx = tools.WithToolTurnID(toolCtx, turnID)
+
+	memoryTool := tools.NewMemoryManageToolWithApprovalMode(
+		agent.CuratedMemory,
+		config.MemoryApprovalOff,
+		al.memoryChangeNotification,
+	)
+
+	res := memoryTool.Execute(toolCtx, map[string]any{
+		"action":           "add",
+		"target":           "current_user",
+		"content":          "Prefers Indonesian language",
+		"type":             "communication_preference",
+		"evidence_kind":    "explicit",
+		"preference_key":   "communication.language",
+		"preference_value": "id",
+	})
+	if res.IsError {
+		t.Fatalf("foreground memory mutation failed: %v", res.Err)
+	}
+
+	// 2. Turn completes, delivered to recall, and background review starts for the SAME turnID
+	appendReviewerTurn(t, agent, caller, turnID)
+	al.recordAndMaybeReviewMemory(agent, caller, 1, "Mulai sekarang gunakan bahasa Indonesia", turnID)
+
+	// Collect published messages
+	var published []bus.OutboundMessage
+	deadline := time.After(500 * time.Millisecond)
+collect:
+	for {
+		select {
+		case msg := <-msgBus.OutboundChan():
+			published = append(published, msg)
+		case <-deadline:
+			break collect
+		}
+	}
+
+	// 3. Exactly ONE user-visible notification was emitted for this turn
+	if len(published) != 1 {
+		var msgs []string
+		for _, p := range published {
+			msgs = append(msgs, p.Content)
+		}
+		t.Fatalf("expected exactly 1 aggregated notification for logical turn, got %d: %#v", len(published), msgs)
+	}
+
+	// 4. Verify both mutations exist
+	userEntries, _ := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, caller)
+	wsEntries, _ := agent.CuratedMemory.List(memory.CuratedTargetWorkspace, caller)
+	if len(userEntries) != 1 || len(wsEntries) != 1 {
+		t.Fatalf("expected 1 user entry and 1 workspace entry, got %d and %d", len(userEntries), len(wsEntries))
 	}
 }

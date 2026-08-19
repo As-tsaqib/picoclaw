@@ -105,15 +105,30 @@ func dashboardWorkspaceCaller() memory.CallerScope {
 // arbitrary canonical user key.
 func dashboardCurrentUserCaller(cfg *config.Config) memory.CallerScope {
 	identityLinks := map[string][]string(nil)
+	var ownerIdentity string
 	if cfg != nil {
 		identityLinks = cfg.Session.IdentityLinks
+		ownerIdentity = cfg.Memory.OwnerIdentity
 	}
-	userKey := session.CanonicalUserScopeKey(
-		config.ChannelPico,
-		routing.DefaultAccountID,
-		"pico-user",
-		identityLinks,
-	)
+	var userKey string
+	if ownerIdentity != "" && identityLinks != nil {
+		ownerIdentityLower := strings.ToLower(strings.TrimSpace(ownerIdentity))
+		for canonical := range identityLinks {
+			if strings.ToLower(strings.TrimSpace(canonical)) == ownerIdentityLower {
+				userKey = "person:" + ownerIdentityLower
+				break
+			}
+		}
+	}
+
+	if userKey == "" {
+		userKey = session.CanonicalUserScopeKey(
+			config.ChannelPico,
+			routing.DefaultAccountID,
+			"pico-user",
+			identityLinks,
+		)
+	}
 	return memory.CallerScope{
 		AgentID: routing.DefaultAgentID,
 		UserKey: userKey,
@@ -222,9 +237,17 @@ func (h *Handler) handleGetCurrentUserProfile(w http.ResponseWriter, r *http.Req
 		writeManagementError(w, err)
 		return
 	}
+	scopeLabel := "Dashboard-local profile"
+	scopeDescription := "Unbound dashboard-local profile. Telegram and other channels remain separate unless an explicit owner_identity is configured in memory settings."
+	if strings.HasPrefix(caller.UserKey, "person:") {
+		owner := strings.TrimPrefix(caller.UserKey, "person:")
+		scopeLabel = fmt.Sprintf("Personal profile: %s", owner)
+		scopeDescription = fmt.Sprintf("Canonical personal profile bound to linked owner identity: %s.", owner)
+	}
+
 	writeManagementJSON(w, http.StatusOK, currentUserProfileResponse{
-		ScopeLabel:       "Pico dashboard user",
-		ScopeDescription: "Only the fixed authenticated Pico channel identity is shown. Telegram and other channel profiles remain isolated and must be managed from their trusted direct chat.",
+		ScopeLabel:       scopeLabel,
+		ScopeDescription: scopeDescription,
 		Profile:          profile,
 		Entries:          entries,
 		Stats:            stats,

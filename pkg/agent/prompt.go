@@ -123,6 +123,7 @@ type PromptBuildRequest struct {
 	Channel           string
 	ChatID            string
 	SenderID          string
+	ServerID          string
 	SenderDisplayName string
 	MemoryScope       memory.CallerScope
 	PrivateContext    bool

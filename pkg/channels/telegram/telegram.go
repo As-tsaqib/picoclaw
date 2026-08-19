@@ -79,6 +79,9 @@ type TelegramChannel struct {
 	sessionMenus            map[string]telegramSessionMenu
 	sessionRenameMu         sync.Mutex
 	sessionRenamePrompts    map[telegramSessionRenamePromptKey]telegramSessionRenamePrompt
+	pollRegistryMu          sync.Mutex
+	pollRegistry            map[string]telegramPollEntry
+	pollByTgID              map[string]string
 }
 
 type telegramMediaGroup struct {
@@ -156,6 +159,8 @@ func NewTelegramChannel(
 		sessionRenamePrompts: make(
 			map[telegramSessionRenamePromptKey]telegramSessionRenamePrompt,
 		),
+		pollRegistry: make(map[string]telegramPollEntry),
+		pollByTgID:   make(map[string]string),
 	}
 	ch.progress = channels.NewToolFeedbackAnimator(ch.EditMessage)
 	return ch, nil
@@ -198,6 +203,14 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	bh.HandleCallbackQuery(func(ctx *th.Context, query telego.CallbackQuery) error {
 		return c.handleCallbackQuery(ctx, &query)
 	}, th.AnyCallbackQueryWithMessage())
+
+	bh.HandlePoll(func(ctx *th.Context, poll telego.Poll) error {
+		return c.handlePollUpdate(ctx, &poll)
+	}, th.AnyPoll())
+
+	bh.HandlePollAnswer(func(ctx *th.Context, answer telego.PollAnswer) error {
+		return c.handlePollAnswerUpdate(ctx, &answer)
+	}, th.AnyPollAnswer())
 
 	c.SetRunning(true)
 	logger.InfoCF("telegram", "Telegram bot connected", map[string]any{
@@ -258,9 +271,38 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]
 	}
 
 	if msg.Content == "" {
-		if msg.Structured == nil {
+		if msg.Structured == nil && msg.Poll == nil && msg.StopPollID == "" &&
+			msg.Location == nil && msg.Contact == nil && msg.Dice == nil {
 			return nil, nil
 		}
+	}
+
+	if msg.StopPollID != "" {
+		err := c.StopPoll(ctx, msg.StopPollID, msg.AgentID, msg.SessionKey, msg.Context.SenderID)
+		if err != nil {
+			logger.WarnCF("telegram", "Failed to stop native poll", map[string]any{
+				"poll_id": msg.StopPollID,
+				"error":   err.Error(),
+			})
+			return nil, fmt.Errorf("failed to stop poll: %w", err)
+		}
+		return nil, nil
+	}
+
+	if msg.Dice != nil {
+		return c.sendDice(ctx, msg, chatID, threadID, ephemeralTarget)
+	}
+
+	if msg.Location != nil {
+		return c.sendLocation(ctx, msg, chatID, threadID, ephemeralTarget)
+	}
+
+	if msg.Contact != nil {
+		return c.sendContact(ctx, msg, chatID, threadID, ephemeralTarget)
+	}
+
+	if msg.Poll != nil {
+		return c.sendPoll(ctx, msg, chatID, threadID, ephemeralTarget)
 	}
 
 	if msg.Structured != nil {
@@ -903,6 +945,48 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 				ReplyParameters: replyParameters,
 			}
 			tgResult, err = c.bot.SendVideo(ctx, params)
+		case "animation":
+			params := &telego.SendAnimationParams{
+				ChatID:          tu.ID(chatID),
+				MessageThreadID: threadID,
+				ReceiverUserID:  ephemeralReceiverUserID(ephemeralTarget),
+				CallbackQueryID: ephemeralCallbackQueryID(ephemeralTarget),
+				Animation:       telego.InputFile{File: file},
+				Caption:         part.Caption,
+				ReplyParameters: replyParameters,
+			}
+			tgResult, err = c.bot.SendAnimation(ctx, params)
+		case "sticker":
+			params := &telego.SendStickerParams{
+				ChatID:          tu.ID(chatID),
+				MessageThreadID: threadID,
+				ReceiverUserID:  ephemeralReceiverUserID(ephemeralTarget),
+				CallbackQueryID: ephemeralCallbackQueryID(ephemeralTarget),
+				Sticker:         telego.InputFile{File: file},
+				ReplyParameters: replyParameters,
+			}
+			tgResult, err = c.bot.SendSticker(ctx, params)
+		case "video_note":
+			params := &telego.SendVideoNoteParams{
+				ChatID:          tu.ID(chatID),
+				MessageThreadID: threadID,
+				ReceiverUserID:  ephemeralReceiverUserID(ephemeralTarget),
+				CallbackQueryID: ephemeralCallbackQueryID(ephemeralTarget),
+				VideoNote:       telego.InputFile{File: file},
+				ReplyParameters: replyParameters,
+			}
+			tgResult, err = c.bot.SendVideoNote(ctx, params)
+		case "voice":
+			params := &telego.SendVoiceParams{
+				ChatID:          tu.ID(chatID),
+				MessageThreadID: threadID,
+				ReceiverUserID:  ephemeralReceiverUserID(ephemeralTarget),
+				CallbackQueryID: ephemeralCallbackQueryID(ephemeralTarget),
+				Voice:           telego.InputFile{File: file},
+				Caption:         part.Caption,
+				ReplyParameters: replyParameters,
+			}
+			tgResult, err = c.bot.SendVoice(ctx, params)
 		default: // "file" or unknown types
 			params := &telego.SendDocumentParams{
 				ChatID:          tu.ID(chatID),

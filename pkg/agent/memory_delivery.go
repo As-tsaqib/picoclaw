@@ -145,7 +145,9 @@ func (al *AgentLoop) commitMemoryDelivery(delivery deferredMemoryDelivery, deliv
 		return
 	}
 	if delivery.reviewEligible && sequence > 0 {
-		al.recordAndMaybeReviewMemory(agent, delivery.caller, sequence, delivery.userContent)
+		al.recordAndMaybeReviewMemory(agent, delivery.caller, sequence, delivery.userContent, delivery.turnID)
+	} else {
+		al.flushTurnNotificationByTurnID(agent.ID, delivery.caller, delivery.turnID)
 	}
 }
 

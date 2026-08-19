@@ -192,6 +192,25 @@ func NewAgentInstance(
 		}
 	}
 
+	if cfg.Tools.IsToolEnabled("send_poll") {
+		toolsRegistry.Register(tools.NewSendPollTool())
+	}
+	if cfg.Tools.IsToolEnabled("send_quiz") {
+		toolsRegistry.Register(tools.NewSendQuizTool())
+	}
+	if cfg.Tools.IsToolEnabled("stop_poll") {
+		toolsRegistry.Register(tools.NewStopPollTool())
+	}
+	if cfg.Tools.IsToolEnabled("send_location") {
+		toolsRegistry.Register(tools.NewSendLocationTool())
+	}
+	if cfg.Tools.IsToolEnabled("send_contact") {
+		toolsRegistry.Register(tools.NewSendContactTool())
+	}
+	if cfg.Tools.IsToolEnabled("send_dice") {
+		toolsRegistry.Register(tools.NewSendDiceTool())
+	}
+
 	sessionsDir := filepath.Join(workspace, "sessions")
 	sessions := initSessionStore(sessionsDir)
 
@@ -269,6 +288,17 @@ func NewAgentInstance(
 		cfg.Memory,
 	)
 	if curatedMemory != nil {
+		if cfg != nil && len(cfg.Session.IdentityLinks) > 0 {
+			if _, mErr := curatedMemory.MigrateLegacyStoresFromConfig(
+				cfg.Session.IdentityLinks,
+			); mErr != nil {
+				logger.WarnCF(
+					"memory",
+					"Failed to migrate legacy stores from identity links",
+					map[string]any{"error": mErr.Error()},
+				)
+			}
+		}
 		toolsRegistry.Register(tools.NewMemoryManageToolWithApprovalMode(
 			curatedMemory,
 			cfg.Memory.EffectiveApprovalMode(),

@@ -221,6 +221,58 @@ function shortTime(value?: string): string {
   return Number.isNaN(parsed.valueOf()) ? "unknown" : parsed.toLocaleString()
 }
 
+function formatPreferenceLabel(key?: string): string {
+  if (!key) return ""
+  switch (key) {
+    case "communication.language":
+      return "Language"
+    case "communication.response_format":
+      return "Response format"
+    case "communication.verbosity":
+      return "Verbosity"
+    case "presentation.quiz.mode":
+      return "Quiz mode"
+    case "presentation.poll.mode":
+      return "Poll mode"
+    case "interaction.button_style":
+      return "Command style"
+    case "coding.formatting":
+      return "Coding style"
+    default:
+      return key
+        .split(".")
+        .pop()!
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase())
+  }
+}
+
+function formatPreferenceValue(key?: string, val?: string): string {
+  if (!val) return ""
+  if (key === "presentation.quiz.mode" || key === "presentation.poll.mode") {
+    if (val === "native") return "Telegram Native"
+    if (val === "text") return "Plain text"
+    if (val === "auto") return "Automatic"
+  }
+  if (key === "communication.language") {
+    if (val === "id") return "Indonesian"
+    if (val === "en") return "English"
+  }
+  if (key === "communication.response_format") {
+    if (val === "structured") return "Structured"
+    if (val === "markdown") return "Markdown"
+    if (val === "concise") return "Concise"
+  }
+  if (key === "communication.verbosity") {
+    if (val === "detailed") return "Detailed"
+    if (val === "concise") return "Concise"
+  }
+  if (key === "interaction.button_style" || key === "coding.formatting") {
+    if (val === "copy_paste") return "Copy-paste ready"
+  }
+  return val.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 export function MemoryManagementSection() {
   const [entries, setEntries] = useState<MemoryEntry[]>([])
   const [pending, setPending] = useState<PendingDiff[]>([])
@@ -306,17 +358,37 @@ export function MemoryManagementSection() {
     }
   }
 
+  const duplicateFactCount = entries.reduce((acc, entry, idx) => {
+    const isDup = entries.slice(idx + 1).some((other) => {
+      const n1 = entry.content
+        .toLowerCase()
+        .trim()
+        .replace(/[.,!?;:'"()]/g, "")
+      const n2 = other.content
+        .toLowerCase()
+        .trim()
+        .replace(/[.,!?;:'"()]/g, "")
+      return n1 === n2 && entry.status === "active" && other.status === "active"
+    })
+    return isDup ? acc + 1 : acc
+  }, 0)
+
   return (
     <Card size="sm">
       <CardHeader className="border-border border-b">
-        <CardTitle>Curated workspace memory</CardTitle>
+        <CardTitle>Workspace Knowledge</CardTitle>
         <CardDescription>
           Typed, query-aware non-personal facts for the default agent workspace.
-          Private current-user stores are intentionally managed only from a
-          trusted direct chat.
+          Personal memory follows trusted canonical identities.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5 pt-5">
+        {duplicateFactCount > 0 && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-950 dark:text-amber-100">
+            {duplicateFactCount} likely duplicate fact(s) detected. Review and
+            archive or remove redundant entries.
+          </div>
+        )}
         {status && (
           <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
             <StatusTile
@@ -744,12 +816,27 @@ export function CurrentUserProfileManagementSection() {
                     <div className="space-y-2">
                       {fields.map((field) => (
                         <div key={field.source_id} className="text-sm">
-                          <p className="break-words">
-                            {field.key
-                              ? `${field.key} = ${field.value}`
-                              : field.content}
+                          <p className="font-medium">
+                            {field.key ? (
+                              <span>
+                                {formatPreferenceLabel(field.key)}:{" "}
+                                <span className="text-muted-foreground font-normal">
+                                  {formatPreferenceValue(
+                                    field.key,
+                                    field.value,
+                                  )}
+                                </span>
+                              </span>
+                            ) : (
+                              field.content
+                            )}
                           </p>
                           <p className="text-muted-foreground text-xs">
+                            {field.key && (
+                              <span className="mr-1 font-mono">
+                                {field.key} ·
+                              </span>
+                            )}
                             {field.evidence_kind} · confidence{" "}
                             {field.confidence.toFixed(2)} · source{" "}
                             <span className="font-mono">{field.source_id}</span>

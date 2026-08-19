@@ -1,4 +1,11 @@
-import { IconAlertTriangle, IconPlus, IconTrash } from "@tabler/icons-react"
+import {
+  IconAlertTriangle,
+  IconChevronDown,
+  IconChevronRight,
+  IconPlus,
+  IconSettings,
+  IconTrash,
+} from "@tabler/icons-react"
 import { useState } from "react"
 import type { ReactNode } from "react"
 import { useTranslation } from "react-i18next"
@@ -12,9 +19,6 @@ import {
   type LauncherForm,
   type MCPServerForm,
   type MCPServerType,
-  type MemoryApprovalMode,
-  type MemoryNotificationMode,
-  type MemoryRecallMode,
   type MemoryRetrievalEngine,
   type MemoryReviewModelOption,
   type TurnProfileForm,
@@ -164,28 +168,93 @@ export function MemoryRecallSection({
     }
   }
 
+  const [showAdvanced, setShowAdvanced] = useState(false)
+
+  const learningMode = !form.memoryBackgroundReviewEnabled
+    ? "manual"
+    : form.memoryApprovalMode === "background_only" ||
+        form.memoryApprovalMode === "all_writes"
+      ? "review"
+      : "automatic"
+
+  const updateLearningMode = (mode: string) => {
+    if (mode === "automatic") {
+      onFieldChange("memoryBackgroundReviewEnabled", true)
+      onFieldChange("memoryApprovalMode", "off")
+      onFieldChange("memoryWriteApproval", false)
+    } else if (mode === "review") {
+      onFieldChange("memoryBackgroundReviewEnabled", true)
+      onFieldChange("memoryApprovalMode", "background_only")
+      onFieldChange("memoryWriteApproval", true)
+    } else {
+      onFieldChange("memoryBackgroundReviewEnabled", false)
+      onFieldChange("memoryApprovalMode", "off")
+      onFieldChange("memoryWriteApproval", false)
+    }
+  }
+
   return (
     <ConfigSectionCard
-      title={t("pages.config.sections.memory")}
-      description={t("pages.config.memory_section_hint")}
+      title="Memory & Personalization"
+      description="Configure durable personal preferences, learning policy, and cross-chat memory."
     >
       <SwitchCardField
-        label={t("pages.config.memory_enabled")}
-        hint={t("pages.config.memory_enabled_hint")}
+        label="Personal Memory"
+        hint="Remember stable preferences and personal settings."
         layout="setting-row"
         checked={form.memoryEnabled}
         onCheckedChange={(checked) => onFieldChange("memoryEnabled", checked)}
       />
 
       <SwitchCardField
-        label={t("pages.config.memory_background_review_enabled")}
-        hint={t("pages.config.memory_background_review_enabled_hint")}
+        label="Learn Preferences Automatically"
+        hint="Learn durable preferences without requiring 'remember this'."
         layout="setting-row"
         checked={form.memoryBackgroundReviewEnabled}
         onCheckedChange={(checked) =>
           onFieldChange("memoryBackgroundReviewEnabled", checked)
         }
       />
+
+      <SwitchCardField
+        label="Remember Across My Chats/Topics"
+        hint="Recall relevant personal context across sessions/topics."
+        layout="setting-row"
+        checked={form.memoryRecallMode !== "isolated"}
+        onCheckedChange={(checked) =>
+          onFieldChange(
+            "memoryRecallMode",
+            checked ? "user_recall" : "isolated",
+          )
+        }
+      />
+
+      <SwitchCardField
+        label="Memory Notifications"
+        hint="Notify when memory is updated."
+        layout="setting-row"
+        checked={form.memoryNotifications !== "off"}
+        onCheckedChange={(checked) =>
+          onFieldChange("memoryNotifications", checked ? "on" : "off")
+        }
+      />
+
+      <Field
+        label="Learning Mode"
+        hint="Choose how automatic memory proposals are applied."
+        layout="setting-row"
+      >
+        <Select value={learningMode} onValueChange={updateLearningMode}>
+          <SelectTrigger className="h-9 w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="automatic">Automatic</SelectItem>
+            <SelectItem value="review">Review suggestions first</SelectItem>
+            <SelectItem value="manual">Manual only</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
 
       {form.memoryBackgroundReviewEnabled && (
         <div className="my-3 flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
@@ -196,621 +265,563 @@ export function MemoryRecallSection({
         </div>
       )}
 
-      <Field
-        label={t("pages.config.memory_review_interval")}
-        hint={t("pages.config.memory_review_interval_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          value={form.memoryReviewInterval}
-          onChange={(event) =>
-            onFieldChange("memoryReviewInterval", event.target.value)
-          }
-        />
-      </Field>
-
-      <Field
-        label={t("pages.config.memory_review_provider")}
-        hint={t("pages.config.memory_review_provider_hint")}
-        layout="setting-row"
-      >
-        <Select
-          value={form.memoryReviewProvider || FOLLOW_MAIN_VALUE}
-          onValueChange={updateReviewProvider}
+      <div className="border-t pt-4">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="flex w-full items-center justify-between py-2 text-sm font-medium"
         >
-          <SelectTrigger className="h-9 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={FOLLOW_MAIN_VALUE}>
-              {t("pages.config.memory_follow_main_model")}
-            </SelectItem>
-            {providerOptions.map((provider) => (
-              <SelectItem key={provider} value={provider}>
-                {provider}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
+          <span className="flex items-center gap-2">
+            <IconSettings className="size-4" />
+            Advanced / Expert Memory Settings
+          </span>
+          {showAdvanced ? (
+            <IconChevronDown className="size-4" />
+          ) : (
+            <IconChevronRight className="size-4" />
+          )}
+        </Button>
+      </div>
 
-      <Field
-        label={t("pages.config.memory_review_model")}
-        hint={t("pages.config.memory_review_model_hint")}
-        layout="setting-row"
-      >
-        <Select
-          value={form.memoryReviewModel || FOLLOW_MAIN_VALUE}
-          onValueChange={(value) =>
-            onFieldChange(
-              "memoryReviewModel",
-              value === FOLLOW_MAIN_VALUE ? "" : value,
-            )
-          }
-        >
-          <SelectTrigger className="h-9 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={FOLLOW_MAIN_VALUE}>
-              {t("pages.config.memory_follow_main_model")}
-            </SelectItem>
-            {Array.from(visibleModels.values()).map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
+      {showAdvanced && (
+        <div className="bg-muted/20 space-y-4 rounded-lg border p-4">
+          <Field
+            label={t("pages.config.memory_review_interval")}
+            hint={t("pages.config.memory_review_interval_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              value={form.memoryReviewInterval}
+              onChange={(event) =>
+                onFieldChange("memoryReviewInterval", event.target.value)
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_review_timeout")}
-        hint={t("pages.config.memory_review_timeout_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          value={form.memoryReviewTimeoutSeconds}
-          onChange={(event) =>
-            onFieldChange("memoryReviewTimeoutSeconds", event.target.value)
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_review_provider")}
+            hint={t("pages.config.memory_review_provider_hint")}
+            layout="setting-row"
+          >
+            <Select
+              value={form.memoryReviewProvider || FOLLOW_MAIN_VALUE}
+              onValueChange={updateReviewProvider}
+            >
+              <SelectTrigger className="h-9 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={FOLLOW_MAIN_VALUE}>
+                  {t("pages.config.memory_follow_main_model")}
+                </SelectItem>
+                {providerOptions.map((provider) => (
+                  <SelectItem key={provider} value={provider}>
+                    {provider}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_review_max_iterations")}
-        hint={t("pages.config.memory_review_max_iterations_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={4}
-          value={form.memoryReviewMaxIterations}
-          onChange={(event) =>
-            onFieldChange("memoryReviewMaxIterations", event.target.value)
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_review_model")}
+            hint={t("pages.config.memory_review_model_hint")}
+            layout="setting-row"
+          >
+            <Select
+              value={form.memoryReviewModel || FOLLOW_MAIN_VALUE}
+              onValueChange={(value) =>
+                onFieldChange(
+                  "memoryReviewModel",
+                  value === FOLLOW_MAIN_VALUE ? "" : value,
+                )
+              }
+            >
+              <SelectTrigger className="h-9 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={FOLLOW_MAIN_VALUE}>
+                  {t("pages.config.memory_follow_main_model")}
+                </SelectItem>
+                {Array.from(visibleModels.values()).map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_approval_mode")}
-        hint={t("pages.config.memory_approval_mode_hint")}
-        layout="setting-row"
-      >
-        <Select
-          value={form.memoryApprovalMode}
-          onValueChange={(value) => {
-            const mode = value as MemoryApprovalMode
-            onFieldChange("memoryApprovalMode", mode)
-            onFieldChange("memoryWriteApproval", mode !== "off")
-          }}
-        >
-          <SelectTrigger className="h-9 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="off">off</SelectItem>
-            <SelectItem value="background_only">background_only</SelectItem>
-            <SelectItem value="all_writes">all_writes</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
+          <Field
+            label={t("pages.config.memory_review_timeout")}
+            hint={t("pages.config.memory_review_timeout_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              value={form.memoryReviewTimeoutSeconds}
+              onChange={(event) =>
+                onFieldChange("memoryReviewTimeoutSeconds", event.target.value)
+              }
+            />
+          </Field>
 
-      <SwitchCardField
-        label={t("pages.config.memory_write_approval")}
-        hint={t("pages.config.memory_write_approval_hint")}
-        layout="setting-row"
-        checked={form.memoryApprovalMode !== "off"}
-        onCheckedChange={(checked) => {
-          const mode = checked
-            ? form.memoryApprovalMode === "all_writes"
-              ? "all_writes"
-              : "background_only"
-            : "off"
-          onFieldChange("memoryWriteApproval", checked)
-          onFieldChange("memoryApprovalMode", mode)
-        }}
-      />
+          <Field
+            label={t("pages.config.memory_review_max_iterations")}
+            hint={t("pages.config.memory_review_max_iterations_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={4}
+              value={form.memoryReviewMaxIterations}
+              onChange={(event) =>
+                onFieldChange("memoryReviewMaxIterations", event.target.value)
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_notifications")}
-        hint={t("pages.config.memory_notifications_hint")}
-        layout="setting-row"
-      >
-        <Select
-          value={form.memoryNotifications}
-          onValueChange={(value) =>
-            onFieldChange(
-              "memoryNotifications",
-              value as MemoryNotificationMode,
-            )
-          }
-        >
-          <SelectTrigger className="h-9 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="off">off</SelectItem>
-            <SelectItem value="on">on</SelectItem>
-            <SelectItem value="verbose">verbose</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
+          <Field
+            label={t("pages.config.memory_workspace_char_limit")}
+            hint={t("pages.config.memory_workspace_char_limit_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              value={form.memoryWorkspaceCharLimit}
+              onChange={(event) =>
+                onFieldChange("memoryWorkspaceCharLimit", event.target.value)
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_workspace_char_limit")}
-        hint={t("pages.config.memory_workspace_char_limit_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          value={form.memoryWorkspaceCharLimit}
-          onChange={(event) =>
-            onFieldChange("memoryWorkspaceCharLimit", event.target.value)
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_per_user_char_limit")}
+            hint={t("pages.config.memory_per_user_char_limit_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              value={form.memoryPerUserCharLimit}
+              onChange={(event) =>
+                onFieldChange("memoryPerUserCharLimit", event.target.value)
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_per_user_char_limit")}
-        hint={t("pages.config.memory_per_user_char_limit_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          value={form.memoryPerUserCharLimit}
-          onChange={(event) =>
-            onFieldChange("memoryPerUserCharLimit", event.target.value)
-          }
-        />
-      </Field>
+          <SwitchCardField
+            label={t("pages.config.memory_profile_enabled")}
+            hint={t("pages.config.memory_profile_enabled_hint")}
+            layout="setting-row"
+            checked={form.memoryProfileEnabled}
+            onCheckedChange={(checked) =>
+              onFieldChange("memoryProfileEnabled", checked)
+            }
+          />
 
-      <SwitchCardField
-        label={t("pages.config.memory_profile_enabled")}
-        hint={t("pages.config.memory_profile_enabled_hint")}
-        layout="setting-row"
-        checked={form.memoryProfileEnabled}
-        onCheckedChange={(checked) =>
-          onFieldChange("memoryProfileEnabled", checked)
-        }
-      />
+          <Field
+            label={t("pages.config.memory_profile_max_chars")}
+            hint={t("pages.config.memory_profile_max_chars_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={4000}
+              value={form.memoryProfileMaxChars}
+              onChange={(event) =>
+                onFieldChange("memoryProfileMaxChars", event.target.value)
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_profile_max_chars")}
-        hint={t("pages.config.memory_profile_max_chars_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={4000}
-          value={form.memoryProfileMaxChars}
-          onChange={(event) =>
-            onFieldChange("memoryProfileMaxChars", event.target.value)
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_profile_min_confidence")}
+            hint={t("pages.config.memory_profile_min_confidence_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={0}
+              max={1}
+              step="0.05"
+              value={form.memoryProfileMinConfidence}
+              onChange={(event) =>
+                onFieldChange("memoryProfileMinConfidence", event.target.value)
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_profile_min_confidence")}
-        hint={t("pages.config.memory_profile_min_confidence_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={0}
-          max={1}
-          step="0.05"
-          value={form.memoryProfileMinConfidence}
-          onChange={(event) =>
-            onFieldChange("memoryProfileMinConfidence", event.target.value)
-          }
-        />
-      </Field>
+          <SwitchCardField
+            label={t("pages.config.memory_retrieval_enabled")}
+            hint={t("pages.config.memory_retrieval_enabled_hint")}
+            layout="setting-row"
+            checked={form.memoryRetrievalEnabled}
+            onCheckedChange={(checked) =>
+              onFieldChange("memoryRetrievalEnabled", checked)
+            }
+          />
 
-      <SwitchCardField
-        label={t("pages.config.memory_retrieval_enabled")}
-        hint={t("pages.config.memory_retrieval_enabled_hint")}
-        layout="setting-row"
-        checked={form.memoryRetrievalEnabled}
-        onCheckedChange={(checked) =>
-          onFieldChange("memoryRetrievalEnabled", checked)
-        }
-      />
+          <Field
+            label={t("pages.config.memory_retrieval_engine")}
+            hint={t("pages.config.memory_retrieval_engine_hint")}
+            layout="setting-row"
+          >
+            <Select
+              value={form.memoryRetrievalEngine}
+              onValueChange={(value) =>
+                onFieldChange(
+                  "memoryRetrievalEngine",
+                  value as MemoryRetrievalEngine,
+                )
+              }
+            >
+              <SelectTrigger className="h-9 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hybrid_lexical">hybrid_lexical</SelectItem>
+                <SelectItem value="semantic_rerank">semantic_rerank</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_retrieval_engine")}
-        hint={t("pages.config.memory_retrieval_engine_hint")}
-        layout="setting-row"
-      >
-        <Select
-          value={form.memoryRetrievalEngine}
-          onValueChange={(value) =>
-            onFieldChange(
-              "memoryRetrievalEngine",
-              value as MemoryRetrievalEngine,
-            )
-          }
-        >
-          <SelectTrigger className="h-9 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="hybrid_lexical">hybrid_lexical</SelectItem>
-            <SelectItem value="semantic_rerank">semantic_rerank</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
+          <Field
+            label={t("pages.config.memory_retrieval_max_workspace_results")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={50}
+              value={form.memoryRetrievalMaxWorkspaceResults}
+              onChange={(event) =>
+                onFieldChange(
+                  "memoryRetrievalMaxWorkspaceResults",
+                  event.target.value,
+                )
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_retrieval_max_workspace_results")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={50}
-          value={form.memoryRetrievalMaxWorkspaceResults}
-          onChange={(event) =>
-            onFieldChange(
-              "memoryRetrievalMaxWorkspaceResults",
-              event.target.value,
-            )
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_retrieval_max_user_results")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={50}
+              value={form.memoryRetrievalMaxUserResults}
+              onChange={(event) =>
+                onFieldChange(
+                  "memoryRetrievalMaxUserResults",
+                  event.target.value,
+                )
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_retrieval_max_user_results")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={50}
-          value={form.memoryRetrievalMaxUserResults}
-          onChange={(event) =>
-            onFieldChange("memoryRetrievalMaxUserResults", event.target.value)
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_retrieval_max_total_chars")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={20000}
+              value={form.memoryRetrievalMaxTotalChars}
+              onChange={(event) =>
+                onFieldChange(
+                  "memoryRetrievalMaxTotalChars",
+                  event.target.value,
+                )
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_retrieval_max_total_chars")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={20000}
-          value={form.memoryRetrievalMaxTotalChars}
-          onChange={(event) =>
-            onFieldChange("memoryRetrievalMaxTotalChars", event.target.value)
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_retrieval_pinned_char_budget")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={10000}
+              value={form.memoryRetrievalPinnedCharBudget}
+              onChange={(event) =>
+                onFieldChange(
+                  "memoryRetrievalPinnedCharBudget",
+                  event.target.value,
+                )
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_retrieval_pinned_char_budget")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={10000}
-          value={form.memoryRetrievalPinnedCharBudget}
-          onChange={(event) =>
-            onFieldChange("memoryRetrievalPinnedCharBudget", event.target.value)
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_retrieval_minimum_score")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={0}
+              max={10}
+              step="0.05"
+              value={form.memoryRetrievalMinimumScore}
+              onChange={(event) =>
+                onFieldChange("memoryRetrievalMinimumScore", event.target.value)
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_retrieval_minimum_score")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={0}
-          max={10}
-          step="0.05"
-          value={form.memoryRetrievalMinimumScore}
-          onChange={(event) =>
-            onFieldChange("memoryRetrievalMinimumScore", event.target.value)
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_retrieval_recency_weight")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={0}
+              max={5}
+              step="0.05"
+              value={form.memoryRetrievalRecencyWeight}
+              onChange={(event) =>
+                onFieldChange(
+                  "memoryRetrievalRecencyWeight",
+                  event.target.value,
+                )
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_retrieval_recency_weight")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={0}
-          max={5}
-          step="0.05"
-          value={form.memoryRetrievalRecencyWeight}
-          onChange={(event) =>
-            onFieldChange("memoryRetrievalRecencyWeight", event.target.value)
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_retrieval_recency_half_life")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={3650}
+              value={form.memoryRetrievalRecencyHalfLifeDays}
+              onChange={(event) =>
+                onFieldChange(
+                  "memoryRetrievalRecencyHalfLifeDays",
+                  event.target.value,
+                )
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_retrieval_recency_half_life")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={3650}
-          value={form.memoryRetrievalRecencyHalfLifeDays}
-          onChange={(event) =>
-            onFieldChange(
-              "memoryRetrievalRecencyHalfLifeDays",
-              event.target.value,
-            )
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_retrieval_fuzzy_weight")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={0}
+              max={5}
+              step="0.05"
+              value={form.memoryRetrievalFuzzyWeight}
+              onChange={(event) =>
+                onFieldChange("memoryRetrievalFuzzyWeight", event.target.value)
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_retrieval_fuzzy_weight")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={0}
-          max={5}
-          step="0.05"
-          value={form.memoryRetrievalFuzzyWeight}
-          onChange={(event) =>
-            onFieldChange("memoryRetrievalFuzzyWeight", event.target.value)
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_retrieval_recent_fallback_count")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={0}
+              max={50}
+              value={form.memoryRetrievalRecentFallbackCount}
+              onChange={(event) =>
+                onFieldChange(
+                  "memoryRetrievalRecentFallbackCount",
+                  event.target.value,
+                )
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_retrieval_recent_fallback_count")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={0}
-          max={50}
-          value={form.memoryRetrievalRecentFallbackCount}
-          onChange={(event) =>
-            onFieldChange(
-              "memoryRetrievalRecentFallbackCount",
-              event.target.value,
-            )
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_retrieval_user_share")}
+            hint={t("pages.config.memory_retrieval_user_share_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={0.5}
+              max={0.9}
+              step="0.05"
+              value={form.memoryRetrievalUserShare}
+              onChange={(event) =>
+                onFieldChange("memoryRetrievalUserShare", event.target.value)
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_retrieval_user_share")}
-        hint={t("pages.config.memory_retrieval_user_share_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={0.5}
-          max={0.9}
-          step="0.05"
-          value={form.memoryRetrievalUserShare}
-          onChange={(event) =>
-            onFieldChange("memoryRetrievalUserShare", event.target.value)
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_archived_retention_days")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={3650}
+              value={form.memoryArchivedRetentionDays}
+              onChange={(event) =>
+                onFieldChange("memoryArchivedRetentionDays", event.target.value)
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_archived_retention_days")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={3650}
-          value={form.memoryArchivedRetentionDays}
-          onChange={(event) =>
-            onFieldChange("memoryArchivedRetentionDays", event.target.value)
-          }
-        />
-      </Field>
+          <Field
+            label={t("pages.config.memory_stale_threshold_days")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={3650}
+              value={form.memoryStaleThresholdDays}
+              onChange={(event) =>
+                onFieldChange("memoryStaleThresholdDays", event.target.value)
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_stale_threshold_days")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={3650}
-          value={form.memoryStaleThresholdDays}
-          onChange={(event) =>
-            onFieldChange("memoryStaleThresholdDays", event.target.value)
-          }
-        />
-      </Field>
+          <SwitchCardField
+            label={t("pages.config.memory_auto_archive_expired")}
+            hint={t("pages.config.memory_auto_archive_expired_hint")}
+            layout="setting-row"
+            checked={form.memoryAutoArchiveExpired}
+            onCheckedChange={(checked) =>
+              onFieldChange("memoryAutoArchiveExpired", checked)
+            }
+          />
 
-      <SwitchCardField
-        label={t("pages.config.memory_auto_archive_expired")}
-        hint={t("pages.config.memory_auto_archive_expired_hint")}
-        layout="setting-row"
-        checked={form.memoryAutoArchiveExpired}
-        onCheckedChange={(checked) =>
-          onFieldChange("memoryAutoArchiveExpired", checked)
-        }
-      />
+          <Field
+            label={t("pages.config.memory_recall_max_results")}
+            hint={t("pages.config.memory_recall_max_results_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={20}
+              value={form.memoryRecallMaxResults}
+              onChange={(event) =>
+                onFieldChange("memoryRecallMaxResults", event.target.value)
+              }
+            />
+          </Field>
 
-      <Field
-        label={t("pages.config.memory_recall_mode")}
-        hint={t("pages.config.memory_recall_mode_hint")}
-        layout="setting-row"
-      >
-        <Select
-          value={form.memoryRecallMode}
-          onValueChange={(value) =>
-            onFieldChange("memoryRecallMode", value as MemoryRecallMode)
-          }
-        >
-          <SelectTrigger className="h-9 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="isolated">isolated</SelectItem>
-            <SelectItem value="user_recall">user_recall</SelectItem>
-            <SelectItem value="group_recall">group_recall</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
+          <Field
+            label={t("pages.config.memory_recall_max_chars")}
+            hint={t("pages.config.memory_recall_max_chars_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={20000}
+              value={form.memoryRecallMaxChars}
+              onChange={(event) =>
+                onFieldChange("memoryRecallMaxChars", event.target.value)
+              }
+            />
+          </Field>
 
-      {form.memoryRecallMode === "group_recall" && (
-        <div className="my-3 flex gap-3 rounded-lg border border-orange-500/30 bg-orange-500/10 p-3 text-sm">
-          <IconAlertTriangle className="mt-0.5 size-4 shrink-0 text-orange-600 dark:text-orange-400" />
-          <p className="text-orange-950 dark:text-orange-100">
-            {t("pages.config.memory_group_recall_privacy_warning")}
-          </p>
+          <Field
+            label={t("pages.config.memory_recall_max_records")}
+            hint={t("pages.config.memory_recall_max_records_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={20000}
+              value={form.memoryRecallMaxRecords}
+              onChange={(event) =>
+                onFieldChange("memoryRecallMaxRecords", event.target.value)
+              }
+            />
+          </Field>
+
+          <SwitchCardField
+            label={t("pages.config.memory_checkpoints_enabled")}
+            hint={t("pages.config.memory_checkpoints_enabled_hint")}
+            layout="setting-row"
+            checked={form.memoryCheckpointsEnabled}
+            onCheckedChange={(checked) =>
+              onFieldChange("memoryCheckpointsEnabled", checked)
+            }
+          />
+
+          <Field
+            label={t("pages.config.memory_checkpoint_max_count")}
+            hint={t("pages.config.memory_checkpoint_max_count_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={1000}
+              value={form.memoryCheckpointMaxCount}
+              onChange={(event) =>
+                onFieldChange("memoryCheckpointMaxCount", event.target.value)
+              }
+            />
+          </Field>
+
+          <Field
+            label={t("pages.config.memory_checkpoint_context_limit")}
+            hint={t("pages.config.memory_checkpoint_context_limit_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={20000}
+              value={form.memoryCheckpointMaxContextChars}
+              onChange={(event) =>
+                onFieldChange(
+                  "memoryCheckpointMaxContextChars",
+                  event.target.value,
+                )
+              }
+            />
+          </Field>
+
+          <Field
+            label={t("pages.config.memory_checkpoint_retention_days")}
+            hint={t("pages.config.memory_checkpoint_retention_days_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              value={form.memoryCheckpointCompletedRetentionDays}
+              onChange={(event) =>
+                onFieldChange(
+                  "memoryCheckpointCompletedRetentionDays",
+                  event.target.value,
+                )
+              }
+            />
+          </Field>
         </div>
       )}
-
-      <Field
-        label={t("pages.config.memory_recall_max_results")}
-        hint={t("pages.config.memory_recall_max_results_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={20}
-          value={form.memoryRecallMaxResults}
-          onChange={(event) =>
-            onFieldChange("memoryRecallMaxResults", event.target.value)
-          }
-        />
-      </Field>
-
-      <Field
-        label={t("pages.config.memory_recall_max_chars")}
-        hint={t("pages.config.memory_recall_max_chars_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={20000}
-          value={form.memoryRecallMaxChars}
-          onChange={(event) =>
-            onFieldChange("memoryRecallMaxChars", event.target.value)
-          }
-        />
-      </Field>
-
-      <Field
-        label={t("pages.config.memory_recall_max_records")}
-        hint={t("pages.config.memory_recall_max_records_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={20000}
-          value={form.memoryRecallMaxRecords}
-          onChange={(event) =>
-            onFieldChange("memoryRecallMaxRecords", event.target.value)
-          }
-        />
-      </Field>
-
-      <SwitchCardField
-        label={t("pages.config.memory_checkpoints_enabled")}
-        hint={t("pages.config.memory_checkpoints_enabled_hint")}
-        layout="setting-row"
-        checked={form.memoryCheckpointsEnabled}
-        onCheckedChange={(checked) =>
-          onFieldChange("memoryCheckpointsEnabled", checked)
-        }
-      />
-
-      <Field
-        label={t("pages.config.memory_checkpoint_max_count")}
-        hint={t("pages.config.memory_checkpoint_max_count_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={1000}
-          value={form.memoryCheckpointMaxCount}
-          onChange={(event) =>
-            onFieldChange("memoryCheckpointMaxCount", event.target.value)
-          }
-        />
-      </Field>
-
-      <Field
-        label={t("pages.config.memory_checkpoint_context_limit")}
-        hint={t("pages.config.memory_checkpoint_context_limit_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          max={20000}
-          value={form.memoryCheckpointMaxContextChars}
-          onChange={(event) =>
-            onFieldChange("memoryCheckpointMaxContextChars", event.target.value)
-          }
-        />
-      </Field>
-
-      <Field
-        label={t("pages.config.memory_checkpoint_retention_days")}
-        hint={t("pages.config.memory_checkpoint_retention_days_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={1}
-          value={form.memoryCheckpointCompletedRetentionDays}
-          onChange={(event) =>
-            onFieldChange(
-              "memoryCheckpointCompletedRetentionDays",
-              event.target.value,
-            )
-          }
-        />
-      </Field>
     </ConfigSectionCard>
   )
 }

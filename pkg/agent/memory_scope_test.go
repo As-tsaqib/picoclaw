@@ -6,6 +6,7 @@ import (
 
 	"github.com/As-tsaqib/picoclaw/pkg/bus"
 	"github.com/As-tsaqib/picoclaw/pkg/config"
+	"github.com/As-tsaqib/picoclaw/pkg/memory"
 )
 
 func TestCallerScopeTelegramUserFollowsTopicsButNotAccountsOrUsers(t *testing.T) {
@@ -43,8 +44,12 @@ func TestCallerScopeTelegramUserFollowsTopicsButNotAccountsOrUsers(t *testing.T)
 	otherAccountInbound := base
 	otherAccountInbound.Account = "work"
 	otherAccount := callerScopeFromInbound("main", "session-topic-42", &otherAccountInbound, nil, cfg)
-	if otherAccount.UserKey == first.UserKey {
-		t.Fatalf("different Telegram accounts share memory key %q", first.UserKey)
+	if otherAccount.UserKey != first.UserKey {
+		t.Fatalf(
+			"different Telegram accounts SHOULD share person memory key %q, got %q",
+			first.UserKey,
+			otherAccount.UserKey,
+		)
 	}
 	otherChannelInbound := base
 	otherChannelInbound.Channel = "discord"
@@ -85,6 +90,98 @@ func TestDisabledMemoryFlagsPreservePreviousRuntimeShape(t *testing.T) {
 			recall,
 			checkpoints,
 			review,
+		)
+	}
+}
+
+func TestPersonScopeRuntimeMigrationAndRestartIdempotency(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Workspace = workspace
+	cfg.Memory.Enabled = true
+
+	legacyTelegram := "channel:telegram|account:default|user:42"
+	legacyPico := "channel:pico|account:default|user:pico-user"
+
+	// 1. Seed legacy stores
+	curatedStore, err := memory.NewCuratedStore(
+		filepath.Join(structuredMemoryRoot(workspace, "main"), "curated"),
+		memory.CuratedStoreOptions{
+			WorkspaceCharLimit: 10_000,
+			PerUserCharLimit:   10_000,
+		},
+	)
+	if err != nil {
+		t.Fatalf("failed to create curated store: %v", err)
+	}
+
+	_, _ = curatedStore.ApplyBatch(
+		memory.CuratedTargetCurrentUser,
+		memory.CallerScope{UserKey: legacyTelegram},
+		[]memory.CuratedMutation{{
+			Action:          memory.CuratedActionAdd,
+			Content:         "Prefers native quizzes",
+			Type:            memory.CuratedTypeWorkflowPreference,
+			EvidenceKind:    memory.CuratedEvidenceExplicit,
+			PreferenceKey:   "workflow.quiz_format",
+			PreferenceValue: "telegram_native_quiz",
+		}},
+		false,
+	)
+
+	_, _ = curatedStore.ApplyBatch(
+		memory.CuratedTargetCurrentUser,
+		memory.CallerScope{UserKey: legacyPico},
+		[]memory.CuratedMutation{{
+			Action:          memory.CuratedActionAdd,
+			Content:         "Prefers Indonesian language",
+			Type:            memory.CuratedTypeCommunicationPreference,
+			EvidenceKind:    memory.CuratedEvidenceExplicit,
+			PreferenceKey:   "language.primary",
+			PreferenceValue: "id",
+		}},
+		false,
+	)
+
+	// 2. Configure identity link
+	cfg.Session.IdentityLinks = map[string][]string{
+		"alice": {"telegram:default:42", "pico:default:pico-user"},
+	}
+
+	// 3. Initialize runtime (instance creation triggers migration)
+	agent := NewAgentInstance(nil, &cfg.Agents.Defaults, cfg, &mockProvider{})
+	if agent == nil || agent.CuratedMemory == nil {
+		t.Fatal("failed to initialize agent instance")
+	}
+
+	// 4. Verify canonical person scope is active and old memory is visible
+	personCaller := memory.CallerScope{UserKey: "person:alice"}
+	entries, err := agent.CuratedMemory.List(memory.CuratedTargetCurrentUser, personCaller)
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf(
+			"expected 2 migrated entries in person:alice, got %d: %#v",
+			len(entries),
+			entries,
+		)
+	}
+
+	// 5. Restart runtime again
+	restartedAgent := NewAgentInstance(nil, &cfg.Agents.Defaults, cfg, &mockProvider{})
+	restartedEntries, err := restartedAgent.CuratedMemory.List(
+		memory.CuratedTargetCurrentUser,
+		personCaller,
+	)
+	if err != nil {
+		t.Fatalf("List error after restart: %v", err)
+	}
+	if len(restartedEntries) != 2 {
+		t.Fatalf(
+			"expected exactly 2 entries (zero duplicates) after restart, got %d: %#v",
+			len(restartedEntries),
+			restartedEntries,
 		)
 	}
 }

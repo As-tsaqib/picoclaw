@@ -1403,6 +1403,9 @@ type ToolsConfig struct {
 	ReadFile        ReadFileToolConfig `json:"read_file"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_READ_FILE_"`
 	Serial          ToolConfig         `json:"serial"            yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SERIAL_"`
 	SendFile        ToolConfig         `json:"send_file"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_FILE_"`
+	SendPoll        ToolConfig         `json:"send_poll"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_POLL_"`
+	SendQuiz        ToolConfig         `json:"send_quiz"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_QUIZ_"`
+	StopPoll        ToolConfig         `json:"stop_poll"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_STOP_POLL_"`
 	SendTTS         ToolConfig         `json:"send_tts"          yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_TTS_"`
 	Spawn           ToolConfig         `json:"spawn"             yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SPAWN_"`
 	SpawnStatus     ToolConfig         `json:"spawn_status"      yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SPAWN_STATUS_"`
@@ -2172,6 +2175,12 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.WebFetch.Enabled
 	case "send_file":
 		return t.SendFile.Enabled
+	case "send_poll":
+		return t.SendPoll.Enabled
+	case "send_quiz":
+		return t.SendQuiz.Enabled
+	case "stop_poll":
+		return t.StopPoll.Enabled
 	case "send_tts":
 		return t.SendTTS.Enabled
 	case "write_file":

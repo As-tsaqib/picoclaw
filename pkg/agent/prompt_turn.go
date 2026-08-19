@@ -32,6 +32,18 @@ func promptBuildRequestForTurn(
 	memoryParts, private := memoryPromptPartsForTurn(ts, cfg, req.MemoryScope)
 	req.Overlays = append(req.Overlays, memoryParts...)
 	req.PrivateContext = private
+	if ts.opts.Dispatch.InboundContext != nil && ts.opts.Dispatch.InboundContext.Raw != nil {
+		req.ServerID = ts.opts.Dispatch.InboundContext.Raw["server_id"]
+	}
+	if req.ServerID == "" && strings.EqualFold(ts.channel, "telegram") && cfg != nil {
+		tgChannel := cfg.Channels.Get("telegram")
+		if tgChannel != nil && tgChannel.Settings != nil {
+			var tgSettings config.TelegramSettings
+			if decErr := tgChannel.Settings.Decode(&tgSettings); decErr == nil {
+				req.ServerID = tgSettings.BaseURL
+			}
+		}
+	}
 	hasCallableTools := true
 	if ts.profile.Enabled {
 		hasCallableTools = turnProfileHasCallableTools(ts.profile, ts.agent.Tools.ToProviderDefs()) ||

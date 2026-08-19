@@ -33,6 +33,7 @@ type StructuredContent struct {
 	Kind       string               `json:"kind,omitempty"`
 	Title      string               `json:"title,omitempty"`
 	Paragraphs []string             `json:"paragraphs,omitempty"`
+	Blocks     []StructuredBlock    `json:"blocks,omitempty"`
 	Tables     []StructuredTable    `json:"tables,omitempty"`
 	Keyboard   [][]StructuredButton `json:"keyboard,omitempty"`
 	Fallback   string               `json:"fallback,omitempty"`
@@ -152,4 +153,15 @@ func (s *StructuredContent) FallbackText() string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+// StructuredBlock represents a rich document block.
+type StructuredBlock struct {
+	Type     string            `json:"type"` // "paragraph", "heading", "code", "list", "quote", "divider", "details"
+	Text     string            `json:"text,omitempty"`
+	Level    int               `json:"level,omitempty"`    // for heading
+	Language string            `json:"language,omitempty"` // for code
+	Items    []string          `json:"items,omitempty"`    // for list
+	Ordered  bool              `json:"ordered,omitempty"`  // for list
+	Blocks   []StructuredBlock `json:"blocks,omitempty"`   // for details/quote
 }

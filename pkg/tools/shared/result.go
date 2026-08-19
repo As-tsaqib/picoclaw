@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/As-tsaqib/picoclaw/pkg/bus"
 	"github.com/As-tsaqib/picoclaw/pkg/providers"
 )
 
@@ -54,6 +55,21 @@ type ToolResult struct {
 	// form, e.g. "[file:/tmp/example.png]". This is used when a tool produced a
 	// reusable local artifact but did not deliver it to the user yet.
 	ArtifactTags []string `json:"artifact_tags,omitempty"`
+
+	// Poll contains the native poll/quiz payload.
+	Poll *bus.PollPayload `json:"-"`
+
+	// Location contains geographic location or venue data.
+	Location *bus.LocationPayload `json:"-"`
+
+	// Contact contains contact card payload.
+	Contact *bus.ContactPayload `json:"-"`
+
+	// Dice contains animated dice payload.
+	Dice *bus.DicePayload `json:"-"`
+
+	// StopPollID contains the opaque handle of the poll to stop.
+	StopPollID string `json:"-"`
 
 	// ResponseHandled indicates that this tool execution already satisfied the
 	// user's request at the channel/output level, so the agent loop can stop

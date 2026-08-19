@@ -476,6 +476,15 @@ func DefaultConfig() *Config {
 			SendFile: ToolConfig{
 				Enabled: true,
 			},
+			SendPoll: ToolConfig{
+				Enabled: true,
+			},
+			SendQuiz: ToolConfig{
+				Enabled: true,
+			},
+			StopPoll: ToolConfig{
+				Enabled: true,
+			},
 			SendTTS: ToolConfig{
 				Enabled: false,
 			},
