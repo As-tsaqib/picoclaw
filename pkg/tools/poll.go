@@ -62,7 +62,11 @@ func validatePollCommon(description string, openPeriod int, closeAt time.Time, c
 	if !closeAt.IsZero() {
 		delta := time.Until(closeAt)
 		if delta < pollMinOpenPeriod*time.Second || delta > pollMaxOpenPeriod*time.Second {
-			return fmt.Errorf("close_date_unix must be %d-%d seconds in the future", pollMinOpenPeriod, pollMaxOpenPeriod)
+			return fmt.Errorf(
+				"close_date_unix must be %d-%d seconds in the future",
+				pollMinOpenPeriod,
+				pollMaxOpenPeriod,
+			)
 		}
 	}
 	if len(countryCodes) > pollMaxCountryCodes {
@@ -73,7 +77,8 @@ func validatePollCommon(description string, openPeriod int, closeAt time.Time, c
 		if trimmed == "FT" {
 			continue
 		}
-		if len(trimmed) != 2 || trimmed[0] < 'A' || trimmed[0] > 'Z' || trimmed[1] < 'A' || trimmed[1] > 'Z' {
+		if len(trimmed) != 2 || trimmed[0] < 'A' || trimmed[0] > 'Z' ||
+			trimmed[1] < 'A' || trimmed[1] > 'Z' {
 			return fmt.Errorf("country code %q must be a two-letter ISO 3166-1 alpha-2 code or FT", code)
 		}
 	}
@@ -111,8 +116,9 @@ func pollCommonSchemaProperties() map[string]any {
 			"description": "Whether the poll is anonymous. Defaults to true.",
 		},
 		"allows_revoting": map[string]any{
-			"type":        "boolean",
-			"description": "Whether voters may change their answer. Regular polls default to true; quizzes default to false.",
+			"type": "boolean",
+			"description": "Whether voters may change their answer. " +
+				"Regular polls default to true; quizzes default to false.",
 		},
 		"shuffle_options": map[string]any{
 			"type":        "boolean",
@@ -145,7 +151,8 @@ func pollCommonSchemaProperties() map[string]any {
 		},
 		"close_date_unix": map[string]any{
 			"type":        "integer",
-			"description": "Unix timestamp when the poll closes, 5-2628000 seconds in the future. Mutually exclusive with open_period_seconds.",
+			"description": "Unix timestamp when the poll closes, 5-2628000 seconds in the future. " +
+				"Mutually exclusive with open_period_seconds.",
 		},
 		"is_closed": map[string]any{
 			"type":        "boolean",
@@ -167,14 +174,23 @@ Use this when you need to gather opinions or let users vote. Do not use for quiz
 
 func (t *sendPollTool) Parameters() map[string]any {
 	props := pollCommonSchemaProperties()
-	props["question"] = map[string]any{"type": "string", "minLength": 1, "maxLength": pollQuestionMaxChars, "description": "Poll question (1-300 chars)."}
+	props["question"] = map[string]any{
+		"type": "string", "minLength": 1, "maxLength": pollQuestionMaxChars,
+		"description": "Poll question (1-300 chars).",
+	}
 	props["options"] = map[string]any{
 		"type": "array", "minItems": pollMinOptions, "maxItems": pollMaxOptions,
-		"items": map[string]any{"type": "string", "minLength": 1, "maxLength": pollOptionMaxChars},
+		"items": map[string]any{
+			"type": "string", "minLength": 1, "maxLength": pollOptionMaxChars,
+		},
 		"description": "Array of 1-12 options (1-100 chars each).",
 	}
-	props["allows_multiple_answers"] = map[string]any{"type": "boolean", "description": "Whether voters may choose multiple answers."}
-	props["allow_adding_options"] = map[string]any{"type": "boolean", "description": "Allow voters to add options. Invalid for anonymous polls and quizzes."}
+	props["allows_multiple_answers"] = map[string]any{
+		"type": "boolean", "description": "Whether voters may choose multiple answers.",
+	}
+	props["allow_adding_options"] = map[string]any{
+		"type": "boolean", "description": "Allow voters to add options. Invalid for anonymous polls and quizzes.",
+	}
 	return map[string]any{"type": "object", "properties": props, "required": []string{"question", "options"}}
 }
 
@@ -185,28 +201,60 @@ func (t *sendPollTool) Execute(_ context.Context, args map[string]any) *toolshar
 		return toolshared.ErrorResult(err.Error())
 	}
 
-	payload := &bus.PollPayload{ID: uuid.New().String(), Mode: "regular", Question: question, Options: options, IsAnonymous: true, AllowsRevoting: true}
-	if val, ok := args["is_anonymous"].(bool); ok { payload.IsAnonymous = val }
-	if val, ok := args["allows_multiple_answers"].(bool); ok { payload.AllowsMultipleAnswers = val }
-	if val, ok := args["allows_revoting"].(bool); ok { payload.AllowsRevoting = val }
-	if val, ok := args["shuffle_options"].(bool); ok { payload.ShuffleOptions = val }
-	if val, ok := args["allow_adding_options"].(bool); ok { payload.AllowAddingOptions = val }
-	if val, ok := args["hide_results_until_closes"].(bool); ok { payload.HideResultsUntilCloses = val }
-	if val, ok := args["members_only"].(bool); ok { payload.MembersOnly = val }
-	if val, ok := args["is_closed"].(bool); ok { payload.IsClosed = val }
+	payload := &bus.PollPayload{
+		ID: uuid.New().String(), Mode: "regular", Question: question, Options: options,
+		IsAnonymous: true, AllowsRevoting: true,
+	}
+	if val, ok := args["is_anonymous"].(bool); ok {
+		payload.IsAnonymous = val
+	}
+	if val, ok := args["allows_multiple_answers"].(bool); ok {
+		payload.AllowsMultipleAnswers = val
+	}
+	if val, ok := args["allows_revoting"].(bool); ok {
+		payload.AllowsRevoting = val
+	}
+	if val, ok := args["shuffle_options"].(bool); ok {
+		payload.ShuffleOptions = val
+	}
+	if val, ok := args["allow_adding_options"].(bool); ok {
+		payload.AllowAddingOptions = val
+	}
+	if val, ok := args["hide_results_until_closes"].(bool); ok {
+		payload.HideResultsUntilCloses = val
+	}
+	if val, ok := args["members_only"].(bool); ok {
+		payload.MembersOnly = val
+	}
+	if val, ok := args["is_closed"].(bool); ok {
+		payload.IsClosed = val
+	}
 	payload.Description, _ = args["description"].(string)
 	payload.OpenPeriodSeconds = parseIntArg(args, "open_period_seconds")
 	payload.CountryCodes = parseStringSliceArg(args, "country_codes")
-	if closeUnix := parseIntArg(args, "close_date_unix"); closeUnix != 0 { payload.CloseAt = time.Unix(int64(closeUnix), 0) }
+	if closeUnix := parseIntArg(args, "close_date_unix"); closeUnix != 0 {
+		payload.CloseAt = time.Unix(int64(closeUnix), 0)
+	}
 	if payload.AllowAddingOptions && payload.IsAnonymous {
 		return toolshared.ErrorResult("allow_adding_options is not supported for anonymous polls")
 	}
-	if err := validatePollCommon(payload.Description, payload.OpenPeriodSeconds, payload.CloseAt, payload.CountryCodes); err != nil {
+	if err := validatePollCommon(
+		payload.Description,
+		payload.OpenPeriodSeconds,
+		payload.CloseAt,
+		payload.CountryCodes,
+	); err != nil {
 		return toolshared.ErrorResult(err.Error())
 	}
-	for i := range payload.CountryCodes { payload.CountryCodes[i] = strings.ToUpper(strings.TrimSpace(payload.CountryCodes[i])) }
+	for i := range payload.CountryCodes {
+		payload.CountryCodes[i] = strings.ToUpper(strings.TrimSpace(payload.CountryCodes[i]))
+	}
 
-	return &toolshared.ToolResult{ForLLM: "Native poll queued for delivery. poll_handle=" + payload.ID, ResponseHandled: true, Poll: payload}
+	return &toolshared.ToolResult{
+		ForLLM: "Native poll queued for delivery. poll_handle=" + payload.ID,
+		ResponseHandled: true,
+		Poll:            payload,
+	}
 }
 
 func NewSendQuizTool() Tool { return &sendQuizTool{} }
@@ -222,59 +270,122 @@ A quiz requires one or more correct_option_ids and may include an explanation.`
 
 func (t *sendQuizTool) Parameters() map[string]any {
 	props := pollCommonSchemaProperties()
-	props["question"] = map[string]any{"type": "string", "minLength": 1, "maxLength": pollQuestionMaxChars, "description": "Quiz question (1-300 chars)."}
+	props["question"] = map[string]any{
+		"type": "string", "minLength": 1, "maxLength": pollQuestionMaxChars,
+		"description": "Quiz question (1-300 chars).",
+	}
 	props["options"] = map[string]any{
 		"type": "array", "minItems": pollMinOptions, "maxItems": pollMaxOptions,
-		"items": map[string]any{"type": "string", "minLength": 1, "maxLength": pollOptionMaxChars},
+		"items": map[string]any{
+			"type": "string", "minLength": 1, "maxLength": pollOptionMaxChars,
+		},
 		"description": "Array of 1-12 options (1-100 chars each).",
 	}
-	props["correct_option_ids"] = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "integer", "minimum": 0}, "description": "Monotonically increasing unique 0-based indices of correct answers."}
-	props["explanation"] = map[string]any{"type": "string", "maxLength": pollExplanationMaxChars, "description": "Explanation shown for an incorrect answer (0-200 chars, at most 2 line feeds)."}
-	return map[string]any{"type": "object", "properties": props, "required": []string{"question", "options", "correct_option_ids"}}
+	props["correct_option_ids"] = map[string]any{
+		"type": "array", "minItems": 1,
+		"items": map[string]any{"type": "integer", "minimum": 0},
+		"description": "Monotonically increasing unique 0-based indices of correct answers.",
+	}
+	props["explanation"] = map[string]any{
+		"type": "string", "maxLength": pollExplanationMaxChars,
+		"description": "Explanation shown for an incorrect answer (0-200 chars, at most 2 line feeds).",
+	}
+	return map[string]any{
+		"type":       "object",
+		"properties": props,
+		"required":   []string{"question", "options", "correct_option_ids"},
+	}
 }
 
 func (t *sendQuizTool) Execute(_ context.Context, args map[string]any) *toolshared.ToolResult {
 	question, _ := args["question"].(string)
 	options := parseStringSliceArg(args, "options")
-	if err := validatePollInputs(question, options); err != nil { return toolshared.ErrorResult(err.Error()) }
+	if err := validatePollInputs(question, options); err != nil {
+		return toolshared.ErrorResult(err.Error())
+	}
 
 	correctInterface, _ := args["correct_option_ids"].([]any)
 	correctOptionIDs := make([]int, 0, len(correctInterface))
 	for _, id := range correctInterface {
 		switch v := id.(type) {
-		case float64: correctOptionIDs = append(correctOptionIDs, int(v))
-		case int: correctOptionIDs = append(correctOptionIDs, v)
-		case int64: correctOptionIDs = append(correctOptionIDs, int(v))
+		case float64:
+			correctOptionIDs = append(correctOptionIDs, int(v))
+		case int:
+			correctOptionIDs = append(correctOptionIDs, v)
+		case int64:
+			correctOptionIDs = append(correctOptionIDs, int(v))
 		}
 	}
-	if len(correctOptionIDs) == 0 { return toolshared.ErrorResult("quizzes must have at least one correct_option_id") }
+	if len(correctOptionIDs) == 0 {
+		return toolshared.ErrorResult("correct_option_ids must contain at least one option index")
+	}
 	sort.Ints(correctOptionIDs)
 	seen := make(map[int]struct{}, len(correctOptionIDs))
 	for _, id := range correctOptionIDs {
-		if id < 0 || id >= len(options) { return toolshared.ErrorResult(fmt.Sprintf("correct_option_id %d is out of range [0, %d)", id, len(options))) }
-		if _, dup := seen[id]; dup { return toolshared.ErrorResult(fmt.Sprintf("duplicate correct_option_id %d", id)) }
+		if id < 0 || id >= len(options) {
+			return toolshared.ErrorResult(
+				fmt.Sprintf("correct_option_ids entry %d is out of range [0, %d)", id, len(options)),
+			)
+		}
+		if _, dup := seen[id]; dup {
+			return toolshared.ErrorResult(fmt.Sprintf("correct_option_ids contains duplicate index %d", id))
+		}
 		seen[id] = struct{}{}
 	}
 
 	explanation, _ := args["explanation"].(string)
-	if utf8.RuneCountInString(explanation) > pollExplanationMaxChars { return toolshared.ErrorResult("explanation must be at most 200 characters") }
-	if strings.Count(explanation, "\n") > 2 { return toolshared.ErrorResult("explanation must contain at most 2 line feeds") }
+	if utf8.RuneCountInString(explanation) > pollExplanationMaxChars {
+		return toolshared.ErrorResult("explanation must be at most 200 characters")
+	}
+	if strings.Count(explanation, "\n") > 2 {
+		return toolshared.ErrorResult("explanation must contain at most 2 line feeds")
+	}
 
-	payload := &bus.PollPayload{ID: uuid.New().String(), Mode: "quiz", Question: question, Options: options, CorrectOptionIDs: correctOptionIDs, Explanation: explanation, IsAnonymous: true}
-	if val, ok := args["is_anonymous"].(bool); ok { payload.IsAnonymous = val }
-	if val, ok := args["allows_revoting"].(bool); ok { payload.AllowsRevoting = val }
-	if val, ok := args["shuffle_options"].(bool); ok { payload.ShuffleOptions = val }
-	if val, ok := args["hide_results_until_closes"].(bool); ok { payload.HideResultsUntilCloses = val }
-	if val, ok := args["members_only"].(bool); ok { payload.MembersOnly = val }
-	if val, ok := args["is_closed"].(bool); ok { payload.IsClosed = val }
+	payload := &bus.PollPayload{
+		ID: uuid.New().String(), Mode: "quiz", Question: question, Options: options,
+		CorrectOptionIDs: correctOptionIDs, Explanation: explanation, IsAnonymous: true,
+	}
+	if val, ok := args["is_anonymous"].(bool); ok {
+		payload.IsAnonymous = val
+	}
+	if val, ok := args["allows_revoting"].(bool); ok {
+		payload.AllowsRevoting = val
+	}
+	if val, ok := args["shuffle_options"].(bool); ok {
+		payload.ShuffleOptions = val
+	}
+	if val, ok := args["hide_results_until_closes"].(bool); ok {
+		payload.HideResultsUntilCloses = val
+	}
+	if val, ok := args["members_only"].(bool); ok {
+		payload.MembersOnly = val
+	}
+	if val, ok := args["is_closed"].(bool); ok {
+		payload.IsClosed = val
+	}
 	payload.Description, _ = args["description"].(string)
 	payload.OpenPeriodSeconds = parseIntArg(args, "open_period_seconds")
 	payload.CountryCodes = parseStringSliceArg(args, "country_codes")
-	if closeUnix := parseIntArg(args, "close_date_unix"); closeUnix != 0 { payload.CloseAt = time.Unix(int64(closeUnix), 0) }
-	if err := validatePollCommon(payload.Description, payload.OpenPeriodSeconds, payload.CloseAt, payload.CountryCodes); err != nil { return toolshared.ErrorResult(err.Error()) }
-	for i := range payload.CountryCodes { payload.CountryCodes[i] = strings.ToUpper(strings.TrimSpace(payload.CountryCodes[i])) }
+	if closeUnix := parseIntArg(args, "close_date_unix"); closeUnix != 0 {
+		payload.CloseAt = time.Unix(int64(closeUnix), 0)
+	}
+	if err := validatePollCommon(
+		payload.Description,
+		payload.OpenPeriodSeconds,
+		payload.CloseAt,
+		payload.CountryCodes,
+	); err != nil {
+		return toolshared.ErrorResult(err.Error())
+	}
+	for i := range payload.CountryCodes {
+		payload.CountryCodes[i] = strings.ToUpper(strings.TrimSpace(payload.CountryCodes[i]))
+	}
 
-	return &toolshared.ToolResult{ForLLM: "Native quiz queued for delivery. poll_handle=" + payload.ID, ResponseHandled: true, Poll: payload}
+	return &toolshared.ToolResult{
+		ForLLM: "Native quiz queued for delivery. poll_handle=" + payload.ID,
+		ResponseHandled: true,
+		Poll:            payload,
+	}
 }
 
 func NewStopPollTool() Tool { return &stopPollTool{} }
@@ -282,12 +393,51 @@ func NewStopPollTool() Tool { return &stopPollTool{} }
 type stopPollTool struct{}
 
 func (t *stopPollTool) Name() string { return "stop_poll" }
-func (t *stopPollTool) Description() string { return "Stop a native poll or quiz using its opaque poll_handle." }
-func (t *stopPollTool) Parameters() map[string]any {
-	return map[string]any{"type": "object", "properties": map[string]any{"poll_handle": map[string]any{"type": "string", "description": "Opaque handle of the PicoClaw-created poll to stop."}}, "required": []string{"poll_handle"}}
+
+func (t *stopPollTool) Description() string {
+	return "Stop a native poll or quiz using its opaque poll_handle. " +
+		"The current trusted route is bound by PicoClaw and cannot be overridden by model input."
 }
-func (t *stopPollTool) Execute(_ context.Context, args map[string]any) *toolshared.ToolResult {
+
+func (t *stopPollTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"poll_handle": map[string]any{
+				"type":        "string",
+				"description": "Opaque handle of the PicoClaw-created poll to stop.",
+			},
+		},
+		"required": []string{"poll_handle"},
+	}
+}
+
+func (t *stopPollTool) Execute(ctx context.Context, args map[string]any) *toolshared.ToolResult {
 	pollHandle, _ := args["poll_handle"].(string)
-	if strings.TrimSpace(pollHandle) == "" { return toolshared.ErrorResult("poll_handle is required") }
-	return &toolshared.ToolResult{ForLLM: "Stop poll command queued.", ResponseHandled: true, StopPollID: pollHandle}
+	pollHandle = strings.TrimSpace(pollHandle)
+	if pollHandle == "" {
+		return toolshared.ErrorResult("poll_handle is required")
+	}
+	caller, ok := ToolCallerScope(ctx)
+	if !ok || strings.TrimSpace(caller.AgentID) == "" || strings.TrimSpace(caller.SessionKey) == "" ||
+		strings.TrimSpace(caller.ChatID) == "" {
+		return toolshared.ErrorResult("trusted route is unavailable for stop_poll")
+	}
+	boundHandle := bus.NewPollStopRouteToken(
+		pollHandle,
+		caller.Account,
+		caller.ChatID,
+		caller.TopicID,
+		caller.AgentID,
+		"",
+		caller.SessionKey,
+	)
+	if boundHandle == "" {
+		return toolshared.ErrorResult("trusted route is unavailable for stop_poll")
+	}
+	return &toolshared.ToolResult{
+		ForLLM:         "Stop poll command queued.",
+		ResponseHandled: true,
+		StopPollID:      boundHandle,
+	}
 }
