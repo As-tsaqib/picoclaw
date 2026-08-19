@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/As-tsaqib/picoclaw/pkg/bus"
+	"github.com/As-tsaqib/picoclaw/pkg/memory"
 )
 
 func TestNewMemoryInteractionMenuBindsTrustedRouteEnvelope(t *testing.T) {
@@ -72,5 +73,56 @@ func TestNewMemoryInteractionMenuRejectsIncompleteTrustedRoute(t *testing.T) {
 	}
 	if _, err := newMemoryInteractionMenu(&base, "", 0, 1, "", nil); err == nil {
 		t.Fatal("expected empty agent to be rejected")
+	}
+}
+
+func TestMemoryInteractionPrivateRouteRequiresTrustedCapability(t *testing.T) {
+	publicGroup := &bus.InboundContext{
+		Channel: "telegram", Account: "default", ChatID: "-10042/7", ChatType: "group",
+		TopicID: "7", SenderID: "42",
+	}
+	if memoryInteractionRouteIsPrivate(publicGroup) {
+		t.Fatal("public group route must not authorize personal-memory dashboard")
+	}
+
+	booleanOnly := *publicGroup
+	booleanOnly.PrivateResponse = true
+	if memoryInteractionRouteIsPrivate(&booleanOnly) {
+		t.Fatal("private-response boolean without route capability must fail closed")
+	}
+
+	verified := booleanOnly
+	verified.PrivateRouteToken = "opaque-channel-capability"
+	if !memoryInteractionRouteIsPrivate(&verified) {
+		t.Fatal("verified private route should authorize receiver-bound dashboard")
+	}
+
+	direct := *publicGroup
+	direct.ChatType = "direct"
+	direct.ChatID = "42"
+	direct.TopicID = ""
+	if !memoryInteractionRouteIsPrivate(&direct) {
+		t.Fatal("direct chat should authorize personal-memory dashboard")
+	}
+}
+
+func TestMemoryInteractionCallerScopeOnlyPrivatizesVerifiedRoute(t *testing.T) {
+	caller := memory.CallerScope{UserKey: "telegram:default:42", GroupID: "-10042"}
+	publicGroup := &bus.InboundContext{ChatType: "group"}
+	if got := memoryInteractionCallerScope(caller, publicGroup); got.GroupID != caller.GroupID {
+		t.Fatalf("public group scope widened: %#v", got)
+	}
+
+	booleanOnly := &bus.InboundContext{ChatType: "group", PrivateResponse: true}
+	if got := memoryInteractionCallerScope(caller, booleanOnly); got.GroupID != caller.GroupID {
+		t.Fatalf("unverified private scope widened: %#v", got)
+	}
+
+	verified := &bus.InboundContext{
+		ChatType: "group", PrivateResponse: true, PrivateRouteToken: "opaque-channel-capability",
+	}
+	got := memoryInteractionCallerScope(caller, verified)
+	if got.GroupID != "" || !memory.AllowsPrivateUserMemory(got) {
+		t.Fatalf("verified private route did not enable receiver-scoped memory: %#v", got)
 	}
 }

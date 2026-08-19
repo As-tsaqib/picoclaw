@@ -405,6 +405,29 @@ func configureMemoryCommandRuntime(
 	}
 }
 
+func memoryInteractionRouteIsPrivate(inbound *bus.InboundContext) bool {
+	if inbound == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(inbound.ChatType), "direct") {
+		return true
+	}
+	return inbound.PrivateResponse && strings.TrimSpace(inbound.PrivateRouteToken) != ""
+}
+
+func memoryInteractionCallerScope(
+	caller memory.CallerScope,
+	inbound *bus.InboundContext,
+) memory.CallerScope {
+	if inbound != nil && inbound.PrivateResponse && strings.TrimSpace(inbound.PrivateRouteToken) != "" {
+		// A verified private route keeps the group location for Telegram routing,
+		// while memory reads/mutations are scoped to the receiver rather than the
+		// shared audience. The route token is process-local channel authority.
+		caller.GroupID = ""
+	}
+	return caller
+}
+
 func (al *AgentLoop) executeMemoryCommand(
 	_ context.Context,
 	agent *AgentInstance,
@@ -418,12 +441,10 @@ func (al *AgentLoop) executeMemoryCommand(
 	if inbound == nil {
 		return nil, memory.ErrPrivateContextRequired
 	}
-	isPrivateDelivery := strings.EqualFold(strings.TrimSpace(inbound.ChatType), "direct") || inbound.PrivateResponse
-	caller := callerScopeForTurn(agent.ID, al.cfg, *opts)
 	if strings.ToLower(strings.TrimSpace(req.Operation)) != "dashboard" {
 		return nil, fmt.Errorf("memory subcommand not recognized")
 	}
-	if !isPrivateDelivery && !memory.AllowsPrivateUserMemory(caller) {
+	if !memoryInteractionRouteIsPrivate(inbound) {
 		return &bus.StructuredContent{
 			Title: "Personal Memory",
 			Paragraphs: []string{
@@ -432,6 +453,7 @@ func (al *AgentLoop) executeMemoryCommand(
 			},
 		}, nil
 	}
+	caller := memoryInteractionCallerScope(callerScopeForTurn(agent.ID, al.cfg, *opts), inbound)
 	return buildMemoryDashboardContentE(agent, caller, inbound)
 }
 
@@ -552,7 +574,7 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 		return nil, fmt.Errorf("memory is not available")
 	}
 	opts := processOptions{InboundContext: &inbound}
-	caller := callerScopeForTurn(agent.ID, al.cfg, opts)
+	caller := memoryInteractionCallerScope(callerScopeForTurn(agent.ID, al.cfg, opts), &inbound)
 	service := newMemoryCommandService(agent.CuratedMemory, caller)
 	action := strings.ToLower(strings.TrimSpace(req.Action))
 

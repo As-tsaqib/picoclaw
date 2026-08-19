@@ -410,6 +410,42 @@ func expectedMemoryMenuRoute(chatID int64, threadID int) (string, string) {
 	return chat, topic
 }
 
+func sealMemoryInteractionAccount(menu *bus.InteractionMenu, account string) {
+	if menu == nil {
+		return
+	}
+	account = strings.TrimSpace(account)
+	menuAccount := strings.TrimSpace(menu.Account)
+	inboundAccount := strings.TrimSpace(menu.Inbound.Account)
+	switch {
+	case menuAccount != "" && inboundAccount == "":
+		menu.Inbound.Account = menuAccount
+	case menuAccount == "" && inboundAccount != "":
+		menu.Account = inboundAccount
+	case menuAccount == "" && inboundAccount == "" && account != "":
+		// Seal legacy/adapter-local structured content to this channel account
+		// before it becomes callback state. Mismatched non-empty values are
+		// deliberately left untouched so validation still fails closed.
+		menu.Account = account
+		menu.Inbound.Account = account
+	}
+}
+
+func rebindMemoryInteractionRoute(next *bus.InteractionMenu, current bus.InteractionMenu) {
+	if next == nil {
+		return
+	}
+	next.Kind = current.Kind
+	next.OwnerID = current.OwnerID
+	next.Channel = current.Channel
+	next.Account = current.Account
+	next.ChatID = current.ChatID
+	next.TopicID = current.TopicID
+	next.AgentID = current.AgentID
+	next.Scope = current.Scope
+	next.Inbound = current.Inbound
+}
+
 func validateMemoryInteractionEnvelope(menu bus.InteractionMenu, chatID int64, threadID int, channel string) error {
 	if strings.TrimSpace(menu.OwnerID) == "" || strings.TrimSpace(menu.AgentID) == "" ||
 		strings.TrimSpace(menu.Channel) == "" || strings.TrimSpace(menu.Account) == "" ||
@@ -452,6 +488,7 @@ func (c *TelegramChannel) structuredReplyMarkup(
 		return nil, nil, fmt.Errorf("interactive menu metadata is incomplete")
 	}
 	if kind == "memory" {
+		sealMemoryInteractionAccount(&menu, c.Name())
 		if err := validateMemoryInteractionEnvelope(menu, chatID, threadID, c.Name()); err != nil {
 			return nil, nil, err
 		}
@@ -973,7 +1010,7 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(ctx context.Context, m
 		} else if prompt.menu.menu.Kind == "memory" {
 			noticeText = "Permintaan memory sudah kedaluwarsa. Jalankan /memory lagi."
 		}
-		return true, c.sendSessionRenameNotice(ctx, message, noticeText)
+		return true, c.sendSessionRenameNotice(ctx, message, prompt, noticeText)
 	case sessionRenameClaimInvalid:
 		invalidText := "Input harus berupa teks yang tidak kosong."
 		if prompt.menu.menu.Kind == "session" {
@@ -981,11 +1018,11 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(ctx context.Context, m
 		} else if prompt.menu.menu.Kind == "memory" {
 			invalidText = "Input memory harus berupa teks yang tidak kosong."
 		}
-		return true, c.sendSessionRenameNotice(ctx, message, invalidText)
+		return true, c.sendSessionRenameNotice(ctx, message, prompt, invalidText)
 	}
 	handler := c.currentInternalCallbackHandler()
 	if handler == nil {
-		return true, c.sendSessionRenameNotice(ctx, message, "Layanan sedang tidak tersedia.")
+		return true, c.sendSessionRenameNotice(ctx, message, prompt, "Layanan sedang tidak tersedia.")
 	}
 	inbound := prompt.menu.menu.Inbound
 	inbound.MessageID = strconv.Itoa(message.MessageID)
@@ -1007,21 +1044,21 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(ctx context.Context, m
 	})
 	if err != nil {
 		logger.WarnCF("telegram", "Prompt reply was rejected", map[string]any{"reason": "scope_or_state_validation"})
-		return true, c.sendSessionRenameNotice(ctx, message, "Permintaan tidak dapat diproses. Jalankan command lagi.")
+		return true, c.sendSessionRenameNotice(ctx, message, prompt, "Permintaan tidak dapat diproses. Jalankan command lagi.")
 	}
 	if response == nil || response.Content == nil {
 		text := "Perubahan berhasil disimpan."
 		if response != nil && strings.TrimSpace(response.Text) != "" {
 			text = strings.TrimSpace(response.Text)
 		}
-		return true, c.sendSessionRenameNotice(ctx, message, text)
+		return true, c.sendSessionRenameNotice(ctx, message, prompt, text)
 	}
 	if err := c.refreshSessionMenuAfterRename(ctx, prompt, response.Content); err != nil {
 		logger.WarnCF(
 			"telegram", "Menu refresh after prompt reply failed", map[string]any{"reason": "telegram_edit_failed"},
 		)
 		return true, c.sendSessionRenameNotice(
-			ctx, message, "Perubahan berhasil disimpan. Jalankan command lagi untuk memperbarui dashboard.",
+			ctx, message, prompt, "Perubahan berhasil disimpan. Jalankan command lagi untuk memperbarui dashboard.",
 		)
 	}
 	return true, nil
@@ -1032,6 +1069,9 @@ func (c *TelegramChannel) refreshSessionMenuAfterRename(
 	prompt telegramSessionRenamePrompt,
 	content *bus.StructuredContent,
 ) error {
+	if content != nil && strings.EqualFold(prompt.menu.menu.Kind, "memory") {
+		rebindMemoryInteractionRoute(content.Interaction, prompt.menu.menu)
+	}
 	markup, pending, err := c.structuredReplyMarkup(content, prompt.menu.chatID, prompt.menu.threadID)
 	if err != nil {
 		return err
@@ -1050,15 +1090,25 @@ func (c *TelegramChannel) refreshSessionMenuAfterRename(
 	return nil
 }
 
-func (c *TelegramChannel) sendSessionRenameNotice(ctx context.Context, message *telego.Message, text string) error {
+func (c *TelegramChannel) sendSessionRenameNotice(
+	ctx context.Context,
+	message *telego.Message,
+	prompt telegramSessionRenamePrompt,
+	text string,
+) error {
 	if message == nil {
 		return nil
 	}
 	params := tu.Message(tu.ID(message.Chat.ID), text)
 	params.MessageThreadID = message.MessageThreadID
-	if message.EphemeralMessageID > 0 && message.From != nil {
-		params.ReceiverUserID = message.From.ID
-		params.ReplyParameters = &telego.ReplyParameters{EphemeralMessageID: message.EphemeralMessageID}
+	if prompt.menu.ephemeralID > 0 {
+		if prompt.menu.receiverUserID <= 0 {
+			return fmt.Errorf("private prompt receiver authority is unavailable")
+		}
+		params.ReceiverUserID = prompt.menu.receiverUserID
+		if message.EphemeralMessageID > 0 {
+			params.ReplyParameters = &telego.ReplyParameters{EphemeralMessageID: message.EphemeralMessageID}
+		}
 	} else if message.MessageID > 0 {
 		params.ReplyParameters = &telego.ReplyParameters{MessageID: message.MessageID, AllowSendingWithoutReply: true}
 	}
@@ -1165,6 +1215,9 @@ func (c *TelegramChannel) handleInternalSessionCallback(ctx context.Context, que
 	}
 	if response.Content == nil {
 		return nil
+	}
+	if kind == "memory" {
+		rebindMemoryInteractionRoute(response.Content.Interaction, menu.menu)
 	}
 	markup, pending, err := c.structuredReplyMarkup(response.Content, menu.chatID, menu.threadID)
 	if err != nil {
