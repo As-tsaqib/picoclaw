@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"strconv"
 	"strings"
@@ -149,20 +150,17 @@ func (c *TelegramChannel) updatePollStateByTgPollID(tgPollID string, isClosed bo
 }
 
 func pollRouteAuthorized(entry telegramPollEntry, route telegramPollRoute) error {
-	checks := []struct {
-		label string
-		want  string
-		got   string
-	}{
-		{"account", strings.TrimSpace(entry.Account), strings.TrimSpace(route.Account)},
-		{"agent", strings.TrimSpace(entry.AgentID), strings.TrimSpace(route.AgentID)},
-		{"session", strings.TrimSpace(entry.SessionKey), strings.TrimSpace(route.SessionKey)},
-		{"sender", strings.TrimSpace(entry.SenderID), strings.TrimSpace(route.SenderID)},
+	if want, got := strings.TrimSpace(entry.Account), strings.TrimSpace(route.Account); want != "" && got != want {
+		return fmt.Errorf("poll route account mismatch")
 	}
-	for _, check := range checks {
-		if check.want != "" && check.got != check.want {
-			return fmt.Errorf("poll route %s mismatch", check.label)
-		}
+	if want, got := strings.TrimSpace(entry.AgentID), strings.TrimSpace(route.AgentID); want != "" && got != want {
+		return fmt.Errorf("caller agent %q not authorized", got)
+	}
+	if want, got := strings.TrimSpace(entry.SessionKey), strings.TrimSpace(route.SessionKey); want != "" && got != want {
+		return fmt.Errorf("caller session %q not authorized", got)
+	}
+	if want, got := strings.TrimSpace(entry.SenderID), strings.TrimSpace(route.SenderID); want != "" && got != want {
+		return fmt.Errorf("caller sender %q not authorized", got)
 	}
 	if entry.ChatID != route.ChatID {
 		return fmt.Errorf("poll route chat mismatch")
@@ -173,9 +171,37 @@ func pollRouteAuthorized(entry telegramPollEntry, route telegramPollRoute) error
 	return nil
 }
 
-// StopPoll preserves the existing channel interface while validating the trusted
-// principal. Call StopPollForRoute from outbound delivery so account/chat/topic
-// are also checked against the current trusted route.
+func pollEntryRouteDigest(entry telegramPollEntry) string {
+	topicID := ""
+	if entry.ThreadID != 0 {
+		topicID = strconv.Itoa(entry.ThreadID)
+	}
+	return bus.PollStopRouteDigest(
+		entry.Account,
+		strconv.FormatInt(entry.ChatID, 10),
+		topicID,
+		entry.AgentID,
+		"",
+		entry.SessionKey,
+	)
+}
+
+func stopPollHandleForEntry(value string, entry telegramPollEntry) (string, error) {
+	handle, digest, bound := bus.ParsePollStopRouteToken(value)
+	if !bound {
+		return value, nil
+	}
+	expected := pollEntryRouteDigest(entry)
+	if subtle.ConstantTimeCompare([]byte(digest), []byte(expected)) != 1 {
+		return "", fmt.Errorf("poll route proof mismatch")
+	}
+	return handle, nil
+}
+
+// StopPoll preserves the existing channel interface while validating both the
+// trusted runtime principal and, for semantic-tool calls, a one-way proof of
+// account/chat/topic/agent/session scope. The model can only supply the opaque
+// poll handle; PicoClaw injects the route proof after tool argument parsing.
 func (c *TelegramChannel) StopPoll(
 	ctx context.Context,
 	localHandle string,
@@ -183,17 +209,33 @@ func (c *TelegramChannel) StopPoll(
 	callerSessionKey string,
 	callerSenderID string,
 ) error {
-	entry, ok := c.resolvePollByLocalHandle(localHandle)
-	if !ok {
-		return fmt.Errorf("poll %q not found or expired", localHandle)
+	lookupHandle := strings.TrimSpace(localHandle)
+	if handle, _, ok := bus.ParsePollStopRouteToken(lookupHandle); ok {
+		lookupHandle = handle
 	}
-	return c.stopPollEntry(ctx, localHandle, entry, telegramPollRoute{
-		Account: entry.Account, ChatID: entry.ChatID, ThreadID: entry.ThreadID,
-		AgentID: callerAgentID, SessionKey: callerSessionKey, SenderID: callerSenderID,
+	entry, ok := c.resolvePollByLocalHandle(lookupHandle)
+	if !ok {
+		return fmt.Errorf("poll %q not found or expired", lookupHandle)
+	}
+	verifiedHandle, err := stopPollHandleForEntry(localHandle, entry)
+	if err != nil || verifiedHandle != lookupHandle {
+		return fmt.Errorf("not authorized to stop poll: poll route proof mismatch")
+	}
+	return c.stopPollEntry(ctx, lookupHandle, entry, telegramPollRoute{
+		Account: entry.Account,
+		ChatID: entry.ChatID,
+		ThreadID: entry.ThreadID,
+		AgentID: callerAgentID,
+		SessionKey: callerSessionKey,
+		SenderID: callerSenderID,
 	})
 }
 
-func (c *TelegramChannel) StopPollForRoute(ctx context.Context, localHandle string, route telegramPollRoute) error {
+func (c *TelegramChannel) StopPollForRoute(
+	ctx context.Context,
+	localHandle string,
+	route telegramPollRoute,
+) error {
 	entry, ok := c.resolvePollByLocalHandle(localHandle)
 	if !ok {
 		return fmt.Errorf("poll %q not found or expired", localHandle)
@@ -201,17 +243,31 @@ func (c *TelegramChannel) StopPollForRoute(ctx context.Context, localHandle stri
 	return c.stopPollEntry(ctx, localHandle, entry, route)
 }
 
-func (c *TelegramChannel) stopPollEntry(ctx context.Context, localHandle string, entry telegramPollEntry, route telegramPollRoute) error {
+func (c *TelegramChannel) stopPollEntry(
+	ctx context.Context,
+	localHandle string,
+	entry telegramPollEntry,
+	route telegramPollRoute,
+) error {
 	if err := pollRouteAuthorized(entry, route); err != nil {
 		return fmt.Errorf("not authorized to stop poll: %w", err)
 	}
-	_, err := c.bot.StopPoll(ctx, &telego.StopPollParams{ChatID: tu.ID(entry.ChatID), MessageID: entry.MessageID})
+	_, err := c.bot.StopPoll(ctx, &telego.StopPollParams{
+		ChatID: tu.ID(entry.ChatID),
+		MessageID: entry.MessageID,
+	})
 	if err != nil {
 		serverID := ""
 		if c.tgCfg != nil {
 			serverID = c.tgCfg.BaseURL
 		}
-		capability.GlobalNegativeCache.RecordFailure("telegram", entry.Account, serverID, capability.FeaturePollStop, err)
+		capability.GlobalNegativeCache.RecordFailure(
+			"telegram",
+			entry.Account,
+			serverID,
+			capability.FeaturePollStop,
+			err,
+		)
 		return fmt.Errorf("telegram stop poll failed: %w", err)
 	}
 	c.pollRegistryMu.Lock()
@@ -270,7 +326,10 @@ func (c *TelegramChannel) recordPollAnswer(answer *telego.PollAnswer) (bool, boo
 	} else {
 		entry.Votes[identity] = telegramPollVote{
 			OptionIDs: append([]int(nil), answer.OptionIDs...),
-			OptionPersistentIDs: append([]string(nil), answer.OptionPersistentIDs...),
+			OptionPersistentIDs: append(
+				[]string(nil),
+				answer.OptionPersistentIDs...,
+			),
 			UpdatedAt: time.Now().UTC(),
 		}
 	}
@@ -284,18 +343,25 @@ func (c *TelegramChannel) handlePollAnswerUpdate(_ *th.Context, answer *telego.P
 	}
 	found, retracted := c.recordPollAnswer(answer)
 	if !found {
-		logger.DebugCF("telegram", "Ignored poll answer without registered poll and trusted voter identity", nil)
+		logger.DebugCF(
+			"telegram",
+			"Ignored poll answer without registered poll and trusted voter identity",
+			nil,
+		)
 		return nil
 	}
 	logger.DebugCF("telegram", "Recorded poll answer", map[string]any{
-		"option_count": len(answer.OptionIDs),
+		"option_count":            len(answer.OptionIDs),
 		"persistent_option_count": len(answer.OptionPersistentIDs),
-		"retracted": retracted,
+		"retracted":               retracted,
 	})
 	return nil
 }
 
-func (c *TelegramChannel) claimQuizReveal(query *telego.CallbackQuery, handle string) (telegramPollEntry, error) {
+func (c *TelegramChannel) claimQuizReveal(
+	query *telego.CallbackQuery,
+	handle string,
+) (telegramPollEntry, error) {
 	if query == nil || query.Message == nil || query.From.IsBot || query.From.ID <= 0 {
 		return telegramPollEntry{}, fmt.Errorf("invalid callback envelope")
 	}
@@ -313,7 +379,8 @@ func (c *TelegramChannel) claimQuizReveal(query *telego.CallbackQuery, handle st
 	if entry.RevealConsumed || entry.RevealPending {
 		return telegramPollEntry{}, fmt.Errorf("quiz reveal already processed")
 	}
-	if strings.TrimSpace(entry.Account) != "" && strings.TrimSpace(entry.Account) != strings.TrimSpace(c.Name()) {
+	if strings.TrimSpace(entry.Account) != "" &&
+		strings.TrimSpace(entry.Account) != strings.TrimSpace(c.Name()) {
 		return telegramPollEntry{}, fmt.Errorf("callback account mismatch")
 	}
 	if message.Chat.ID != entry.ChatID || message.MessageThreadID != entry.ThreadID {
@@ -355,7 +422,9 @@ func (c *TelegramChannel) handleQuizRevealCallback(ctx context.Context, query *t
 	entry, err := c.claimQuizReveal(query, handle)
 	if err != nil {
 		answerErr := c.bot.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
-			CallbackQueryID: query.ID, Text: "Quiz ini tidak dapat diungkap dari konteks ini atau sudah diproses.", ShowAlert: true,
+			CallbackQueryID: query.ID,
+			Text:            "Quiz ini tidak dapat diungkap dari konteks ini atau sudah diproses.",
+			ShowAlert:       true,
 		})
 		if answerErr != nil {
 			return fmt.Errorf("answer rejected quiz reveal callback: %w", answerErr)
@@ -369,7 +438,9 @@ func (c *TelegramChannel) handleQuizRevealCallback(ctx context.Context, query *t
 		c.finishQuizReveal(handle, false)
 		return nil
 	}
-	if err := c.bot.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID}); err != nil {
+	if err := c.bot.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
+		CallbackQueryID: query.ID,
+	}); err != nil {
 		c.finishQuizReveal(handle, false)
 		return fmt.Errorf("answer quiz reveal callback: %w", err)
 	}
@@ -377,13 +448,21 @@ func (c *TelegramChannel) handleQuizRevealCallback(ctx context.Context, query *t
 	var sendErr error
 	if message.Chat.Type == telego.ChatTypePrivate {
 		_, sendErr = c.bot.SendMessage(ctx, &telego.SendMessageParams{
-			ChatID: tu.ID(entry.ChatID), MessageThreadID: entry.ThreadID, Text: revealText,
-			ReplyParameters: &telego.ReplyParameters{MessageID: entry.MessageID, AllowSendingWithoutReply: true},
+			ChatID:          tu.ID(entry.ChatID),
+			MessageThreadID: entry.ThreadID,
+			Text:            revealText,
+			ReplyParameters: &telego.ReplyParameters{
+				MessageID:                entry.MessageID,
+				AllowSendingWithoutReply: true,
+			},
 		})
 	} else {
 		_, sendErr = c.bot.SendMessage(ctx, &telego.SendMessageParams{
-			ChatID: tu.ID(entry.ChatID), MessageThreadID: entry.ThreadID,
-			ReceiverUserID: query.From.ID, CallbackQueryID: query.ID, Text: revealText,
+			ChatID:          tu.ID(entry.ChatID),
+			MessageThreadID: entry.ThreadID,
+			ReceiverUserID:  query.From.ID,
+			CallbackQueryID: query.ID,
+			Text:            revealText,
 		})
 	}
 	if sendErr != nil {
