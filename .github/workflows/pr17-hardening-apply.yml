@@ -29,19 +29,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git hash-object pkg/agent/memory_commands.go)" = "010dbef0a196fab61ad65555fd03846665a32c99"
+          test "$(git hash-object pkg/agent/memory_commands.go)" = "c53b58473e14d6845f6560afd31b8b7ca0ff8327"
           test "$(git hash-object pkg/channels/telegram/structured_delivery.go)" = "b463bbfdf07f1e3f73e92046b50229b49042778e"
           test "$(git hash-object pkg/channels/telegram/telegram.go)" = "aa029c9f0f30998b7801b5b203c28d83fb894294"
           base64 -d .github/pr17-hardening.patch.gz.b64 | gzip -d > /tmp/pr17-hardening.patch
           git apply --check /tmp/pr17-hardening.patch
           git apply /tmp/pr17-hardening.patch
           rm .github/pr17-hardening.patch.gz.b64 .github/workflows/pr17-hardening-apply.yml
-          gofmt -w pkg/agent/memory_commands.go pkg/channels/telegram/formatted_chunks.go pkg/channels/telegram/structured_delivery.go pkg/channels/telegram/telegram.go
+          gofmt -w \
+            pkg/agent/memory_commands.go \
+            pkg/agent/memory_private_route_test.go \
+            pkg/channels/telegram/formatted_chunks.go \
+            pkg/channels/telegram/interactive_hardening_test.go \
+            pkg/channels/telegram/structured_delivery.go \
+            pkg/channels/telegram/telegram.go
           git diff --check
-          test "$(git hash-object pkg/agent/memory_commands.go)" = "07de18d509adeb0d56b8b4cda9c7d9acc3098070"
+          test "$(git hash-object pkg/agent/memory_commands.go)" = "27e69e27c50e8087f77abf8f230f3bcdaa4551d3"
+          test "$(git hash-object pkg/agent/memory_private_route_test.go)" = "f409696e4b625c7b338732671f43a39b5590b824"
           test "$(git hash-object pkg/channels/telegram/structured_delivery.go)" = "3c057d63667ce1c2860ebc2cdc881646eb1342c8"
           test "$(git hash-object pkg/channels/telegram/telegram.go)" = "21cd0f43b6098c22a3c235786767f72ddc3834ca"
           test "$(git hash-object pkg/channels/telegram/formatted_chunks.go)" = "d89fb8790566c5b662b353f66f7c186b2fef6b25"
+          test "$(git hash-object pkg/channels/telegram/interactive_hardening_test.go)" = "a58231114844cc322ae31800d81f4fcc7c871a67"
       - name: Run focused Go tests
         run: go test -tags goolm,stdjson ./pkg/channels/telegram/... ./pkg/agent/...
       - name: Run Telegram race regression
