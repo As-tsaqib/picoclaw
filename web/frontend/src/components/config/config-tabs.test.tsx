@@ -165,7 +165,7 @@ describe("Advanced configuration tabs", () => {
     )
 
     expect(screen.getByText("Runtime & Concurrency")).toBeVisible()
-    expect(screen.getByText("Memory & Recall")).toBeVisible()
+    expect(screen.getByText("Memory & Personalization")).toBeVisible()
     expect(screen.getByText("Curated workspace memory")).toBeVisible()
     expect(screen.getByText("Compiled current-user profile")).toBeVisible()
     expect(screen.getByText("Evolution Safety")).toBeVisible()

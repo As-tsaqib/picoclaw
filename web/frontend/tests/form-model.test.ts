@@ -547,3 +547,117 @@ test("evolution dashboard matches backend safety and schedule validation", () =>
     /must be <= 50000/,
   )
 })
+
+test("frontend delta patch produces only modified memory fields and preserves advanced values", () => {
+  // 1. Seed custom advanced values
+  const originalConfig = {
+    version: 3,
+    memory: {
+      enabled: true,
+      workspace_char_limit: 30000,
+      per_user_char_limit: 20000,
+      write_approval: false,
+      approval_mode: "off",
+      notifications: "verbose",
+      profile: {
+        enabled: true,
+        max_chars: 3500,
+        min_confidence: 0.85,
+      },
+      background_review: {
+        enabled: true,
+        interval: 15,
+        provider: "anthropic",
+        model: "claude-3-5-sonnet",
+        timeout_seconds: 60,
+        max_iterations: 4,
+      },
+      retrieval: {
+        enabled: true,
+        engine: "hybrid_lexical",
+        max_workspace_results: 15,
+        max_user_results: 20,
+        max_total_chars: 12000,
+        pinned_char_budget: 3000,
+        minimum_relevance_score: 0.5,
+        recency_weight: 0.7,
+        recency_half_life_days: 60,
+        fuzzy_weight: 0.8,
+        recent_fallback_count: 5,
+        user_share: 0.75,
+      },
+      lifecycle: {
+        archived_retention_days: 365,
+        stale_threshold_days: 90,
+        auto_archive_expired: true,
+      },
+      recall: {
+        mode: "user_recall",
+        max_results: 10,
+        max_chars: 8000,
+        max_records: 5000,
+      },
+      checkpoints: {
+        enabled: true,
+        max_count: 50,
+        max_context_chars: 10000,
+        completed_retention_days: 30,
+      },
+    },
+  }
+
+  const baselineForm = buildFormFromConfig(originalConfig)
+
+  // 2. Toggle simple memory UI control: Personal Memory ON -> OFF
+  const modifiedForm = {
+    ...baselineForm,
+    memoryEnabled: false,
+  }
+
+  // 3. Inspect actual PATCH request body
+  const patch = buildMemoryConfigPatch(modifiedForm, baselineForm)
+
+  // 4. Verify only changed field is sent
+  assert.deepEqual(patch, {
+    enabled: false,
+  })
+
+  // 5. Apply merge patch and reload config
+  const mergedConfig = mergePatch(originalConfig, { memory: patch })
+  const reloadedForm = buildFormFromConfig(mergedConfig)
+
+  // 6. Advanced values unchanged
+  assert.equal(reloadedForm.memoryEnabled, false)
+  assert.equal(reloadedForm.memoryWorkspaceCharLimit, "30000")
+  assert.equal(reloadedForm.memoryPerUserCharLimit, "20000")
+  assert.equal(reloadedForm.memoryProfileMaxChars, "3500")
+  assert.equal(reloadedForm.memoryProfileMinConfidence, "0.85")
+  assert.equal(reloadedForm.memoryReviewInterval, "15")
+  assert.equal(reloadedForm.memoryReviewProvider, "anthropic")
+  assert.equal(reloadedForm.memoryReviewModel, "claude-3-5-sonnet")
+  assert.equal(reloadedForm.memoryRetrievalMaxTotalChars, "12000")
+  assert.equal(reloadedForm.memoryRecallMaxResults, "10")
+})
+
+test("memory capture mode round trips and delta patch changes only capture policy", () => {
+  const original = {
+    memory: {
+      enabled: true,
+      capture_mode: "automatic",
+      background_review: { enabled: true, interval: 19, timeout_seconds: 71 },
+      retrieval: { recency_weight: 0.61, fuzzy_weight: 0.83 },
+    },
+  }
+  const baseline = buildFormFromConfig(original)
+  assert.equal(baseline.memoryCaptureMode, "automatic")
+  const modified = { ...baseline, memoryCaptureMode: "explicit_only" as const }
+  const patch = buildMemoryConfigPatch(modified, baseline)
+  assert.deepEqual(patch, { capture_mode: "explicit_only" })
+  const merged = mergePatch(original, { memory: patch })
+  const reloaded = buildFormFromConfig(merged)
+  assert.equal(reloaded.memoryCaptureMode, "explicit_only")
+  assert.equal(reloaded.memoryReviewInterval, "19")
+  assert.equal(reloaded.memoryReviewTimeoutSeconds, "71")
+  assert.equal(reloaded.memoryRetrievalRecencyWeight, "0.61")
+  assert.equal(reloaded.memoryRetrievalFuzzyWeight, "0.83")
+})

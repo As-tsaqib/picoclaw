@@ -103,17 +103,52 @@ func dashboardWorkspaceCaller() memory.CallerScope {
 // other channel profiles remain manageable only from their own trusted direct
 // chats, preventing an authenticated workspace operator from selecting an
 // arbitrary canonical user key.
-func dashboardCurrentUserCaller(cfg *config.Config) memory.CallerScope {
-	identityLinks := map[string][]string(nil)
-	if cfg != nil {
-		identityLinks = cfg.Session.IdentityLinks
+func dashboardOwnerPersonKey(cfg *config.Config) (string, bool) {
+	if cfg == nil {
+		return "", false
 	}
-	userKey := session.CanonicalUserScopeKey(
-		config.ChannelPico,
-		routing.DefaultAccountID,
-		"pico-user",
-		identityLinks,
-	)
+	owner := strings.ToLower(strings.TrimSpace(cfg.Memory.OwnerIdentity))
+	if owner == "" {
+		return "", false
+	}
+	var members []string
+	matches := 0
+	for canonical, identities := range cfg.Session.IdentityLinks {
+		if strings.ToLower(strings.TrimSpace(canonical)) != owner {
+			continue
+		}
+		matches++
+		members = identities
+	}
+	if matches != 1 {
+		return "", false
+	}
+	for _, identity := range members {
+		parts := strings.Split(strings.ToLower(strings.TrimSpace(identity)), ":")
+		if len(parts) == 2 && parts[0] == config.ChannelPico && parts[1] == "pico-user" {
+			return "person:" + owner, true
+		}
+		if len(parts) == 3 && parts[0] == config.ChannelPico &&
+			routing.NormalizeAccountID(parts[1]) == routing.DefaultAccountID && parts[2] == "pico-user" {
+			return "person:" + owner, true
+		}
+	}
+	return "", false
+}
+
+func dashboardCurrentUserCaller(cfg *config.Config) memory.CallerScope {
+	userKey, bound := dashboardOwnerPersonKey(cfg)
+	if !bound {
+		// Dashboard-local fallback deliberately ignores identity_links. Otherwise
+		// an unrelated alias containing pico-user could silently turn an
+		// unconfigured/invalid owner setting into a cross-channel person scope.
+		userKey = session.CanonicalUserScopeKey(
+			config.ChannelPico,
+			routing.DefaultAccountID,
+			"pico-user",
+			nil,
+		)
+	}
 	return memory.CallerScope{
 		AgentID: routing.DefaultAgentID,
 		UserKey: userKey,
@@ -222,9 +257,17 @@ func (h *Handler) handleGetCurrentUserProfile(w http.ResponseWriter, r *http.Req
 		writeManagementError(w, err)
 		return
 	}
+	scopeLabel := "Dashboard-local profile"
+	scopeDescription := "Unbound dashboard-local profile. Telegram and other channels remain separate unless an explicit owner_identity is configured in memory settings."
+	if strings.HasPrefix(caller.UserKey, "person:") {
+		owner := strings.TrimPrefix(caller.UserKey, "person:")
+		scopeLabel = fmt.Sprintf("Personal profile: %s", owner)
+		scopeDescription = fmt.Sprintf("Canonical personal profile bound to linked owner identity: %s.", owner)
+	}
+
 	writeManagementJSON(w, http.StatusOK, currentUserProfileResponse{
-		ScopeLabel:       "Pico dashboard user",
-		ScopeDescription: "Only the fixed authenticated Pico channel identity is shown. Telegram and other channel profiles remain isolated and must be managed from their trusted direct chat.",
+		ScopeLabel:       scopeLabel,
+		ScopeDescription: scopeDescription,
 		Profile:          profile,
 		Entries:          entries,
 		Stats:            stats,

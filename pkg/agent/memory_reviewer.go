@@ -48,6 +48,7 @@ func (al *AgentLoop) recordAndMaybeReviewMemory(
 	caller memory.CallerScope,
 	_ uint64,
 	userContent string,
+	turnID string,
 ) {
 	if al == nil || agent == nil || agent.MemoryReviewState == nil || al.cfg == nil ||
 		!al.cfg.Memory.Enabled {
@@ -59,14 +60,20 @@ func (al *AgentLoop) recordAndMaybeReviewMemory(
 		return
 	}
 	if !al.cfg.Memory.BackgroundReview.Enabled {
+		al.flushTurnNotificationByTurnID(agent.ID, caller, turnID)
 		return
 	}
 	if cursor.SuccessfulTurns < al.cfg.Memory.BackgroundReview.EffectiveInterval() &&
 		!isHighSalienceMemoryText(userContent) {
+		al.flushTurnNotificationByTurnID(agent.ID, caller, turnID)
 		return
 	}
-	if _, err := al.startMemoryReview(agent, caller, false); err != nil {
-		logger.WarnCF("memory", "Background memory review was not started", safeMemoryLogFields(err))
+	started, startErr := al.startMemoryReview(agent, caller, false, turnID)
+	if startErr != nil {
+		logger.WarnCF("memory", "Background memory review was not started", safeMemoryLogFields(startErr))
+	}
+	if !started {
+		al.flushTurnNotificationByTurnID(agent.ID, caller, turnID)
 	}
 }
 
@@ -127,7 +134,7 @@ func (al *AgentLoop) flushMemoryReview(ctx context.Context, agent *AgentInstance
 			return ctx.Err()
 		}
 	}
-	return al.runMemoryReview(ctx, agent, caller)
+	return al.runMemoryReview(ctx, agent, caller, "")
 }
 
 func (al *AgentLoop) rememberMemoryCallerScope(caller memory.CallerScope) {
@@ -280,6 +287,7 @@ func (al *AgentLoop) startMemoryReview(
 	agent *AgentInstance,
 	caller memory.CallerScope,
 	force bool,
+	turnID string,
 ) (bool, error) {
 	if al == nil || agent == nil || al.cfg == nil || agent.CuratedMemory == nil ||
 		agent.RecallMemory == nil || agent.MemoryReviewState == nil || agent.memoryReviewer == nil {
@@ -323,8 +331,9 @@ func (al *AgentLoop) startMemoryReview(
 			}
 			agent.memoryReviewer.mu.Unlock()
 			close(done)
+			al.flushTurnNotificationByTurnID(agent.ID, caller, turnID)
 		}()
-		if err := al.runMemoryReview(reviewCtx, agent, caller); err != nil && reviewCtx.Err() == nil {
+		if err := al.runMemoryReview(reviewCtx, agent, caller, turnID); err != nil && reviewCtx.Err() == nil {
 			logger.WarnCF("memory", "Background memory review failed", safeMemoryLogFields(err))
 		}
 	}()
@@ -357,6 +366,7 @@ func (al *AgentLoop) runMemoryReview(
 	ctx context.Context,
 	agent *AgentInstance,
 	caller memory.CallerScope,
+	turnID string,
 ) error {
 	if al == nil || al.cfg == nil || !al.cfg.Memory.Enabled || agent == nil ||
 		agent.memoryReviewer == nil || agent.CuratedMemory == nil ||
@@ -391,6 +401,9 @@ func (al *AgentLoop) runMemoryReview(
 	}
 	if len(records) == 0 || latest <= cursor.LastReviewedSequence {
 		return nil
+	}
+	if turnID == "" && len(records) > 0 {
+		turnID = records[len(records)-1].TurnID
 	}
 	if markErr := agent.MemoryReviewState.MarkAttempt(caller); markErr != nil {
 		return markErr
@@ -462,7 +475,7 @@ func (al *AgentLoop) runMemoryReview(
 				callID = fmt.Sprintf("memory_review_%d_%d", iteration, callIndex)
 			}
 			toolCtx := tools.WithToolCallerScope(ctx, caller)
-			toolCtx = tools.WithToolTurnID(toolCtx, "")
+			toolCtx = tools.WithToolTurnID(toolCtx, turnID)
 			toolCtx = tools.WithBackgroundMemoryReview(toolCtx, true)
 			var result *tools.ToolResult
 			mutationErr := agent.memoryReviewer.withMutationBarrier(ctx, func() {

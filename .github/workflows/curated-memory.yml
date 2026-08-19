@@ -8,6 +8,20 @@ on:
       - feat/personalization-completion
       - feat/advanced-dashboard-settings
       - chore/standalone-v1.0.0
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/curated-memory.yml
+      - pkg/agent/**
+      - pkg/bus/**
+      - pkg/capability/**
+      - pkg/channels/**
+      - pkg/config/**
+      - pkg/memory/**
+      - pkg/session/**
+      - pkg/tools/**
+      - web/**
   workflow_dispatch: {}
 
 permissions:

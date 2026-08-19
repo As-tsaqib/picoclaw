@@ -31,7 +31,15 @@ const (
 	MaxCuratedEntryChars           = 4_000
 )
 
-var curatedDocumentLocks sync.Map
+type curatedDocumentLockEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+var curatedDocumentLocks = struct {
+	sync.Mutex
+	entries map[string]*curatedDocumentLockEntry
+}{entries: make(map[string]*curatedDocumentLockEntry)}
 
 type CuratedStoreOptions struct {
 	WorkspaceCharLimit     int
@@ -399,7 +407,7 @@ func (s *CuratedStore) prepareMutations(
 		}
 		mutation.Visibility = NormalizeCuratedVisibility(rawVisibility)
 		mutation.PreferenceKey = NormalizePreferenceKey(mutation.PreferenceKey)
-		mutation.PreferenceValue = strings.TrimSpace(mutation.PreferenceValue)
+		mutation.PreferenceValue = NormalizePreferenceValue(mutation.PreferenceKey, mutation.PreferenceValue)
 		mutation.Supersedes = strings.TrimSpace(mutation.Supersedes)
 		if utf8.RuneCountInString(mutation.Content) > MaxCuratedEntryChars ||
 			!validCuratedProvenanceBounds(mutation.Provenance) {
@@ -449,32 +457,51 @@ func (s *CuratedStore) prepareMutations(
 		if target == CuratedTargetCurrentUser && mutation.Action == CuratedActionAdd && mutation.PreferenceKey != "" {
 			for _, existing := range doc.Entries {
 				if existing.EffectiveStatus() != CuratedStatusActive ||
-					NormalizePreferenceKey(existing.PreferenceKey) != mutation.PreferenceKey ||
-					strings.TrimSpace(existing.PreferenceValue) != mutation.PreferenceValue {
+					NormalizePreferenceKey(existing.PreferenceKey) != mutation.PreferenceKey {
 					continue
 				}
-				// Same logical preference/value is idempotent. Only a strictly stronger
-				// evidence class upgrades the existing record; equal/weaker reaffirmations
-				// are a no-op and therefore cannot create duplicate state or notifications.
-				if (CuratedEntry{EvidenceKind: mutation.EvidenceKind}).EvidenceAuthority() <= existing.EvidenceAuthority() {
-					mutation.Action = ""
-					outcome = "no_op"
+				if strings.TrimSpace(existing.PreferenceValue) == mutation.PreferenceValue {
+					// Same logical preference/value is idempotent. Only a strictly stronger
+					// evidence class upgrades the existing record; equal/weaker reaffirmations
+					// are a no-op and therefore cannot create duplicate state or notifications.
+					if (CuratedEntry{EvidenceKind: mutation.EvidenceKind}).EvidenceAuthority() <= existing.EvidenceAuthority() {
+						mutation.Action = ""
+						outcome = "no_op"
+						break
+					}
+					outcome = "reaffirmed"
+					mutation.Action = CuratedActionReplace
+					mutation.ID = existing.ID
+					if mutation.Type == "" || mutation.Type == CuratedTypeOther {
+						mutation.Type = existing.EffectiveType()
+					}
+					if mutation.Visibility == "" {
+						mutation.Visibility = existing.EffectiveVisibility()
+					}
 					break
 				}
-				outcome = "reaffirmed"
-				mutation.Action = CuratedActionReplace
-				mutation.ID = existing.ID
-				if mutation.Type == "" || mutation.Type == CuratedTypeOther {
-					mutation.Type = existing.EffectiveType()
-				}
-				if mutation.Visibility == "" {
-					mutation.Visibility = existing.EffectiveVisibility()
+				// Different value for same canonical key: supersede relationship
+				outcome = "superseded"
+				if (CuratedEntry{EvidenceKind: mutation.EvidenceKind}).EvidenceAuthority() >= existing.EvidenceAuthority() {
+					mutation.Supersedes = existing.ID
 				}
 				break
 			}
 			if mutation.Action == "" {
 				outcomes = append(outcomes, outcome)
 				continue
+			}
+		} else if mutation.Action == CuratedActionAdd && mutation.PreferenceKey == "" {
+			for _, existing := range doc.Entries {
+				if existing.EffectiveStatus() != CuratedStatusActive || existing.PreferenceKey != "" {
+					continue
+				}
+				if IsObviousFactDuplicate(existing.Content, mutation.Content) {
+					return nil, nil, ErrCuratedDuplicate
+				}
+			}
+			if duplicateCuratedContent(doc.Entries, mutation.Content, "") {
+				return nil, nil, ErrCuratedDuplicate
 			}
 		}
 		if target == CuratedTargetCurrentUser && IsSharedMemoryContext(caller) {
@@ -678,7 +705,9 @@ func (s *CuratedStore) prepareMutations(
 		if !validCuratedProvenanceBounds(mutation.Provenance) {
 			return nil, nil, ErrCuratedInvalidAction
 		}
-		mutation.Provenance.RecordedAt = now
+		if !mutation.migrationPreserveMetadata || mutation.Provenance.RecordedAt.IsZero() {
+			mutation.Provenance.RecordedAt = now
+		}
 		prepared = append(prepared, mutation)
 		outcomes = append(outcomes, outcome)
 	}
@@ -719,11 +748,21 @@ func applyCuratedMutations(
 				return nil, nil, ErrCuratedDuplicate
 			}
 			evidence := NormalizeEvidenceKind(mutation.EvidenceKind)
+			createdAt, updatedAt := now, now
+			if mutation.migrationPreserveMetadata {
+				if !mutation.migrationCreatedAt.IsZero() {
+					createdAt = mutation.migrationCreatedAt
+				}
+				if !mutation.migrationUpdatedAt.IsZero() {
+					updatedAt = mutation.migrationUpdatedAt
+				}
+			}
 			entry := CuratedEntry{
 				ID:               mutation.ID,
 				Content:          mutation.Content,
 				Type:             NormalizeCuratedType(mutation.Type),
 				Status:           CuratedStatusActive,
+				Pinned:           mutation.migrationPinned,
 				Confidence:       DefaultConfidenceForEvidence(evidence),
 				EvidenceKind:     evidence,
 				Visibility:       mutation.Visibility,
@@ -733,8 +772,8 @@ func applyCuratedMutations(
 				PreferenceValue:  strings.TrimSpace(mutation.PreferenceValue),
 				Supersedes:       mutation.Supersedes,
 				Provenance:       mutation.Provenance,
-				CreatedAt:        now,
-				UpdatedAt:        now,
+				CreatedAt:        createdAt,
+				UpdatedAt:        updatedAt,
 				LastVerifiedAt:   mutation.LastVerifiedAt,
 				LastConfirmedAt:  mutation.LastConfirmedAt,
 				ExpiresAt:        mutation.ExpiresAt,
@@ -742,19 +781,21 @@ func applyCuratedMutations(
 			if mutation.Confidence != nil {
 				entry.Confidence = *mutation.Confidence
 			}
-			if entry.EvidenceCount == 0 {
-				entry.EvidenceCount = 1
-			}
-			if evidence == CuratedEvidenceObserved && entry.ObservationCount == 0 {
-				entry.ObservationCount = entry.EvidenceCount
-			}
-			if entry.LastConfirmedAt == nil && entry.LastVerifiedAt != nil {
-				entry.LastConfirmedAt = entry.LastVerifiedAt
-			}
-			if evidence == CuratedEvidenceExplicit && entry.LastConfirmedAt == nil {
-				confirmed := now
-				entry.LastConfirmedAt = &confirmed
-				entry.LastVerifiedAt = &confirmed
+			if !mutation.migrationPreserveMetadata {
+				if entry.EvidenceCount == 0 {
+					entry.EvidenceCount = 1
+				}
+				if evidence == CuratedEvidenceObserved && entry.ObservationCount == 0 {
+					entry.ObservationCount = entry.EvidenceCount
+				}
+				if entry.LastConfirmedAt == nil && entry.LastVerifiedAt != nil {
+					entry.LastConfirmedAt = entry.LastVerifiedAt
+				}
+				if evidence == CuratedEvidenceExplicit && entry.LastConfirmedAt == nil {
+					confirmed := now
+					entry.LastConfirmedAt = &confirmed
+					entry.LastVerifiedAt = &confirmed
+				}
 			}
 			if mutation.Supersedes != "" {
 				markCuratedSuperseded(entries, mutation.Supersedes, now)
@@ -786,11 +827,20 @@ func applyCuratedMutations(
 			} else if mutation.EvidenceKind != "" {
 				entries[idx].Confidence = DefaultConfidenceForEvidence(entries[idx].EvidenceKind)
 			}
-			if mutation.EvidenceCount > 0 {
+			if mutation.migrationPreserveMetadata {
 				entries[idx].EvidenceCount = mutation.EvidenceCount
-			}
-			if mutation.ObservationCount > 0 {
 				entries[idx].ObservationCount = mutation.ObservationCount
+				entries[idx].Pinned = mutation.migrationPinned
+				if !mutation.migrationCreatedAt.IsZero() {
+					entries[idx].CreatedAt = mutation.migrationCreatedAt
+				}
+			} else {
+				if mutation.EvidenceCount > 0 {
+					entries[idx].EvidenceCount = mutation.EvidenceCount
+				}
+				if mutation.ObservationCount > 0 {
+					entries[idx].ObservationCount = mutation.ObservationCount
+				}
 			}
 			if mutation.PreferenceKey != "" {
 				entries[idx].PreferenceKey = NormalizePreferenceKey(mutation.PreferenceKey)
@@ -799,7 +849,10 @@ func applyCuratedMutations(
 			if mutation.ExpiresAt != nil {
 				entries[idx].ExpiresAt = mutation.ExpiresAt
 			}
-			if mutation.LastConfirmedAt != nil {
+			if mutation.migrationPreserveMetadata {
+				entries[idx].LastConfirmedAt = mutation.LastConfirmedAt
+				entries[idx].LastVerifiedAt = mutation.LastVerifiedAt
+			} else if mutation.LastConfirmedAt != nil {
 				entries[idx].LastConfirmedAt = mutation.LastConfirmedAt
 				entries[idx].LastVerifiedAt = mutation.LastConfirmedAt
 			} else if mutation.LastVerifiedAt != nil {
@@ -821,6 +874,9 @@ func applyCuratedMutations(
 			}
 			entries[idx].Provenance = mutation.Provenance
 			entries[idx].UpdatedAt = now
+			if mutation.migrationPreserveMetadata && !mutation.migrationUpdatedAt.IsZero() {
+				entries[idx].UpdatedAt = mutation.migrationUpdatedAt
+			}
 			entries[idx] = normalizedCuratedEntry(entries[idx])
 			reconcilePreferenceKey(entries, mutation.ID, now)
 			if current, ok := curatedEntryByID(entries, mutation.ID); ok {
@@ -1616,24 +1672,36 @@ func clonePendingChanges(changes []PendingCuratedChange) []PendingCuratedChange 
 // instances in the same process. This matters when the gateway and
 // authenticated dashboard open the same structured store independently.
 func lockCuratedDocument(path string) (func(), error) {
-	for {
-		actual, _ := curatedDocumentLocks.LoadOrStore(path, &sync.Mutex{})
-		mu, ok := actual.(*sync.Mutex)
-		if !ok || mu == nil {
-			curatedDocumentLocks.CompareAndSwap(path, actual, &sync.Mutex{})
-			continue
-		}
-		mu.Lock()
-		fileUnlock, err := fileutil.LockFile(curatedDocumentLockPath(path))
-		if err != nil {
-			mu.Unlock()
-			return nil, fmt.Errorf("lock curated memory: %w", err)
-		}
-		return func() {
-			_ = fileUnlock()
-			mu.Unlock()
-		}, nil
+	curatedDocumentLocks.Lock()
+	entry := curatedDocumentLocks.entries[path]
+	if entry == nil {
+		entry = &curatedDocumentLockEntry{}
+		curatedDocumentLocks.entries[path] = entry
 	}
+	entry.refs++
+	curatedDocumentLocks.Unlock()
+
+	releaseRef := func() {
+		curatedDocumentLocks.Lock()
+		defer curatedDocumentLocks.Unlock()
+		entry.refs--
+		if entry.refs == 0 && curatedDocumentLocks.entries[path] == entry {
+			delete(curatedDocumentLocks.entries, path)
+		}
+	}
+
+	entry.mu.Lock()
+	fileUnlock, err := fileutil.LockFile(curatedDocumentLockPath(path))
+	if err != nil {
+		entry.mu.Unlock()
+		releaseRef()
+		return nil, fmt.Errorf("lock curated memory: %w", err)
+	}
+	return func() {
+		_ = fileUnlock()
+		entry.mu.Unlock()
+		releaseRef()
+	}, nil
 }
 
 func curatedDocumentLockPath(path string) string {
@@ -1651,4 +1719,203 @@ func pendingIDs(changes []PendingCuratedChange) map[string]struct{} {
 		ids[change.ID] = struct{}{}
 	}
 	return ids
+}
+
+// MigrateLegacyUserStoreToPersonScope merges entries from legacy channel-scoped user keys
+// into a consolidated person-scoped user key. Source stores are retained, so a
+// partial migration is safely repeatable after a crash. Entries are applied one
+// at a time through the normal CuratedStore transaction/reconciliation path;
+// this keeps every commit below the public batch limit and makes each successful
+// step durable before moving to the next source entry.
+func (s *CuratedStore) MigrateLegacyUserStoreToPersonScope(
+	legacyUserKeys []string,
+	personUserKey string,
+) (int, error) {
+	if s == nil || len(legacyUserKeys) == 0 || strings.TrimSpace(personUserKey) == "" {
+		return 0, nil
+	}
+	personUserKey = strings.TrimSpace(personUserKey)
+	if !strings.HasPrefix(strings.ToLower(personUserKey), "person:") {
+		return 0, fmt.Errorf("person-scoped user key is required")
+	}
+
+	legacySet := make(map[string]struct{}, len(legacyUserKeys))
+	for _, key := range legacyUserKeys {
+		key = strings.TrimSpace(key)
+		if key == "" || key == personUserKey {
+			continue
+		}
+		legacySet[key] = struct{}{}
+	}
+	orderedLegacyKeys := make([]string, 0, len(legacySet))
+	for key := range legacySet {
+		orderedLegacyKeys = append(orderedLegacyKeys, key)
+	}
+	sort.Strings(orderedLegacyKeys)
+
+	personCaller := CallerScope{AgentID: "migration", UserKey: personUserKey}
+	migrated := 0
+	for _, legacyKey := range orderedLegacyKeys {
+		legacyCaller := CallerScope{AgentID: "migration", UserKey: legacyKey}
+		legacyEntries, err := s.List(CuratedTargetCurrentUser, legacyCaller)
+		if err != nil {
+			return migrated, fmt.Errorf("read legacy user store %q: %w", legacyKey, err)
+		}
+		sort.SliceStable(legacyEntries, func(i, j int) bool {
+			if !legacyEntries[i].CreatedAt.Equal(legacyEntries[j].CreatedAt) {
+				return legacyEntries[i].CreatedAt.Before(legacyEntries[j].CreatedAt)
+			}
+			return legacyEntries[i].ID < legacyEntries[j].ID
+		})
+
+		for _, entry := range legacyEntries {
+			entry = normalizedCuratedEntry(entry)
+			if entry.EffectiveStatus() != CuratedStatusActive {
+				continue
+			}
+			current, listErr := s.List(CuratedTargetCurrentUser, personCaller)
+			if listErr != nil {
+				return migrated, fmt.Errorf("read person store %q: %w", personUserKey, listErr)
+			}
+
+			preferenceKey := NormalizePreferenceKey(entry.PreferenceKey)
+			preferenceValue := NormalizePreferenceValue(preferenceKey, entry.PreferenceValue)
+			skip := false
+			if preferenceKey != "" {
+				for _, existing := range current {
+					existing = normalizedCuratedEntry(existing)
+					if existing.EffectiveStatus() != CuratedStatusActive ||
+						NormalizePreferenceKey(existing.PreferenceKey) != preferenceKey {
+						continue
+					}
+					existingValue := NormalizePreferenceValue(preferenceKey, existing.PreferenceValue)
+					if existingValue == preferenceValue && existing.EvidenceAuthority() >= entry.EvidenceAuthority() {
+						skip = true
+						break
+					}
+					// An equally authoritative conflicting historical value is ambiguous.
+					// Preserve it in the source store instead of choosing a winner based
+					// on migration execution time. Stronger evidence may still supersede.
+					if existingValue != preferenceValue && existing.EvidenceAuthority() >= entry.EvidenceAuthority() {
+						skip = true
+						break
+					}
+				}
+			} else {
+				for _, existing := range current {
+					if existing.EffectiveStatus() == CuratedStatusActive &&
+						IsObviousFactDuplicate(existing.Content, entry.Content) {
+						skip = true
+						break
+					}
+				}
+			}
+			if skip {
+				continue
+			}
+
+			confidence := entry.EffectiveConfidence()
+			mutation := CuratedMutation{
+				Action:                    CuratedActionAdd,
+				Content:                   entry.Content,
+				Type:                      entry.EffectiveType(),
+				Confidence:                &confidence,
+				EvidenceKind:              entry.EffectiveEvidenceKind(),
+				Visibility:                entry.EffectiveVisibility(),
+				EvidenceCount:             entry.EvidenceCount,
+				ObservationCount:          entry.ObservationCount,
+				PreferenceKey:             preferenceKey,
+				PreferenceValue:           preferenceValue,
+				ExpiresAt:                 entry.ExpiresAt,
+				LastVerifiedAt:            entry.LastVerifiedAt,
+				LastConfirmedAt:           entry.LastConfirmedAt,
+				Provenance:                entry.Provenance,
+				migrationPreserveMetadata: true,
+				migrationCreatedAt:        entry.CreatedAt,
+				migrationUpdatedAt:        entry.UpdatedAt,
+				migrationPinned:           entry.Pinned,
+			}
+			result, applyErr := s.ApplyBatch(
+				CuratedTargetCurrentUser,
+				personCaller,
+				[]CuratedMutation{mutation},
+				false,
+			)
+			if errors.Is(applyErr, ErrCuratedDuplicate) {
+				continue
+			}
+			if applyErr != nil {
+				return migrated, fmt.Errorf("migrate legacy user store %q: %w", legacyKey, applyErr)
+			}
+			migrated += len(result.Applied)
+		}
+	}
+	return migrated, nil
+}
+
+// MigrateLegacyStoresFromConfig consolidates legacy user stores according to trusted identity links.
+func (s *CuratedStore) MigrateLegacyStoresFromConfig(identityLinks map[string][]string) (int, error) {
+	if s == nil || len(identityLinks) == 0 {
+		return 0, nil
+	}
+	canonicalNames := make([]string, 0, len(identityLinks))
+	for canonical := range identityLinks {
+		canonicalNames = append(canonicalNames, canonical)
+	}
+	sort.SliceStable(canonicalNames, func(i, j int) bool {
+		return strings.ToLower(strings.TrimSpace(canonicalNames[i])) <
+			strings.ToLower(strings.TrimSpace(canonicalNames[j]))
+	})
+
+	total := 0
+	for _, canonical := range canonicalNames {
+		canonicalName := strings.ToLower(strings.TrimSpace(canonical))
+		if canonicalName == "" {
+			continue
+		}
+		legacySet := make(map[string]struct{})
+		identities := append([]string(nil), identityLinks[canonical]...)
+		sort.SliceStable(identities, func(i, j int) bool {
+			return strings.ToLower(strings.TrimSpace(identities[i])) <
+				strings.ToLower(strings.TrimSpace(identities[j]))
+		})
+		for _, identity := range identities {
+			parts := strings.Split(strings.TrimSpace(identity), ":")
+			var channel, account, rawID string
+			switch len(parts) {
+			case 1:
+				channel, account, rawID = "unknown", "default", parts[0]
+			case 2:
+				channel, account, rawID = parts[0], "default", parts[1]
+			default:
+				channel, account, rawID = parts[0], parts[1], strings.Join(parts[2:], ":")
+			}
+			if strings.TrimSpace(rawID) == "" {
+				continue
+			}
+			legacySet[fmt.Sprintf(
+				"channel:%s|account:%s|user:%s",
+				strings.ToLower(strings.TrimSpace(channel)),
+				strings.ToLower(strings.TrimSpace(account)),
+				strings.ToLower(strings.TrimSpace(canonicalName)),
+			)] = struct{}{}
+			legacySet[fmt.Sprintf(
+				"channel:%s|account:%s|user:%s",
+				strings.ToLower(strings.TrimSpace(channel)),
+				strings.ToLower(strings.TrimSpace(account)),
+				strings.ToLower(strings.TrimSpace(rawID)),
+			)] = struct{}{}
+		}
+		legacyKeys := make([]string, 0, len(legacySet))
+		for key := range legacySet {
+			legacyKeys = append(legacyKeys, key)
+		}
+		sort.Strings(legacyKeys)
+		migrated, err := s.MigrateLegacyUserStoreToPersonScope(legacyKeys, "person:"+canonicalName)
+		if err != nil {
+			return total, fmt.Errorf("migrate identity %q: %w", canonicalName, err)
+		}
+		total += migrated
+	}
+	return total, nil
 }

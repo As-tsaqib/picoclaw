@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/As-tsaqib/picoclaw/pkg/capability"
+	"github.com/As-tsaqib/picoclaw/pkg/config"
 	"github.com/As-tsaqib/picoclaw/pkg/constants"
 	runtimeevents "github.com/As-tsaqib/picoclaw/pkg/events"
 	"github.com/As-tsaqib/picoclaw/pkg/logger"
@@ -38,6 +40,7 @@ func (p *Pipeline) CallLLM(
 	exec.gracefulTerminal, _ = ts.gracefulInterruptRequested()
 	exec.providerToolDefs = ts.agent.Tools.ToProviderDefs()
 	exec.providerToolDefs = filterToolsByTurnProfile(exec.providerToolDefs, ts.profile)
+	exec.providerToolDefs = filterToolsByRouteCapabilities(exec.providerToolDefs, al, ts)
 
 	// Native web search support
 	webSearchEnabled := al.cfg.Tools.IsToolEnabled("web") && turnProfileToolAllowed(ts.profile, "web_search")
@@ -770,4 +773,141 @@ func transientLLMRetryReason(err error) (string, bool) {
 	}
 
 	return "", false
+}
+
+func capabilityPolicyDisabledFeatures(cfg *config.Config) map[capability.Feature]bool {
+	if cfg == nil {
+		return nil
+	}
+	disabled := make(map[capability.Feature]bool)
+	disable := func(tool string, features ...capability.Feature) {
+		if cfg.Tools.IsToolEnabled(tool) {
+			return
+		}
+		for _, feature := range features {
+			disabled[feature] = true
+		}
+	}
+	disable("send_poll", capability.FeaturePollRegular)
+	disable("send_quiz", capability.FeaturePollQuiz, capability.FeaturePollMultipleCorrect)
+	disable("stop_poll", capability.FeaturePollStop)
+	disable("send_location", capability.FeatureLocationPoint, capability.FeatureLocationVenue)
+	disable("send_contact", capability.FeatureContactCard)
+	disable("send_dice", capability.FeatureDiceAnimated)
+	disable("send_live_photo", capability.FeatureMediaLivePhoto)
+	disable("send_animation", capability.FeatureMediaAnimation)
+	disable("send_sticker", capability.FeatureMediaSticker)
+	disable("send_video_note", capability.FeatureMediaVideoNote)
+	if len(disabled) == 0 {
+		return nil
+	}
+	return disabled
+}
+
+func filterToolsByRouteCapabilities(
+	toolDefs []providers.ToolDefinition,
+	al *AgentLoop,
+	ts *turnState,
+) []providers.ToolDefinition {
+	if ts == nil || al == nil {
+		return toolDefs
+	}
+	account := ""
+	if ts.opts.Dispatch.InboundContext != nil {
+		account = ts.opts.Dispatch.InboundContext.Account
+	}
+	routeCtx := capability.RouteContext{
+		Channel:          ts.channel,
+		Account:          account,
+		ChatID:           ts.chatID,
+		SenderID:         ts.opts.Dispatch.SenderID(),
+		IsEphemeral:      turnStateIsPrivate(ts),
+		DisabledFeatures: capabilityPolicyDisabledFeatures(al.cfg),
+	}
+	if ts.opts.Dispatch.InboundContext != nil && ts.opts.Dispatch.InboundContext.Raw != nil {
+		routeCtx.ServerID = ts.opts.Dispatch.InboundContext.Raw["server_id"]
+	}
+	if routeCtx.ServerID == "" && strings.EqualFold(ts.channel, "telegram") && al.cfg != nil {
+		tgChannel := al.cfg.Channels.Get("telegram")
+		if tgChannel != nil && tgChannel.Settings != nil {
+			var tgSettings config.TelegramSettings
+			if decErr := tgChannel.Settings.Decode(&tgSettings); decErr == nil {
+				routeCtx.ServerID = tgSettings.BaseURL
+			}
+		}
+	}
+	capSet := capability.ResolveRouteCapabilities(routeCtx, capability.GlobalNegativeCache)
+
+	filtered := make([]providers.ToolDefinition, 0, len(toolDefs))
+	for _, td := range toolDefs {
+		name := td.Function.Name
+		if !isToolAllowedByCapability(name, capSet) {
+			continue
+		}
+		filtered = append(filtered, td)
+	}
+	return filtered
+}
+
+func isToolAllowedByCapability(toolName string, capSet capability.CapabilitySet) bool {
+	if capSet == nil {
+		return true
+	}
+	switch toolName {
+	case "send_poll":
+		return capSet.IsSupported(capability.FeaturePollRegular)
+	case "send_quiz":
+		return capSet.IsSupported(capability.FeaturePollQuiz)
+	case "stop_poll":
+		return capSet.IsSupported(capability.FeaturePollStop)
+	case "send_location":
+		return capSet.IsSupported(capability.FeatureLocationPoint) ||
+			capSet.IsSupported(capability.FeatureLocationVenue)
+	case "send_contact":
+		return capSet.IsSupported(capability.FeatureContactCard)
+	case "send_dice":
+		return capSet.IsSupported(capability.FeatureDiceAnimated)
+	case "send_live_photo":
+		return capSet.IsSupported(capability.FeatureMediaLivePhoto)
+	case "send_animation":
+		return capSet.IsSupported(capability.FeatureMediaAnimation)
+	case "send_sticker":
+		return capSet.IsSupported(capability.FeatureMediaSticker)
+	case "send_video_note":
+		return capSet.IsSupported(capability.FeatureMediaVideoNote)
+	default:
+		return true
+	}
+}
+
+func isToolAllowedByRoute(al *AgentLoop, ts *turnState, toolName string) bool {
+	if ts == nil || al == nil {
+		return true
+	}
+	account := ""
+	if ts.opts.Dispatch.InboundContext != nil {
+		account = ts.opts.Dispatch.InboundContext.Account
+	}
+	routeCtx := capability.RouteContext{
+		Channel:          ts.channel,
+		Account:          account,
+		ChatID:           ts.chatID,
+		SenderID:         ts.opts.Dispatch.SenderID(),
+		IsEphemeral:      turnStateIsPrivate(ts),
+		DisabledFeatures: capabilityPolicyDisabledFeatures(al.cfg),
+	}
+	if ts.opts.Dispatch.InboundContext != nil && ts.opts.Dispatch.InboundContext.Raw != nil {
+		routeCtx.ServerID = ts.opts.Dispatch.InboundContext.Raw["server_id"]
+	}
+	if routeCtx.ServerID == "" && strings.EqualFold(ts.channel, "telegram") && al.cfg != nil {
+		tgChannel := al.cfg.Channels.Get("telegram")
+		if tgChannel != nil && tgChannel.Settings != nil {
+			var tgSettings config.TelegramSettings
+			if decErr := tgChannel.Settings.Decode(&tgSettings); decErr == nil {
+				routeCtx.ServerID = tgSettings.BaseURL
+			}
+		}
+	}
+	capSet := capability.ResolveRouteCapabilities(routeCtx, capability.GlobalNegativeCache)
+	return isToolAllowedByCapability(toolName, capSet)
 }

@@ -640,6 +640,9 @@ func (c *TelegramChannel) EditEphemeralMessageReplyMarkup(
 }
 
 func (c *TelegramChannel) handleCallbackQuery(ctx context.Context, query *telego.CallbackQuery) error {
+	if query != nil && strings.HasPrefix(query.Data, "quiz_reveal:") {
+		return c.handleQuizRevealCallback(ctx, query)
+	}
 	if query != nil && isInternalSessionCallback(query.Data) {
 		return c.handleInternalSessionCallback(ctx, query)
 	}

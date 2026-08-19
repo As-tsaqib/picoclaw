@@ -756,3 +756,215 @@ func TestCuratedStoreRejectsUnsupportedSensitiveInference(t *testing.T) {
 		t.Fatalf("explicit user statement should remain representable: %v", err)
 	}
 }
+
+func TestCanonicalPreferenceKeyNormalization(t *testing.T) {
+	cases := []struct {
+		inputKey   string
+		inputValue string
+		wantKey    string
+		wantValue  string
+	}{
+		{"formatting.response_style", "concise", "communication.response_format", "concise"},
+		{"workflow.quiz_format", "telegram_native_quiz", "presentation.quiz.mode", "native"},
+		{"presentation.quiz_format", "text_quiz", "presentation.quiz.mode", "text"},
+		{"presentation.quiz", "automatic", "presentation.quiz.mode", "auto"},
+		{"language.primary", "id", "communication.language", "id"},
+		{"custom.theme", "dark", "custom.theme", "dark"},
+	}
+
+	for _, c := range cases {
+		gotKey := NormalizePreferenceKey(c.inputKey)
+		if gotKey != c.wantKey {
+			t.Errorf("NormalizePreferenceKey(%q) = %q, want %q", c.inputKey, gotKey, c.wantKey)
+		}
+		gotVal := NormalizePreferenceValue(c.inputKey, c.inputValue)
+		if gotVal != c.wantValue {
+			t.Errorf("NormalizePreferenceValue(%q, %q) = %q, want %q", c.inputKey, c.inputValue, gotVal, c.wantValue)
+		}
+	}
+}
+
+func TestMigrateLegacyUserStoreToPersonScope(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
+
+	legacyTelegram := "channel:telegram|account:default|user:42"
+	legacyPico := "channel:pico|account:default|user:pico-user"
+	canonicalPerson := "person:alice"
+
+	// Add entries to legacy telegram store
+	_, err := store.ApplyBatch(CuratedTargetCurrentUser, CallerScope{UserKey: legacyTelegram}, []CuratedMutation{
+		{
+			Action:          CuratedActionAdd,
+			Type:            CuratedTypeWorkflowPreference,
+			Content:         "Prefers native quizzes",
+			PreferenceKey:   "workflow.quiz_format",
+			PreferenceValue: "telegram_native_quiz",
+		},
+		{
+			Action:  CuratedActionAdd,
+			Type:    CuratedTypeProjectFact,
+			Content: "Works on Go microservices",
+		},
+	}, false)
+	if err != nil {
+		t.Fatalf("failed to seed legacy telegram: %v", err)
+	}
+
+	// Add entries to legacy pico store (with one duplicate fact)
+	_, err = store.ApplyBatch(CuratedTargetCurrentUser, CallerScope{UserKey: legacyPico}, []CuratedMutation{
+		{
+			Action:          CuratedActionAdd,
+			Type:            CuratedTypeCommunicationPreference,
+			Content:         "Prefers Indonesian language",
+			PreferenceKey:   "language.primary",
+			PreferenceValue: "id",
+		},
+		{
+			Action:  CuratedActionAdd,
+			Type:    CuratedTypeProjectFact,
+			Content: "Works on Go microservices", // duplicate fact
+		},
+	}, false)
+	if err != nil {
+		t.Fatalf("failed to seed legacy pico: %v", err)
+	}
+
+	// Migrate both into canonicalPerson
+	migrated, err := store.MigrateLegacyUserStoreToPersonScope(
+		[]string{legacyTelegram, legacyPico},
+		canonicalPerson,
+	)
+	if err != nil {
+		t.Fatalf("MigrateLegacyUserStoreToPersonScope error: %v", err)
+	}
+	if migrated < 2 {
+		t.Fatalf("expected at least 2 migrated entries, got %d", migrated)
+	}
+
+	// Verify person store entries
+	entries, err := store.List(CuratedTargetCurrentUser, CallerScope{UserKey: canonicalPerson})
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+
+	// Should have 3 unique entries: quiz preference (normalized), language preference (normalized), and unique fact
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries in person scope, got %d: %#v", len(entries), entries)
+	}
+
+	// Verify idempotency: running migration again produces 0 new entries
+	migrated2, err := store.MigrateLegacyUserStoreToPersonScope(
+		[]string{legacyTelegram, legacyPico},
+		canonicalPerson,
+	)
+	if err != nil || migrated2 != 0 {
+		t.Fatalf("second migration should be idempotent (migrated=0), got %d, err=%v", migrated2, err)
+	}
+}
+
+func TestSemanticFactConsolidation(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
+	caller := testCaller("telegram:user-facts")
+
+	// 1. Initial fact
+	res1, err := store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{{
+		Action:       CuratedActionAdd,
+		Content:      "Termux is installed on Android",
+		EvidenceKind: CuratedEvidenceObserved,
+	}}, false)
+	if err != nil || len(res1.Applied) != 1 {
+		t.Fatalf("failed to add initial fact: %v", err)
+	}
+
+	// 2. Equivalent rephrasing with different punctuation/whitespace should be
+	// consolidated / rejected as duplicate
+	_, err = store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{{
+		Action:       CuratedActionAdd,
+		Content:      "  termux is installed on android.  ",
+		EvidenceKind: CuratedEvidenceInferred,
+	}}, false)
+	if !errors.Is(err, ErrCuratedDuplicate) {
+		t.Fatalf("expected ErrCuratedDuplicate for equivalent fact rephrasing, got %v", err)
+	}
+
+	// 3. Similar but contradictory facts must NOT be merged
+	res3, err := store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{{
+		Action:       CuratedActionAdd,
+		Content:      "Termux is unavailable after OS update",
+		EvidenceKind: CuratedEvidenceObserved,
+	}}, false)
+	if err != nil || len(res3.Applied) != 1 {
+		t.Fatalf("contradictory fact should be stored separately, got err=%v", err)
+	}
+
+	// 4. Distinct facts remain separate
+	res4, err := store.ApplyBatch(CuratedTargetWorkspace, caller, []CuratedMutation{{
+		Action:       CuratedActionAdd,
+		Content:      "Go compiler is available in Termux",
+		EvidenceKind: CuratedEvidenceObserved,
+	}}, false)
+	if err != nil || len(res4.Applied) != 1 {
+		t.Fatalf("distinct fact should be stored separately, got err=%v", err)
+	}
+
+	// Verify all valid distinct facts exist in workspace
+	entries, err := store.List(CuratedTargetWorkspace, caller)
+	if err != nil || len(entries) != 3 {
+		t.Fatalf("expected 3 distinct workspace entries, got %d: %#v", len(entries), entries)
+	}
+}
+
+func TestPreferenceAutoSupersedeOnNewValue(t *testing.T) {
+	store := newTestCuratedStore(t, filepath.Join(t.TempDir(), "curated"), 10_000, 10_000)
+	caller := testCaller("telegram:user-prefs")
+
+	// 1. Initial preference
+	res1, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action:          CuratedActionAdd,
+		Content:         "User prefers concise answers",
+		Type:            CuratedTypeCommunicationPreference,
+		EvidenceKind:    CuratedEvidenceExplicit,
+		PreferenceKey:   "communication.verbosity",
+		PreferenceValue: "concise",
+	}}, false)
+	if err != nil || len(res1.Applied) != 1 {
+		t.Fatalf("initial preference error: %v", err)
+	}
+
+	// 2. Same key, new explicit value -> deterministically supersedes
+	res2, err := store.ApplyBatch(CuratedTargetCurrentUser, caller, []CuratedMutation{{
+		Action:          CuratedActionAdd,
+		Content:         "User prefers detailed answers with code samples",
+		Type:            CuratedTypeCommunicationPreference,
+		EvidenceKind:    CuratedEvidenceExplicit,
+		PreferenceKey:   "communication.verbosity",
+		PreferenceValue: "detailed",
+	}}, false)
+	if err != nil || len(res2.Applied) != 1 {
+		t.Fatalf("new preference value error: %v", err)
+	}
+
+	// Only 1 active entry should exist
+	allEntries, err := store.List(CuratedTargetCurrentUser, caller)
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	var active []CuratedEntry
+	for _, e := range allEntries {
+		if e.EffectiveStatus() == CuratedStatusActive {
+			active = append(active, e)
+		}
+	}
+	if len(active) != 1 {
+		t.Fatalf("expected 1 active preference, got %d: %#v", len(active), active)
+	}
+	if active[0].PreferenceValue != "detailed" {
+		t.Fatalf("expected active preference to be 'detailed', got %q", active[0].PreferenceValue)
+	}
+
+	// Old entry is superseded
+	old, err := store.Inspect(CuratedTargetCurrentUser, caller, res1.Applied[0].ID)
+	if err != nil || old.EffectiveStatus() != CuratedStatusSuperseded {
+		t.Fatalf("expected old preference to be superseded, got %#v", old)
+	}
+}

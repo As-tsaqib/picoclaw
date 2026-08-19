@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/As-tsaqib/picoclaw/pkg/capability"
 	"github.com/As-tsaqib/picoclaw/pkg/logger"
 	"github.com/As-tsaqib/picoclaw/pkg/memory"
 	"github.com/As-tsaqib/picoclaw/pkg/providers"
@@ -120,12 +121,14 @@ type PromptBuildRequest struct {
 	CurrentMessage string
 	Media          []string
 
-	Channel           string
-	ChatID            string
-	SenderID          string
-	SenderDisplayName string
-	MemoryScope       memory.CallerScope
-	PrivateContext    bool
+	Channel              string
+	ChatID               string
+	SenderID             string
+	ServerID             string
+	DisabledCapabilities map[capability.Feature]bool
+	SenderDisplayName    string
+	MemoryScope          memory.CallerScope
+	PrivateContext       bool
 
 	ActiveSkills []string
 	Overlays     []PromptPart

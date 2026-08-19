@@ -95,6 +95,11 @@ type OutboundMessage struct {
 	Scope            *OutboundScope     `json:"scope,omitempty"`
 	Content          string             `json:"content"`
 	Structured       *StructuredContent `json:"structured,omitempty"`
+	Poll             *PollPayload       `json:"poll,omitempty"`
+	StopPollID       string             `json:"stop_poll_id,omitempty"`
+	Location         *LocationPayload   `json:"location,omitempty"`
+	Contact          *ContactPayload    `json:"contact,omitempty"`
+	Dice             *DicePayload       `json:"dice,omitempty"`
 	ReplyToMessageID string             `json:"reply_to_message_id,omitempty"`
 	ContextUsage     *ContextUsage      `json:"context_usage,omitempty"`
 }

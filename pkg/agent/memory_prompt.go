@@ -52,6 +52,7 @@ func memoryPromptPartsForTurn(
 		// It is derived from current_user curated memory and is never an independent
 		// source of truth. Profile source IDs are intentionally not marked as
 		// presented, otherwise always-on fields would create a retrieval feedback loop.
+		var profileSourceIDs map[string]struct{}
 		if cfg.Memory.Profile.Enabled && memory.HasCanonicalUserMemoryScope(caller) {
 			profile, profileErr := ts.agent.CuratedMemory.CompileUserProfile(caller, memory.UserProfileOptions{
 				MaxChars:      cfg.Memory.Profile.EffectiveMaxChars(),
@@ -59,13 +60,26 @@ func memoryPromptPartsForTurn(
 			})
 			if profileErr != nil {
 				logger.WarnCF("memory", "Failed to compile current-user profile", safeMemoryLogFields(profileErr))
-			} else if content := renderUserProfilePromptData(profile); content != "" {
-				parts = append(parts, PromptPart{
-					ID: "context.user.profile", Layer: PromptLayerContext, Slot: PromptSlotUserProfile,
-					Source: PromptSource{ID: PromptSourceUserProfile, Name: "memory:user_profile"},
-					Title:  "compiled current-user profile", Content: content, Stable: false, Cache: PromptCacheNone,
-				})
-				private = true
+			} else {
+				if len(profile.SourceIDs) > 0 {
+					profileSourceIDs = make(map[string]struct{}, len(profile.SourceIDs))
+					for _, id := range profile.SourceIDs {
+						profileSourceIDs[id] = struct{}{}
+					}
+				}
+				if content := renderUserProfilePromptData(profile); content != "" {
+					parts = append(parts, PromptPart{
+						ID:      "context.user.profile",
+						Layer:   PromptLayerContext,
+						Slot:    PromptSlotUserProfile,
+						Source:  PromptSource{ID: PromptSourceUserProfile, Name: "memory:user_profile"},
+						Title:   "compiled current-user profile",
+						Content: content,
+						Stable:  false,
+						Cache:   PromptCacheNone,
+					})
+					private = true
+				}
 			}
 		}
 
@@ -97,15 +111,26 @@ func memoryPromptPartsForTurn(
 			)
 			if userErr != nil {
 				logger.WarnCF("memory", "Failed to load current-user curated memory", safeMemoryLogFields(userErr))
-			} else if content, renderedIDs := renderCuratedPromptDataWithUsage(
-				"current_user",
-				userEntries,
-				curatedPromptCharBudget(cfg.Memory.Retrieval, memory.CuratedTargetCurrentUser),
-			); content != "" {
-				part := memoryDataPromptPart("context.memory.curated.current_user", content)
-				parts = append(parts, part)
-				ts.stageCuratedUsage(memory.CuratedTargetCurrentUser, renderedIDs)
-				private = true
+			} else {
+				if len(userEntries) > 0 && len(profileSourceIDs) > 0 {
+					filteredEntries := make([]memory.CuratedEntry, 0, len(userEntries))
+					for _, entry := range userEntries {
+						if _, ok := profileSourceIDs[entry.ID]; !ok {
+							filteredEntries = append(filteredEntries, entry)
+						}
+					}
+					userEntries = filteredEntries
+				}
+				if content, renderedIDs := renderCuratedPromptDataWithUsage(
+					"current_user",
+					userEntries,
+					curatedPromptCharBudget(cfg.Memory.Retrieval, memory.CuratedTargetCurrentUser),
+				); content != "" {
+					part := memoryDataPromptPart("context.memory.curated.current_user", content)
+					parts = append(parts, part)
+					ts.stageCuratedUsage(memory.CuratedTargetCurrentUser, renderedIDs)
+					private = true
+				}
 			}
 		}
 	}

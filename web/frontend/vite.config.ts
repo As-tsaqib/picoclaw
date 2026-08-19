@@ -24,6 +24,7 @@ export default defineConfig({
     chunkSizeWarningLimit: 2048,
   },
   test: {
+    include: ["src/**/*.test.{ts,tsx}"],
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",
     restoreMocks: true,

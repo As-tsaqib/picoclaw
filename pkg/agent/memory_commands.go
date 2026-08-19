@@ -224,7 +224,7 @@ func configureMemoryCommandRuntime(
 			return fmt.Sprintf("Rejected %d pending memory change(s).", count), nil
 		}
 		rt.MemoryReview = func(_ context.Context) (string, error) {
-			started, err := al.startMemoryReview(agent, caller, true)
+			started, err := al.startMemoryReview(agent, caller, true, "")
 			if err != nil {
 				return "", err
 			}

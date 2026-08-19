@@ -187,7 +187,7 @@ func TestCurrentUserProfileManagementAPIUsesFixedPicoIdentityAndSupportsLifecycl
 	if profile.Code != http.StatusOK ||
 		!strings.Contains(profile.Body.String(), `"communication.verbosity"`) ||
 		!strings.Contains(profile.Body.String(), id) ||
-		!strings.Contains(profile.Body.String(), `"scope_label":"Pico dashboard user"`) {
+		!strings.Contains(profile.Body.String(), `"scope_label":"Dashboard-local profile"`) {
 		t.Fatalf("profile status=%d body=%s", profile.Code, profile.Body.String())
 	}
 
@@ -368,6 +368,78 @@ func TestMemoryEvolutionManagementAPIRejectsArbitrarySelectorsAndMalformedInput(
 			thirdPersonPrivateWorkspace.Code,
 			thirdPersonPrivateWorkspace.Body.String(),
 		)
+	}
+}
+
+func TestCurrentUserProfile_OwnerBindingLabels(t *testing.T) {
+	// Case 1: Unconfigured owner -> Dashboard-local profile
+	harness := newManagementTestHarness(t)
+	res := managementRequest(t, harness.mux, http.MethodGet, "/api/memory/current-user", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("GET /api/memory/current-user status=%d", res.Code)
+	}
+	if !strings.Contains(res.Body.String(), `"scope_label":"Dashboard-local profile"`) {
+		t.Fatalf("unconfigured owner scope_label body=%s, want Dashboard-local profile", res.Body.String())
+	}
+
+	// Case 2: Configured owner with valid identity link -> Personal profile: <owner>
+	cfg, err := config.LoadConfig(harness.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Session.IdentityLinks = map[string][]string{
+		"alice": {"telegram:42", "pico:pico-user"},
+	}
+	cfg.Memory.OwnerIdentity = "alice"
+	if err := config.SaveConfig(harness.configPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	h2 := NewHandler(harness.configPath)
+	mux2 := http.NewServeMux()
+	h2.RegisterRoutes(mux2)
+	res2 := managementRequest(t, mux2, http.MethodGet, "/api/memory/current-user", "")
+	if res2.Code != http.StatusOK {
+		t.Fatalf("GET /api/memory/current-user status=%d", res2.Code)
+	}
+	if !strings.Contains(res2.Body.String(), `"scope_label":"Personal profile: alice"`) {
+		t.Fatalf("linked owner scope_label body=%s, want Personal profile: alice", res2.Body.String())
+	}
+
+	// Case 3: owner alias exists but does not contain the authenticated dashboard identity -> local only.
+	cfg.Session.IdentityLinks = map[string][]string{
+		"alice": {"telegram:42"},
+	}
+	cfg.Memory.OwnerIdentity = "alice"
+	if err := config.SaveConfig(harness.configPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	h3 := NewHandler(harness.configPath)
+	mux3 := http.NewServeMux()
+	h3.RegisterRoutes(mux3)
+	res3 := managementRequest(t, mux3, http.MethodGet, "/api/memory/current-user", "")
+	if res3.Code != http.StatusOK || !strings.Contains(res3.Body.String(), `"scope_label":"Dashboard-local profile"`) {
+		t.Fatalf("unproven owner body=%s, want Dashboard-local profile", res3.Body.String())
+	}
+
+	// Case 4: Configured owner NOT in identity links and pico-user not linked -> falls back to Dashboard-local profile
+	cfg.Session.IdentityLinks = map[string][]string{
+		"alice": {"telegram:42"},
+	}
+	cfg.Memory.OwnerIdentity = "bob"
+	if err := config.SaveConfig(harness.configPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	h4 := NewHandler(harness.configPath)
+	mux4 := http.NewServeMux()
+	h4.RegisterRoutes(mux4)
+	res4 := managementRequest(t, mux4, http.MethodGet, "/api/memory/current-user", "")
+	if res4.Code != http.StatusOK {
+		t.Fatalf("GET /api/memory/current-user status=%d", res4.Code)
+	}
+	if !strings.Contains(res4.Body.String(), `"scope_label":"Dashboard-local profile"`) {
+		t.Fatalf("unlinked owner scope_label body=%s, want Dashboard-local profile", res4.Body.String())
 	}
 }
 

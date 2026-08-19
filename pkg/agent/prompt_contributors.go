@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/As-tsaqib/picoclaw/pkg/capability"
 	"github.com/As-tsaqib/picoclaw/pkg/tools"
 )
 
 const telegramOutputPromptSourceID PromptSourceID = "channel:telegram:output"
 
-const telegramOutputFormattingPrompt = "# Telegram response formatting\n\n" +
+const telegramOutputFormattingBase = "# Telegram response formatting\n\n" +
 	"This response will be delivered through Telegram's rich-message renderer.\n\n" +
 	"- Use standard GitHub-Flavored Markdown for headings, emphasis, links, lists, and code.\n" +
 	"- Prefer a compact Markdown table for comparisons, data lists with repeated fields, status or metric summaries, and other genuinely tabular structured output.\n" +
@@ -37,13 +38,28 @@ func (telegramOutputPromptContributor) ContributePrompt(
 	if !strings.EqualFold(strings.TrimSpace(req.Channel), "telegram") {
 		return nil, nil
 	}
+
+	route := capability.RouteContext{
+		Channel:          req.Channel,
+		Account:          req.MemoryScope.Account,
+		ChatID:           req.ChatID,
+		SenderID:         req.SenderID,
+		ServerID:         req.ServerID,
+		IsEphemeral:      req.PrivateContext,
+		DisabledFeatures: req.DisabledCapabilities,
+	}
+	set := capability.ResolveRouteCapabilities(route, capability.GlobalNegativeCache)
+	capPrompt := capability.FormatCapabilityPrompt(set, req.Channel)
+
+	content := telegramOutputFormattingBase + "\n\n" + capPrompt
+
 	return []PromptPart{{
 		ID:      "context.output_policy.telegram_rich_messages",
 		Layer:   PromptLayerContext,
 		Slot:    PromptSlotOutput,
 		Source:  PromptSource{ID: telegramOutputPromptSourceID, Name: "telegram_rich_messages"},
 		Title:   "Telegram rich-message output policy",
-		Content: telegramOutputFormattingPrompt,
+		Content: content,
 		Stable:  false,
 		Cache:   PromptCacheNone,
 	}}, nil

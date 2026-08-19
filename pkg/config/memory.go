@@ -19,6 +19,9 @@ const (
 	MemoryApprovalBackgroundOnly = "background_only"
 	MemoryApprovalAllWrites      = "all_writes"
 
+	MemoryCaptureAutomatic    = "automatic"
+	MemoryCaptureExplicitOnly = "explicit_only"
+
 	MemoryRetrievalHybridLexical  = "hybrid_lexical"
 	MemoryRetrievalSemanticRerank = "semantic_rerank"
 
@@ -71,7 +74,9 @@ type MemoryConfig struct {
 	PerUserCharLimit   int                    `json:"per_user_char_limit,omitempty"  env:"PICOCLAW_MEMORY_PER_USER_CHAR_LIMIT"`
 	WriteApproval      bool                   `json:"write_approval,omitempty"       env:"PICOCLAW_MEMORY_WRITE_APPROVAL"`
 	ApprovalMode       string                 `json:"approval_mode,omitempty"        env:"PICOCLAW_MEMORY_APPROVAL_MODE"`
+	CaptureMode        string                 `json:"capture_mode,omitempty"         env:"PICOCLAW_MEMORY_CAPTURE_MODE"`
 	Notifications      string                 `json:"notifications,omitempty"        env:"PICOCLAW_MEMORY_NOTIFICATIONS"`
+	OwnerIdentity      string                 `json:"owner_identity,omitempty"       env:"PICOCLAW_MEMORY_OWNER_IDENTITY"`
 	BackgroundReview   MemoryReviewConfig     `json:"background_review,omitempty"`
 	Profile            MemoryProfileConfig    `json:"profile,omitempty"`
 	Retrieval          MemoryRetrievalConfig  `json:"retrieval,omitempty"`
@@ -175,6 +180,17 @@ func (c MemoryConfig) EffectiveApprovalMode() string {
 			return MemoryApprovalBackgroundOnly
 		}
 		return MemoryApprovalOff
+	}
+}
+
+// EffectiveCaptureMode returns the semantic capture policy. Empty legacy
+// configuration remains automatic for backward compatibility.
+func (c MemoryConfig) EffectiveCaptureMode() string {
+	switch strings.ToLower(strings.TrimSpace(c.CaptureMode)) {
+	case MemoryCaptureExplicitOnly:
+		return MemoryCaptureExplicitOnly
+	default:
+		return MemoryCaptureAutomatic
 	}
 }
 
@@ -434,6 +450,16 @@ func (c MemoryConfig) Validate() error {
 			)
 		}
 	}
+	if strings.TrimSpace(c.CaptureMode) != "" {
+		switch strings.ToLower(strings.TrimSpace(c.CaptureMode)) {
+		case MemoryCaptureAutomatic, MemoryCaptureExplicitOnly:
+		default:
+			validationErrors = append(
+				validationErrors,
+				"memory.capture_mode must be automatic or explicit_only",
+			)
+		}
+	}
 	positive("memory.background_review.interval", c.BackgroundReview.Interval)
 	positive("memory.background_review.timeout_seconds", c.BackgroundReview.TimeoutSeconds)
 	bounded(
@@ -479,17 +505,40 @@ func (c MemoryConfig) Validate() error {
 			"memory.retrieval.engine must be hybrid_lexical or semantic_rerank",
 		)
 	}
-	bounded("memory.retrieval.max_workspace_results", c.Retrieval.MaxWorkspaceResults, MaxMemoryRetrievalResults)
-	bounded("memory.retrieval.max_user_results", c.Retrieval.MaxUserResults, MaxMemoryRetrievalResults)
-	bounded("memory.retrieval.max_total_chars", c.Retrieval.MaxTotalChars, MaxMemoryRetrievalChars)
-	bounded("memory.retrieval.pinned_char_budget", c.Retrieval.PinnedCharBudget, MaxMemoryPinnedChars)
+	bounded(
+		"memory.retrieval.max_workspace_results",
+		c.Retrieval.MaxWorkspaceResults,
+		MaxMemoryRetrievalResults,
+	)
+	bounded(
+		"memory.retrieval.max_user_results",
+		c.Retrieval.MaxUserResults,
+		MaxMemoryRetrievalResults,
+	)
+	bounded(
+		"memory.retrieval.max_total_chars",
+		c.Retrieval.MaxTotalChars,
+		MaxMemoryRetrievalChars,
+	)
+	bounded(
+		"memory.retrieval.pinned_char_budget",
+		c.Retrieval.PinnedCharBudget,
+		MaxMemoryPinnedChars,
+	)
 	if c.Retrieval.MinimumScore < 0 || c.Retrieval.MinimumScore > 10 {
-		validationErrors = append(validationErrors, "memory.retrieval.minimum_relevance_score must be between 0 and 10")
+		validationErrors = append(
+			validationErrors,
+			"memory.retrieval.minimum_relevance_score must be between 0 and 10",
+		)
 	}
 	if c.Retrieval.RecencyWeight < 0 || c.Retrieval.RecencyWeight > 5 {
 		validationErrors = append(validationErrors, "memory.retrieval.recency_weight must be between 0 and 5")
 	}
-	bounded("memory.retrieval.recency_half_life_days", c.Retrieval.RecencyHalfLifeDays, MaxMemoryLifecycleDays)
+	bounded(
+		"memory.retrieval.recency_half_life_days",
+		c.Retrieval.RecencyHalfLifeDays,
+		MaxMemoryLifecycleDays,
+	)
 	if c.Retrieval.FuzzyWeight < 0 || c.Retrieval.FuzzyWeight > 5 {
 		validationErrors = append(validationErrors, "memory.retrieval.fuzzy_weight must be between 0 and 5")
 	}
@@ -502,8 +551,16 @@ func (c MemoryConfig) Validate() error {
 			),
 		)
 	}
-	bounded("memory.lifecycle.archived_retention_days", c.Lifecycle.ArchivedRetentionDays, MaxMemoryLifecycleDays)
-	bounded("memory.lifecycle.stale_threshold_days", c.Lifecycle.StaleThresholdDays, MaxMemoryLifecycleDays)
+	bounded(
+		"memory.lifecycle.archived_retention_days",
+		c.Lifecycle.ArchivedRetentionDays,
+		MaxMemoryLifecycleDays,
+	)
+	bounded(
+		"memory.lifecycle.stale_threshold_days",
+		c.Lifecycle.StaleThresholdDays,
+		MaxMemoryLifecycleDays,
+	)
 
 	if len(validationErrors) == 0 {
 		return nil

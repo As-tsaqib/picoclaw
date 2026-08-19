@@ -67,6 +67,21 @@ type SessionStreamingCapable interface {
 	BeginStreamForSession(ctx context.Context, chatID, sessionKey string) (Streamer, error)
 }
 
+// PreferredSessionStreamingCapable allows a channel to opt into a newer
+// session-aware streaming implementation while retaining its legacy streaming
+// methods for source compatibility. Manager prefers this interface when both
+// are implemented.
+type PreferredSessionStreamingCapable interface {
+	BeginPreferredStreamForSession(ctx context.Context, chatID, sessionKey string) (Streamer, error)
+}
+
+// SemanticMediaCapable allows a channel to consume a channel-neutral semantic
+// media action before ordinary MediaPart delivery. handled=false delegates to
+// the existing MediaSender path; handled=true must report actual delivery.
+type SemanticMediaCapable interface {
+	SendSemanticMedia(ctx context.Context, msg bus.OutboundMediaMessage) (messageIDs []string, handled bool, err error)
+}
+
 // PrivateSessionCapable lets the manager identify a private session before
 // running public placeholder or stream cleanup. This is needed when an
 // outbound message still has its session key but no longer has inbound facts.
