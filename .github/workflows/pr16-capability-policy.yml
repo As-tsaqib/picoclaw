@@ -43,6 +43,7 @@ jobs:
           python3 .github/scripts/pr16_capability_policy_fix.py
           golangci-lint fmt
           git restore --source=HEAD -- pkg/providers/bedrock/provider_bedrock.go
+          git restore --source=HEAD -- .github/scripts/pr16_capability_policy_fix.py
           python3 -c 'import subprocess; allowed={"pkg/config/config.go","pkg/config/defaults.go","pkg/config/native_telegram_tools_test.go","pkg/capability/capability.go","pkg/capability/capability_policy_test.go","pkg/agent/pipeline_llm.go","pkg/agent/prompt.go","pkg/agent/prompt_turn.go","pkg/agent/prompt_contributors.go","pkg/agent/capability_policy_test.go"}; changed=set(filter(None,subprocess.check_output(["git","diff","--name-only"],text=True).splitlines())); unexpected=changed-allowed; required={"pkg/config/config.go","pkg/config/defaults.go","pkg/capability/capability.go","pkg/agent/pipeline_llm.go","pkg/agent/prompt.go","pkg/agent/prompt_turn.go","pkg/agent/prompt_contributors.go"}; missing=required-changed; assert not unexpected, f"formatter touched unexpected files: {sorted(unexpected)}"; assert not missing, f"required capability-policy fixes missing: {sorted(missing)}"; print("validated changed files:", *sorted(changed), sep="\n- ")'
 
       - name: Targeted policy tests
