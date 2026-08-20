@@ -10,7 +10,7 @@ import (
 func listCommand() Definition {
 	return Definition{
 		Name:        "list",
-		Description: "List resources",
+		Description: "List available options",
 		Handler:     discoveryDashboardHandler("list"),
 		SubCommands: []SubCommand{
 			{
