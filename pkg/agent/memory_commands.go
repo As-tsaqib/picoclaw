@@ -524,8 +524,6 @@ func memoryCallbackEnvelope(req bus.InternalCallbackRequest) (bus.InboundContext
 	return inbound, nil
 }
 
-
-
 func memoryRequestedPage(req bus.InternalCallbackRequest, action string) (int, error) {
 	if action == "browse" || action == "pending" {
 		if req.Page < 0 {

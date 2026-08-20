@@ -82,7 +82,9 @@ func showMCPToolsHandler() Handler {
 			if !server.Connected {
 				rows = append(rows, []string{"Tools", "unavailable while disconnected"})
 				lines = append(lines, "Tools: unavailable while disconnected")
-				return req.replyStructured(tableContent("MCP Server", statusHeaderColumns(), rows, strings.Join(lines, "\n")))
+				return req.replyStructured(
+					tableContent("MCP Server", statusHeaderColumns(), rows, strings.Join(lines, "\n")),
+				)
 			}
 		}
 
