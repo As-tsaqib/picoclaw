@@ -13,138 +13,107 @@ func listMCPServersHandler() Handler {
 			return req.Reply(unavailableMsg)
 		}
 
-		servers := append([]MCPServerInfo(nil), rt.ListMCPServers(ctx)...)
-		sort.SliceStable(servers, func(i, j int) bool {
-			left, right := strings.ToLower(servers[i].Name), strings.ToLower(servers[j].Name)
-			if left == right {
-				return servers[i].Name < servers[j].Name
-			}
-			return left < right
-		})
+		servers := sortedMCPServers(rt.ListMCPServers(ctx))
 		if len(servers) == 0 {
-			return req.Reply("No MCP servers configured")
+			return req.Reply("No MCP servers configured.")
 		}
 
-		header := "Configured MCP Servers:"
+		header := "Configured MCP servers:"
 		if rt.Config != nil && !rt.Config.Tools.IsToolEnabled("mcp") {
-			header = "Configured MCP Servers (integration disabled):"
+			header = "Configured MCP servers (integration disabled):"
 		}
-
-		lines := make([]string, 0, len(servers)*5+1)
+		lines := []string{header}
 		rows := make([][]string, 0, len(servers))
-		lines = append(lines, header)
-		for idx, server := range servers {
-			if idx > 0 {
-				lines = append(lines, "")
-			}
-			lines = append(lines, fmt.Sprintf("- `%s`", server.Name))
-			lines = append(lines, fmt.Sprintf("  Enabled: %s", yesNo(server.Enabled)))
-			lines = append(lines, fmt.Sprintf("  Deferred: %s", yesNo(server.Deferred)))
-			lines = append(lines, fmt.Sprintf("  Connected: %s", yesNo(server.Connected)))
+		for _, server := range servers {
+			detail := fmt.Sprintf("enabled=%s, deferred=%s, connected=%s", yesNo(server.Enabled), yesNo(server.Deferred), yesNo(server.Connected))
 			if server.Connected {
-				lines = append(lines, fmt.Sprintf("  Active tools: %d", server.ToolCount))
-				rows = append(
-					rows,
-					[]string{
-						fmt.Sprintf("%d", idx+1),
-						"MCP",
-						server.Name,
-						fmt.Sprintf(
-							"enabled=%s, connected=%s, tools=%d",
-							yesNo(server.Enabled),
-							yesNo(server.Connected),
-							server.ToolCount,
-						),
-					},
-				)
-				continue
+				detail += fmt.Sprintf(", tools=%d", server.ToolCount)
 			}
-			lines = append(lines, "  Active tools: unavailable")
-			rows = append(
-				rows,
-				[]string{
-					fmt.Sprintf("%d", idx+1),
-					"MCP",
-					server.Name,
-					fmt.Sprintf("enabled=%s, connected=%s", yesNo(server.Enabled), yesNo(server.Connected)),
-				},
-			)
+			rows = append(rows, []string{server.Name, detail})
+			lines = append(lines, fmt.Sprintf("- %s — %s", server.Name, detail))
 		}
-
-		fallback := strings.Join(lines, "\n")
-		return req.replyStructured(
-			tableContent("MCP Servers", []string{"No", "Jenis", "Nama", "Status"}, rows, fallback),
-		)
+		return req.replyStructured(tableContent("MCP Inventory", inventoryHeaderColumns(), rows, strings.Join(lines, "\n")))
 	}
 }
 
 func showMCPToolsHandler() Handler {
 	return func(ctx context.Context, req Request, rt *Runtime) error {
-		if rt == nil || rt.ListMCPTools == nil {
+		if rt == nil || rt.ListMCPServers == nil || rt.ListMCPTools == nil {
 			return req.Reply(unavailableMsg)
 		}
 
-		serverName := nthToken(req.Text, 2)
-		if serverName == "" {
-			return req.Reply("Usage: /show mcp <server>")
+		requested := strings.TrimSpace(nthToken(req.Text, 2))
+		if requested == "" {
+			return req.Reply("Usage: /show mcp <server>\nUse /list mcp for configured MCP inventory.")
+		}
+		server, ok := findMCPServer(rt.ListMCPServers(ctx), requested)
+		if !ok {
+			return req.Reply(fmt.Sprintf("MCP server %q is not configured. Use /list mcp to see configured servers.", requested))
 		}
 
-		tools, err := rt.ListMCPTools(ctx, serverName)
+		rows := [][]string{
+			{"Name", server.Name},
+			{"Enabled", yesNo(server.Enabled)},
+			{"Deferred", yesNo(server.Deferred)},
+			{"Connected", yesNo(server.Connected)},
+		}
+		lines := []string{
+			fmt.Sprintf("MCP server: %s", server.Name),
+			fmt.Sprintf("Enabled: %s", yesNo(server.Enabled)),
+			fmt.Sprintf("Deferred: %s", yesNo(server.Deferred)),
+			fmt.Sprintf("Connected: %s", yesNo(server.Connected)),
+		}
+		if !server.Connected {
+			rows = append(rows, []string{"Tools", "unavailable while disconnected"})
+			lines = append(lines, "Tools: unavailable while disconnected")
+			return req.replyStructured(tableContent("MCP Server", statusHeaderColumns(), rows, strings.Join(lines, "\n")))
+		}
+
+		tools, err := rt.ListMCPTools(ctx, server.Name)
 		if err != nil {
-			return req.Reply(err.Error())
+			return req.Reply(UserFacingError(err, "MCP service is temporarily unavailable. Please try again."))
 		}
+		rows = append(rows, []string{"Active tools", fmt.Sprintf("%d", len(tools))})
+		lines = append(lines, fmt.Sprintf("Active tools: %d", len(tools)))
 		if len(tools) == 0 {
-			return req.Reply(fmt.Sprintf("MCP server '%s' has no active tools", serverName))
+			lines = append(lines, "Tools: none")
+			return req.replyStructured(tableContent("MCP Server", statusHeaderColumns(), rows, strings.Join(lines, "\n")))
 		}
-
-		lines := make([]string, 0, len(tools)*6+1)
-		rows := make([][]string, 0, len(tools))
-		lines = append(lines, fmt.Sprintf("Active MCP tools for `%s`:", serverName))
-		for idx, tool := range tools {
-			if idx > 0 {
-				lines = append(lines, "")
+		sort.SliceStable(tools, func(i, j int) bool { return strings.ToLower(tools[i].Name) < strings.ToLower(tools[j].Name) })
+		for _, tool := range tools {
+			detail := strings.TrimSpace(tool.Description)
+			if detail == "" {
+				detail = "No description"
 			}
-			lines = append(lines, fmt.Sprintf("- `%s`", tool.Name))
-			lines = append(lines, fmt.Sprintf("  Description: %s", tool.Description))
-			if len(tool.Parameters) == 0 {
-				lines = append(lines, "  Parameters: none")
-				rows = append(rows, []string{fmt.Sprintf("%d", idx+1), tool.Name, tool.Description, "none"})
-				continue
+			if len(tool.Parameters) > 0 {
+				detail += fmt.Sprintf("; %d parameter(s)", len(tool.Parameters))
 			}
-
-			lines = append(lines, "  Parameters:")
-			for _, param := range tool.Parameters {
-				line := fmt.Sprintf("    - `%s`", param.Name)
-				if param.Type != "" {
-					line += fmt.Sprintf(" (%s", param.Type)
-					if param.Required {
-						line += ", required"
-					}
-					line += ")"
-				} else if param.Required {
-					line += " (required)"
-				}
-				if param.Description != "" {
-					line += ": " + param.Description
-				}
-				lines = append(lines, line)
-			}
-			rows = append(
-				rows,
-				[]string{
-					fmt.Sprintf("%d", idx+1),
-					tool.Name,
-					tool.Description,
-					fmt.Sprintf("%d", len(tool.Parameters)),
-				},
-			)
+			rows = append(rows, []string{"Tool: " + tool.Name, detail})
+			lines = append(lines, fmt.Sprintf("- %s — %s", tool.Name, detail))
 		}
-
-		fallback := strings.Join(lines, "\n")
-		return req.replyStructured(
-			tableContent("MCP Tools", []string{"No", "Tool", "Deskripsi", "Parameter"}, rows, fallback),
-		)
+		return req.replyStructured(tableContent("MCP Server", statusHeaderColumns(), rows, strings.Join(lines, "\n")))
 	}
+}
+
+func sortedMCPServers(servers []MCPServerInfo) []MCPServerInfo {
+	out := append([]MCPServerInfo(nil), servers...)
+	sort.SliceStable(out, func(i, j int) bool {
+		left, right := strings.ToLower(out[i].Name), strings.ToLower(out[j].Name)
+		if left == right {
+			return out[i].Name < out[j].Name
+		}
+		return left < right
+	})
+	return out
+}
+
+func findMCPServer(servers []MCPServerInfo, name string) (MCPServerInfo, bool) {
+	for _, server := range servers {
+		if strings.EqualFold(strings.TrimSpace(server.Name), strings.TrimSpace(name)) {
+			return server, true
+		}
+	}
+	return MCPServerInfo{}, false
 }
 
 func yesNo(v bool) string {
