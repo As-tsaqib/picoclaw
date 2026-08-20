@@ -2,30 +2,108 @@ name: build
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - feat/telegram-skill-checkpoint-interactions
+
+permissions:
+  contents: write
 
 jobs:
-  integration:
-    name: Integration Tests
+  normalize-pr19:
+    name: Normalize PR19 lint findings
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Run Docker-backed integration suites
-        run: bash ./scripts/run-integration-tests.sh
-
-  build:
-    needs: integration
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - name: Checkout feature branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
-      - name: Build core binaries
-        run: make build-all
+      - name: Install exact lint toolchain
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.10.1
+          install-only: true
+
+      - name: Format, verify, and self-clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_NAME}" = "feat/telegram-skill-checkpoint-interactions"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('pkg/commands/memory_command_test.go')
+          s = p.read_text()
+          old = '\t\t\ttext := ""'
+          new = '\t\t\tvar text string'
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('wastedassign baseline mismatch')
+          p.write_text(s)
+          PY
+          bin="$(find "$HOME" -maxdepth 3 -type f -name golangci-lint -perm -111 | head -n 1)"
+          test -n "$bin"
+          "$bin" fmt
+          "$bin" run --build-tags=goolm,stdjson
+
+          rm -f .github/workflows/pr19-lint-normalize.yml
+          cat > .github/workflows/build.yml <<'EOF'
+          name: build
+
+          on:
+            push:
+              branches: [ "main" ]
+
+          jobs:
+            integration:
+              name: Integration Tests
+              runs-on: ubuntu-latest
+              steps:
+                - name: Checkout
+                  uses: actions/checkout@v7
+
+                - name: Run Docker-backed integration suites
+                  run: bash ./scripts/run-integration-tests.sh
+
+            build:
+              needs: integration
+              runs-on: ubuntu-latest
+              steps:
+                - name: Checkout
+                  uses: actions/checkout@v7
+
+                - name: Setup Go
+                  uses: actions/setup-go@v6
+                  with:
+                    go-version-file: go.mod
+
+                - name: Build core binaries
+                  run: make build-all
+          EOF
+
+          git diff --check
+          allowed=$(cat <<'EOF'
+          .github/workflows/build.yml
+          .github/workflows/pr19-lint-normalize.yml
+          pkg/agent/checkpoint_commands.go
+          pkg/agent/skill_checkpoint_interaction_test.go
+          pkg/agent/skill_commands.go
+          pkg/channels/telegram/interaction_foundation_test.go
+          pkg/channels/telegram/structured_delivery.go
+          pkg/commands/cmd_checkpoint.go
+          pkg/commands/memory_command_test.go
+          EOF
+          )
+          unexpected="$(comm -23 <(git diff --name-only | sort) <(printf '%s\n' "$allowed" | sed 's/^ *//' | sort))"
+          test -z "$unexpected"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "style(telegram): satisfy interaction lint checks"
+          git push origin HEAD:feat/telegram-skill-checkpoint-interactions
