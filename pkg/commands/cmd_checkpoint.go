@@ -12,8 +12,18 @@ func checkpointCommand() Definition {
 		Handler:     checkpointOperationHandler("dashboard", false),
 		SubCommands: []SubCommand{
 			{Name: "list", Description: "List task checkpoints", Handler: checkpointOperationHandler("list", false)},
-			{Name: "resume", Description: "Resume a checkpoint", ArgsUsage: "<id>", Handler: checkpointOperationHandler("resume", true)},
-			{Name: "forget", Description: "Archive a checkpoint", ArgsUsage: "<id>", Handler: checkpointOperationHandler("archive", true)},
+			{
+				Name:        "resume",
+				Description: "Resume a checkpoint",
+				ArgsUsage:   "<id>",
+				Handler:     checkpointOperationHandler("resume", true),
+			},
+			{
+				Name:        "forget",
+				Description: "Archive a checkpoint",
+				ArgsUsage:   "<id>",
+				Handler:     checkpointOperationHandler("archive", true),
+			},
 		},
 	}
 }
