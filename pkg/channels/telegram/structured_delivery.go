@@ -776,7 +776,8 @@ func isInteractionPromptAction(kind, action string) bool {
 	action = strings.ToLower(strings.TrimSpace(action))
 	return (kind == "session" && action == "rename") ||
 		(kind == "memory" && (action == "search" || action == "edit")) ||
-		(kind == "skill" && action == "search")
+		(kind == "skill" && action == "search") ||
+		(kind == "model" && action == "search")
 }
 
 func (c *TelegramChannel) claimSessionMenuMutation(token, code string) bool {
@@ -1013,6 +1014,11 @@ func (c *TelegramChannel) claimSessionRenamePrompt(
 			return prompt, sessionRenameClaimRejected
 		}
 	}
+	if kind == "model" {
+		if prompt.action != "search" || strings.TrimSpace(prompt.menu.menu.SessionKey) == "" {
+			return prompt, sessionRenameClaimRejected
+		}
+	}
 	senderID := strconv.FormatInt(message.From.ID, 10)
 	if !c.IsAllowedSender(bus.SenderInfo{
 		Platform: "telegram", PlatformID: senderID, CanonicalID: "telegram:" + senderID,
@@ -1043,6 +1049,8 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(ctx context.Context, m
 			noticeText = "Permintaan memory sudah kedaluwarsa. Jalankan /memory lagi."
 		} else if prompt.menu.menu.Kind == "skill" {
 			noticeText = "Skill search sudah kedaluwarsa. Jalankan /use lagi."
+		} else if prompt.menu.menu.Kind == "model" {
+			noticeText = "Model search sudah kedaluwarsa. Jalankan /model lagi."
 		}
 		return true, c.sendSessionRenameNotice(ctx, message, prompt, noticeText)
 	case sessionRenameClaimInvalid:
@@ -1053,6 +1061,8 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(ctx context.Context, m
 			invalidText = "Input memory harus berupa teks yang tidak kosong."
 		} else if prompt.menu.menu.Kind == "skill" {
 			invalidText = "Skill search harus berupa teks yang tidak kosong."
+		} else if prompt.menu.menu.Kind == "model" {
+			invalidText = "Model search harus berupa teks yang tidak kosong."
 		}
 		return true, c.sendSessionRenameNotice(ctx, message, prompt, invalidText)
 	}
@@ -1104,40 +1114,132 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(ctx context.Context, m
 		}
 		return true, c.sendSessionRenameNotice(ctx, message, prompt, text)
 	}
-	if err := c.refreshSessionMenuAfterRename(ctx, prompt, response.Content); err != nil {
+	if err := c.applyInteractionResponse(ctx, message, prompt.token, prompt.menu, response); err != nil {
 		logger.WarnCF(
-			"telegram", "Menu refresh after prompt reply failed", map[string]any{"reason": "telegram_edit_failed"},
+			"telegram",
+			"Interaction response after prompt reply failed",
+			map[string]any{"reason": "telegram_transition_failed"},
 		)
 		return true, c.sendSessionRenameNotice(
-			ctx, message, prompt, "Perubahan berhasil disimpan. Jalankan command lagi untuk memperbarui dashboard.",
+			ctx,
+			message,
+			prompt,
+			"Permintaan berhasil diproses, tetapi tampilan interaktif gagal diperbarui. Jalankan command lagi.",
 		)
 	}
 	return true, nil
 }
 
-func (c *TelegramChannel) refreshSessionMenuAfterRename(
+func (c *TelegramChannel) applyInteractionResponse(
 	ctx context.Context,
-	prompt telegramSessionRenamePrompt,
+	after *telego.Message,
+	token string,
+	menu telegramSessionMenu,
+	response *bus.InternalCallbackResponse,
+) error {
+	if response == nil || response.Content == nil {
+		return nil
+	}
+	transition := response.Transition
+	if transition == "" {
+		transition = bus.InteractionReplaceCurrent
+	}
+	switch transition {
+	case bus.InteractionReplaceCurrent:
+		return c.replaceInteractionContent(ctx, token, menu, response.Content)
+	case bus.InteractionAppendContinuation:
+		return c.appendInteractionContinuation(ctx, after, token, menu, response.Content)
+	default:
+		return fmt.Errorf("unsupported interaction transition %q", transition)
+	}
+}
+
+func (c *TelegramChannel) replaceInteractionContent(
+	ctx context.Context,
+	token string,
+	menu telegramSessionMenu,
 	content *bus.StructuredContent,
 ) error {
-	if content != nil && strings.EqualFold(prompt.menu.menu.Kind, "memory") {
-		rebindMemoryInteractionRoute(content.Interaction, prompt.menu.menu)
+	if content != nil && strings.EqualFold(menu.menu.Kind, "memory") {
+		rebindMemoryInteractionRoute(content.Interaction, menu.menu)
 	}
-	markup, pending, err := c.structuredReplyMarkup(content, prompt.menu.chatID, prompt.menu.threadID)
+	markup, pending, err := c.structuredReplyMarkup(content, menu.chatID, menu.threadID)
 	if err != nil {
 		return err
 	}
 	if pending == nil {
-		return fmt.Errorf("prompt reply response has no interaction menu")
+		return fmt.Errorf("interaction response has no interaction menu")
 	}
-	message := &telego.Message{MessageID: prompt.menu.messageID, Chat: telego.Chat{ID: prompt.menu.chatID}}
-	if err := c.editStructuredSessionMenu(ctx, message, prompt.menu, content, markup); err != nil {
+	message := &telego.Message{MessageID: menu.messageID, Chat: telego.Chat{ID: menu.chatID}}
+	if err := c.editStructuredSessionMenu(ctx, message, menu, content, markup); err != nil {
 		return err
 	}
-	pending.messageID = prompt.menu.messageID
-	pending.ephemeralID = prompt.menu.ephemeralID
-	pending.receiverUserID = prompt.menu.receiverUserID
-	c.replaceSessionMenu(prompt.token, *pending)
+	pending.messageID = menu.messageID
+	pending.ephemeralID = menu.ephemeralID
+	pending.receiverUserID = menu.receiverUserID
+	c.replaceSessionMenu(token, *pending)
+	return nil
+}
+
+func (c *TelegramChannel) appendInteractionContinuation(
+	ctx context.Context,
+	after *telego.Message,
+	token string,
+	menu telegramSessionMenu,
+	content *bus.StructuredContent,
+) error {
+	if content == nil || content.Interaction == nil {
+		return fmt.Errorf("interaction continuation has no interaction menu")
+	}
+	if strings.EqualFold(menu.menu.Kind, "memory") {
+		rebindMemoryInteractionRoute(content.Interaction, menu.menu)
+	}
+	if len(splitTelegramFormattedFallback(content.FallbackText(), c.tgCfg.UseMarkdownV2)) != 1 {
+		return fmt.Errorf("interaction continuation exceeds single-message limit")
+	}
+	ephemeral, err := c.resolveEphemeralTarget(
+		menu.menu.Inbound,
+		nil,
+		interactionMenuSessionState(menu.menu),
+		menu.chatID,
+		menu.threadID,
+	)
+	if err != nil {
+		return ephemeralDeliveryError("continuation route resolution", err)
+	}
+	if menu.ephemeralID > 0 && ephemeral == nil {
+		return fmt.Errorf("private continuation receiver authority is unavailable")
+	}
+	if ephemeral != nil {
+		// The receiver capability stays authoritative, while prompt callbacks are
+		// one-shot transport artifacts and must not be reused for the continuation.
+		ephemeral.CallbackQueryID = ""
+		ephemeral.IncomingEphemeralMessageID = 0
+		if after != nil && after.EphemeralMessageID > 0 {
+			ephemeral.IncomingEphemeralMessageID = after.EphemeralMessageID
+		}
+	}
+	replyTo := ""
+	if after != nil && after.MessageID > 0 && after.EphemeralMessageID <= 0 {
+		replyTo = strconv.Itoa(after.MessageID)
+	}
+	_, err = c.sendStructuredInteractionContinuation(ctx, bus.OutboundMessage{
+		Content: content.FallbackText(), Structured: content, ReplyToMessageID: replyTo,
+	}, menu.chatID, menu.threadID, ephemeral)
+	if err != nil {
+		return err
+	}
+
+	oldMessage := &telego.Message{MessageID: menu.messageID, Chat: telego.Chat{ID: menu.chatID}}
+	if clearErr := c.clearSessionMenuKeyboard(ctx, oldMessage, menu); clearErr != nil {
+		logger.WarnCF("telegram", "Old interaction keyboard could not be removed after continuation", map[string]any{
+			"reason": "telegram_edit_failed",
+		})
+	}
+	// The new continuation has already registered its server-side menu. Retire
+	// the old token even if visual keyboard removal was unavailable so only one
+	// interaction remains actionable.
+	c.deleteSessionMenu(token)
 	return nil
 }
 
@@ -1235,9 +1337,12 @@ func (c *TelegramChannel) handleInternalSessionCallback(ctx context.Context, que
 	case "rename":
 		answerText = "Balas prompt untuk mengganti nama session."
 	case "search":
-		if kind == "skill" {
+		switch kind {
+		case "skill":
 			answerText = "Balas prompt untuk mencari skill."
-		} else {
+		case "model":
+			answerText = "Balas prompt untuk mencari model."
+		default:
 			answerText = "Balas prompt untuk mencari memory."
 		}
 	case "edit":
@@ -1281,24 +1386,7 @@ func (c *TelegramChannel) handleInternalSessionCallback(ctx context.Context, que
 	if response.Content == nil {
 		return nil
 	}
-	if kind == "memory" {
-		rebindMemoryInteractionRoute(response.Content.Interaction, menu.menu)
-	}
-	markup, pending, err := c.structuredReplyMarkup(response.Content, menu.chatID, menu.threadID)
-	if err != nil {
-		return err
-	}
-	if pending == nil {
-		return nil
-	}
-	if err := c.editStructuredSessionMenu(ctx, message, menu, response.Content, markup); err != nil {
-		return err
-	}
-	pending.messageID = menu.messageID
-	pending.ephemeralID = menu.ephemeralID
-	pending.receiverUserID = menu.receiverUserID
-	c.replaceSessionMenu(token, *pending)
-	return nil
+	return c.applyInteractionResponse(ctx, message, token, menu, response)
 }
 
 func (c *TelegramChannel) answerSessionCallback(ctx context.Context, id, text string, alert bool) error {

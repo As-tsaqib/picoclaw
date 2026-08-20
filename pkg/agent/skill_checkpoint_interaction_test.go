@@ -39,7 +39,7 @@ func TestCheckpointInteractiveDetailKeepsRawIDAndImportantContextServerSide(t *t
 		Channel: "telegram", Account: "default", ChatID: "42", ChatType: "direct", SenderID: "42",
 	}
 	scope := &session.SessionScope{Version: 1, AgentID: "main", Channel: "telegram", Account: "default"}
-	content := buildCheckpointDetail(&AgentInstance{ID: "main"}, cp, "si_v1_bound", scope, inbound)
+	content := buildCheckpointDetail(&AgentInstance{ID: "main"}, cp, "si_v1_bound", scope, inbound, 2)
 	require.NotNil(t, content.Interaction)
 	assert.Equal(t, "si_v1_bound", content.Interaction.SessionKey)
 	assert.NotContains(t, content.FallbackText(), cp.ID)

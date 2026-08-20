@@ -91,7 +91,7 @@ func TestCheckpointArchiveConfirmationIsExplicitAndKeepsPrivateStateServerSide(t
 	}
 	scope := &session.SessionScope{Version: 1, AgentID: "main", Channel: "telegram", Account: "telegram"}
 	content := buildCheckpointArchiveConfirm(
-		&AgentInstance{ID: "main"}, checkpoint, "si_v1_bound", scope, inbound,
+		&AgentInstance{ID: "main"}, checkpoint, "si_v1_bound", scope, inbound, 2,
 	)
 
 	require.NotNil(t, content.Interaction)

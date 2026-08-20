@@ -15,6 +15,7 @@ import (
 const (
 	memoryInteractionPageSize  = 5
 	memoryInteractiveSearchMax = 100
+	memorySearchQueryMaxRunes  = 128
 )
 
 type memoryCommandService struct {
@@ -104,6 +105,9 @@ func (s memoryCommandService) search(query string, limit int) (memoryEntrySet, e
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return memoryEntrySet{}, fmt.Errorf("memory search query is empty")
+	}
+	if len([]rune(query)) > memorySearchQueryMaxRunes {
+		return memoryEntrySet{}, fmt.Errorf("memory search query is too long")
 	}
 	if s.store == nil {
 		return memoryEntrySet{}, fmt.Errorf("memory is not available")
@@ -553,6 +557,8 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 			err = bindErr
 			return
 		}
+		bound.Query = menu.Query
+		bound.SessionKey = menu.SessionKey
 		response.Content.Interaction = bound
 	}()
 
@@ -668,15 +674,18 @@ func (al *AgentLoop) handleInternalMemoryCallback(
 		if searchErr != nil {
 			return nil, searchErr
 		}
-		return &bus.InternalCallbackResponse{Content: renderMemoryEntryPage(
-			"search", "Search Results", flattenMemoryEntries(set), 0, query, false,
-		)}, nil
+		return &bus.InternalCallbackResponse{
+			Content: renderMemoryEntryPage(
+				"search", "Search Results", flattenMemoryEntries(set), 0, query, false,
+			),
+			Transition: bus.InteractionAppendContinuation,
+		}, nil
 	case "search_page":
 		page, pageErr := memoryRequestedPage(req, action)
 		if pageErr != nil {
 			return nil, pageErr
 		}
-		query := strings.TrimSpace(req.SessionKey)
+		query := strings.TrimSpace(req.Query)
 		if query == "" {
 			return nil, fmt.Errorf("memory search state is unavailable")
 		}
@@ -821,7 +830,7 @@ func renderMemoryEntryPage(
 	return &bus.StructuredContent{
 		Title:       fmt.Sprintf("%s · %d/%d", title, page+1, pages),
 		Paragraphs:  []string{strings.Join(lines, "\n")},
-		Interaction: &bus.InteractionMenu{Page: page, Pages: pages, Current: current, Entries: entries},
+		Interaction: &bus.InteractionMenu{Page: page, Pages: pages, Query: current, Entries: entries},
 	}
 }
 
