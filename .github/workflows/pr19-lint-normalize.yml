@@ -22,7 +22,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "d779c2d338ac66d64210440500f5cdfaad48c2ed"
+          test "$(git rev-parse HEAD^)" = "5f9f432fe648473450206d275791b31cb01750c8"
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
