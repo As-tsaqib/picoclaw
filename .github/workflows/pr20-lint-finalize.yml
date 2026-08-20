@@ -1,19 +1,16 @@
-# Bounded PR-only validation helper; self-removes after success.
 name: PR20 exact lint finalizer
 
 on:
-  pull_request:
-    types: [synchronize]
+  push:
+    branches:
+      - fix/telegram-search-continuations
 
 permissions:
   contents: write
 
 jobs:
   finalize:
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.head_ref == 'fix/telegram-search-continuations' &&
-      github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -48,7 +45,7 @@ jobs:
 }
 '''
           if s.count(old) != 1:
-              raise SystemExit('checkpointStore lint block did not match exactly')
+              raise SystemExit('checkpointStore block changed unexpectedly')
           p.write_text(s.replace(old, new, 1))
 
           p = Path('pkg/agent/model_commands.go')
@@ -63,7 +60,7 @@ jobs:
 
 '''
           if s.count(old) != 1:
-              raise SystemExit('dead legacy model search helper did not match exactly')
+              raise SystemExit('legacy model search helper changed unexpectedly')
           p.write_text(s.replace(old, '', 1))
           PY
 
@@ -87,11 +84,12 @@ jobs:
           go test -tags goolm,stdjson ./pkg/agent ./pkg/channels/telegram
           go test -race -tags goolm,stdjson ./pkg/agent ./pkg/channels/telegram
 
-      - name: Commit validated tree without helper
+      - name: Commit validated tree and remove helpers
         shell: bash
         run: |
           set -euo pipefail
           rm -f .github/workflows/pr20-lint-finalize.yml
+          rm -f .github/workflows/pr20-format-acceptance.yml
           git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
