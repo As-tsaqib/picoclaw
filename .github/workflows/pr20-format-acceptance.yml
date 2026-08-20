@@ -1,0 +1,65 @@
+name: PR20 acceptance formatter gate
+
+on:
+  pull_request:
+    types: [reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'fix/telegram-search-continuations' &&
+      github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: fix/telegram-search-continuations
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Remove superseded model search bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -c 'from pathlib import Path; p=Path("pkg/agent/model_commands.go"); s=p.read_text(); start=s.find("func buildModelSearchPrompt("); end=s.find("\n}\n", start); p.write_text(s if start < 0 else s[:start] + s[end + 3:])'
+
+      - name: Run exact formatter and lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/golangci/golangci-lint/releases/download/v2.10.1/golangci-lint-2.10.1-linux-amd64.tar.gz" -o /tmp/golangci-lint.tar.gz
+          tar -xzf /tmp/golangci-lint.tar.gz -C /tmp
+          LINT=/tmp/golangci-lint-2.10.1-linux-amd64/golangci-lint
+          "$LINT" fmt
+          gofmt -w pkg/agent/memory_search_bound_test.go pkg/channels/telegram/memory_search_continuation_acceptance_test.go
+          git diff --check
+          "$LINT" run --build-tags=goolm,stdjson
+
+      - name: Run focused tests and races
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -tags goolm,stdjson ./pkg/agent ./pkg/channels/telegram
+          go test -race -tags goolm,stdjson ./pkg/agent ./pkg/channels/telegram
+
+      - name: Commit validated tree and remove helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/pr20-format-acceptance.yml
+          rm -f .github/workflows/pr20-lint-finalize.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "test(telegram): finalize continuation hardening coverage"
+          gh auth setup-git
+          git push origin HEAD:fix/telegram-search-continuations
