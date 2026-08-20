@@ -137,26 +137,38 @@ func TestDiscoveryCallbackIsSessionBoundAndReplaceCurrent(t *testing.T) {
 	assert.Equal(t, "discovery", response.Content.Interaction.Kind)
 	assert.Equal(t, allocation.SessionKey, response.Content.Interaction.SessionKey)
 
-	tests := []struct {
-		name   string
-		mutate func(*bus.InternalCallbackRequest)
-	}{
-		{name: "wrong owner", mutate: func(req *bus.InternalCallbackRequest) { req.OwnerID = "99" }},
-		{name: "wrong channel", mutate: func(req *bus.InternalCallbackRequest) { req.Channel = "discord" }},
-		{name: "wrong chat", mutate: func(req *bus.InternalCallbackRequest) { req.ChatID = "99" }},
-		{name: "wrong topic", mutate: func(req *bus.InternalCallbackRequest) { req.TopicID = "7" }},
-		{name: "wrong account", mutate: func(req *bus.InternalCallbackRequest) { req.Account = "bot-b" }},
-		{name: "wrong agent", mutate: func(req *bus.InternalCallbackRequest) { req.AgentID = "other" }},
-		{name: "wrong scope", mutate: func(req *bus.InternalCallbackRequest) { req.Scope = "foreign-scope" }},
-		{name: "wrong session", mutate: func(req *bus.InternalCallbackRequest) { req.SessionKey = "si_v1_foreign" }},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, field := range []string{
+		"owner", "channel", "chat", "topic", "account", "agent", "scope", "session",
+	} {
+		t.Run("wrong "+field, func(t *testing.T) {
 			req := base
-			tt.mutate(&req)
+			mutateDiscoveryCallbackIdentity(&req, field)
 			_, callbackErr := al.handleInternalCallback(context.Background(), req)
 			require.Error(t, callbackErr)
 		})
+	}
+}
+
+func mutateDiscoveryCallbackIdentity(req *bus.InternalCallbackRequest, field string) {
+	switch field {
+	case "owner":
+		req.OwnerID = "99"
+	case "channel":
+		req.Channel = "discord"
+	case "chat":
+		req.ChatID = "99"
+	case "topic":
+		req.TopicID = "7"
+	case "account":
+		req.Account = "bot-b"
+	case "agent":
+		req.AgentID = "other"
+	case "scope":
+		req.Scope = "foreign-scope"
+	case "session":
+		req.SessionKey = "si_v1_foreign"
+	default:
+		panic("unsupported callback identity field: " + field)
 	}
 }
 
