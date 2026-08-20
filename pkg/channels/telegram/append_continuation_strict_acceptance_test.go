@@ -67,6 +67,34 @@ func TestAppendContinuationInteractionValidationFailureKeepsOldMenuActive(t *tes
 	}
 }
 
+func TestAppendContinuationWithoutActionableKeyboardKeepsOldMenuActive(t *testing.T) {
+	caller := &stubCaller{callFn: func(_ context.Context, url string, _ *ta.RequestData) (*ta.Response, error) {
+		return nil, errors.New("unexpected Telegram call " + url)
+	}}
+	ch := newTestChannel(t, caller)
+
+	oldContent := testSearchContinuationContent("model", "", "si_v1_session-a")
+	old := telegramSessionMenu{
+		token: "old-menu", menu: *oldContent.Interaction, chatID: 12345, messageID: 91, createdAt: time.Now(),
+	}
+	ch.storeSessionMenu(old)
+	dead := testSearchContinuationContent("model", "gpt", "si_v1_session-a")
+	dead.Interaction.Entries = nil
+
+	err := ch.applyInteractionResponse(
+		context.Background(),
+		&telego.Message{MessageID: 100, Chat: telego.Chat{ID: 12345}},
+		old.token,
+		old,
+		&bus.InternalCallbackResponse{Content: dead, Transition: bus.InteractionAppendContinuation},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no actionable callback markup")
+	assert.Empty(t, caller.calls, "non-actionable continuation must be rejected before transport")
+	_, oldStillActive := ch.takeSessionMenu(old.token)
+	assert.True(t, oldStillActive)
+}
+
 func TestAppendContinuationRegistrationEvictionKeepsOldMenuActive(t *testing.T) {
 	caller := &stubCaller{callFn: func(_ context.Context, url string, _ *ta.RequestData) (*ta.Response, error) {
 		if strings.Contains(url, "sendRichMessage") {
