@@ -9,6 +9,8 @@ func sessionCommand() Definition {
 	return Definition{
 		Name:        "session",
 		Description: "List, name, create, and switch conversation sessions",
+		Category:    "Sessions",
+		Examples:    []string{"/session", "/session new research", "/session use 2"},
 		Handler:     sessionOperationHandler("list", 1),
 		SubCommands: []SubCommand{
 			{
@@ -19,8 +21,9 @@ func sessionCommand() Definition {
 			{Name: "current", Description: "Show the active session", Handler: sessionOperationHandler("current", 2)},
 			{
 				Name:        "new",
-				Description: "Create and activate a named session",
+				Description: "Create and activate a new session",
 				ArgsUsage:   "[name]",
+				Examples:    []string{"/session new", "/session new research"},
 				Handler:     sessionOperationHandler("new", 2),
 			},
 			{
@@ -64,7 +67,7 @@ func sessionOperationHandler(operation string, argumentToken int) Handler {
 			Argument:  argument,
 		})
 		if err != nil {
-			return req.Reply("Session command failed: " + err.Error())
+			return req.Reply(UserFacingError(err, "Session service is temporarily unavailable. Please try again."))
 		}
 		if content == nil {
 			return req.Reply(unavailableMsg)
