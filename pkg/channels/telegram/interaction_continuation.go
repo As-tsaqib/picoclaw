@@ -41,17 +41,17 @@ func (c *TelegramChannel) sendStructuredInteractionContinuation(
 		return messageIDs, err
 	}
 	if len(messageIDs) != 1 {
-		c.deleteMenusForContinuationIdentity(messageIDs, ephemeral)
+		c.deleteMenusForContinuationIdentity(messageIDs, *expected, ephemeral)
 		return messageIDs, fmt.Errorf("interaction continuation returned an unexpected message identity count")
 	}
 
 	registered, err := c.registeredContinuationForIdentity(messageIDs[0], *expected, ephemeral)
 	if err != nil {
-		c.deleteMenusForContinuationIdentity(messageIDs, ephemeral)
+		c.deleteMenusForContinuationIdentity(messageIDs, *expected, ephemeral)
 		return messageIDs, err
 	}
 	if err := validateContinuationRegistration(registered, *expected, ephemeral); err != nil {
-		c.deleteMenusForContinuationIdentity(messageIDs, ephemeral)
+		c.deleteMenusForContinuationIdentity(messageIDs, *expected, ephemeral)
 		return messageIDs, err
 	}
 	return messageIDs, nil
@@ -151,6 +151,7 @@ func validateContinuationRegistration(
 
 func (c *TelegramChannel) deleteMenusForContinuationIdentity(
 	messageIDs []string,
+	expected telegramSessionMenu,
 	ephemeral *telegramEphemeralTarget,
 ) {
 	if len(messageIDs) != 1 {
@@ -163,6 +164,9 @@ func (c *TelegramChannel) deleteMenusForContinuationIdentity(
 	c.sessionMenuMu.Lock()
 	defer c.sessionMenuMu.Unlock()
 	for token, menu := range c.sessionMenus {
+		if menu.chatID != expected.chatID || menu.threadID != expected.threadID {
+			continue
+		}
 		if ephemeral == nil {
 			if menu.messageID == publicID && menu.ephemeralID <= 0 {
 				delete(c.sessionMenus, token)
