@@ -133,7 +133,10 @@ func (al *AgentLoop) executeMemorySemanticCommand(
 				return nil, commands.NewUserError("Memory search needs a query.")
 			}
 			if strings.Contains(strings.ToLower(err.Error()), "too long") {
-				return nil, commands.NewUserError(fmt.Sprintf("Memory search queries are limited to %d characters.", memorySearchQueryMaxRunes))
+				return nil, commands.NewUserError(fmt.Sprintf(
+					"Memory search queries are limited to %d characters.",
+					memorySearchQueryMaxRunes,
+				))
 			}
 			return nil, err
 		}

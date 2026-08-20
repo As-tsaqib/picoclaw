@@ -83,11 +83,13 @@ func TestCheckpointArchiveAndForgetShareArchiveSemantic(t *testing.T) {
 		t.Run(text, func(t *testing.T) {
 			calls := 0
 			var got CheckpointCommandRequest
-			rt := &Runtime{CheckpointCommand: func(_ context.Context, req CheckpointCommandRequest) (*bus.StructuredContent, error) {
-				calls++
-				got = req
-				return &bus.StructuredContent{Fallback: "ok"}, nil
-			}}
+			rt := &Runtime{
+				CheckpointCommand: func(_ context.Context, req CheckpointCommandRequest) (*bus.StructuredContent, error) {
+					calls++
+					got = req
+					return &bus.StructuredContent{Fallback: "ok"}, nil
+				},
+			}
 			executeForSemanticTest(t, rt, text)
 			if calls != 1 || got.Operation != "archive" || got.ID != "cp-1" {
 				t.Fatalf("%s got calls=%d request=%+v, want one archive cp-1", text, calls, got)
@@ -157,7 +159,7 @@ func TestUnknownSlashFailsClosedWhileNormalTextPassesThrough(t *testing.T) {
 	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), &Runtime{})
 	var reply string
 	unknown := ex.Execute(context.Background(), Request{
-		Text: "/modle",
+		Text: "/unknowncmd",
 		Reply: func(value string) error {
 			reply = value
 			return nil
@@ -166,7 +168,7 @@ func TestUnknownSlashFailsClosedWhileNormalTextPassesThrough(t *testing.T) {
 	if unknown.Outcome != OutcomeHandled {
 		t.Fatalf("unknown slash outcome=%v, want handled", unknown.Outcome)
 	}
-	if !strings.Contains(reply, "Unknown command: /modle") {
+	if !strings.Contains(reply, "Unknown command: /unknowncmd") {
 		t.Fatalf("unknown slash reply=%q", reply)
 	}
 
@@ -189,6 +191,16 @@ func TestUserFacingErrorKeepsOnlyExplicitSafeErrors(t *testing.T) {
 	if strings.Contains(mapped, "secret") || strings.Contains(mapped, "token") {
 		t.Fatalf("internal secret leaked: %q", mapped)
 	}
+}
+
+func findDefinitionByName(t *testing.T, defs []Definition, name string) Definition {
+	for _, d := range defs {
+		if d.Name == name {
+			return d
+		}
+	}
+	t.Fatalf("definition %s not found", name)
+	return Definition{}
 }
 
 func TestCompatibilityMetadataIsTruthful(t *testing.T) {

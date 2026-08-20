@@ -14,10 +14,11 @@ func TestFormatProcessingError_InvalidAPIKey(t *testing.T) {
 	)
 
 	got := formatProcessingError(err)
-	if !strings.Contains(got, "API key appears to be invalid") {
+	if !strings.Contains(got, "Authentication failed: the configured API key was rejected") {
 		t.Fatalf("formatted error missing friendly API key hint: %q", got)
 	}
-	if strings.Contains(got, "Original error:") || strings.Contains(got, "sk-secret") || strings.Contains(got, err.Error()) {
+	if strings.Contains(got, "Original error:") || strings.Contains(got, "sk-secret") ||
+		strings.Contains(got, err.Error()) {
 		t.Fatalf("formatted auth error leaked raw provider details: %q", got)
 	}
 }
@@ -31,7 +32,7 @@ func TestFormatProcessingError_GenericAuthHTTPError(t *testing.T) {
 	}
 
 	got := formatProcessingError(err)
-	if !strings.Contains(got, "check the API key, token, OAuth login, or provider permissions") {
+	if !strings.Contains(got, "Authentication failed: check the provider credentials or permissions for this model.") {
 		t.Fatalf("formatted error missing generic auth hint: %q", got)
 	}
 	for _, secret := range []string{"Original error:", "private-token", "user:secret", "token=abc"} {

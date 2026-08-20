@@ -678,22 +678,6 @@ func commandsUnavailableSkillMessage() string {
 	return "Skill selection is unavailable in the current context."
 }
 
-func buildUseCommandHelp(agent *AgentInstance) string {
-	if agent == nil || agent.ContextBuilder == nil {
-		return "Usage: /use <skill> [message]"
-	}
-
-	names := agent.ContextBuilder.ListSkillNames()
-	if len(names) == 0 {
-		return "Usage: /use <skill> [message]\nNo installed skills found."
-	}
-
-	return fmt.Sprintf(
-		"Usage: /use <skill> [message]\n\nInstalled Skills:\n- %s\n\nUse /use <skill> to apply a skill to your next message, or /use <skill> <message> to force it immediately.",
-		strings.Join(names, "\n- "),
-	)
-}
-
 func mapCommandError(result commands.ExecuteResult) string {
 	if result.Command == "" {
 		return fmt.Sprintf("Failed to execute command: %v", result.Err)

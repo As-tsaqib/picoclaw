@@ -13,7 +13,11 @@ func checkpointCommand() Definition {
 		Examples:    []string{"/checkpoint", "/checkpoint archive cp-1"},
 		Handler:     checkpointOperationHandler("dashboard", false, ""),
 		SubCommands: []SubCommand{
-			{Name: "list", Description: "List task checkpoints", Handler: checkpointOperationHandler("list", false, "")},
+			{
+				Name:        "list",
+				Description: "List task checkpoints",
+				Handler:     checkpointOperationHandler("list", false, ""),
+			},
 			{
 				Name:        "resume",
 				Description: "Resume a checkpoint",

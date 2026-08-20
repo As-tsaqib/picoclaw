@@ -108,7 +108,8 @@ func (al *AgentLoop) applyUseIntent(
 		}
 		content, err := rt.SkillCommand(ctx, commands.SkillCommandRequest{Operation: "dashboard"})
 		if err != nil {
-			return true, true, commands.UserFacingError(err, "Skill picker is temporarily unavailable. Please try again."), nil
+			return true, true, commands.UserFacingError(err,
+				"Skill picker is temporarily unavailable. Please try again."), nil
 		}
 		if content == nil {
 			return true, true, commandsUnavailableSkillMessage(), nil

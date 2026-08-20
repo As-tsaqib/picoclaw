@@ -25,7 +25,8 @@ func listMCPServersHandler() Handler {
 		lines := []string{header}
 		rows := make([][]string, 0, len(servers))
 		for _, server := range servers {
-			detail := fmt.Sprintf("enabled=%s, deferred=%s, connected=%s", yesNo(server.Enabled), yesNo(server.Deferred), yesNo(server.Connected))
+			detail := fmt.Sprintf("enabled=%s, deferred=%s, connected=%s",
+				yesNo(server.Enabled), yesNo(server.Deferred), yesNo(server.Connected))
 			if server.Connected {
 				detail += fmt.Sprintf(", tools=%d", server.ToolCount)
 			}

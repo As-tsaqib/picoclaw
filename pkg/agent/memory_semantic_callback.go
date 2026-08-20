@@ -36,7 +36,14 @@ func (al *AgentLoop) handleInternalMemorySemanticCallback(
 			return
 		}
 		menu := response.Content.Interaction
-		bound, bindErr := newMemoryInteractionMenu(&inbound, agent.ID, menu.Page, menu.Pages, menu.Current, menu.Entries)
+		bound, bindErr := newMemoryInteractionMenu(
+			&inbound,
+			agent.ID,
+			menu.Page,
+			menu.Pages,
+			menu.Current,
+			menu.Entries,
+		)
 		if bindErr != nil {
 			response = nil
 			err = bindErr

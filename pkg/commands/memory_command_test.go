@@ -9,21 +9,42 @@ import (
 
 func TestMemoryAndCheckpointCommandsDispatchRuntimeControls(t *testing.T) {
 	runtime := &Runtime{
-		MemoryStatus:  func() string { return "memory status" },
-		MemoryProfile: func() (string, error) { return "user profile", nil },
-		MemoryList:    func() (string, error) { return "memory list", nil },
-		MemorySearch:  func(query string) (string, error) { return "searched " + query, nil },
-		MemoryEdit: func(id, content string) (string, error) {
-			return "edited " + id + " to " + content, nil
+		MemoryCommand: func(_ context.Context, req MemoryCommandRequest) (*bus.StructuredContent, error) {
+			var text string
+			switch req.Operation {
+			case "status":
+				text = "memory status"
+			case "profile":
+				text = "user profile"
+			case "list":
+				text = "memory list"
+			case "search":
+				text = "searched " + req.Query
+			case "edit":
+				text = "edited " + req.ID + " to " + req.Content
+			case "pin":
+				text = "pin " + req.ID
+			case "unpin":
+				text = "unpin " + req.ID
+			case "archive":
+				text = "archive " + req.ID
+			case "restore":
+				text = "restore " + req.ID
+			case "forget":
+				text = "forgot " + req.ID
+			case "pending":
+				text = "pending"
+			case "approve":
+				text = "approved " + req.ID
+			case "reject":
+				text = "rejected " + req.ID
+			case "review":
+				text = "review started"
+			default:
+				text = req.Operation
+			}
+			return &bus.StructuredContent{Fallback: text}, nil
 		},
-		MemoryEntryAction: func(action, id string) (string, error) {
-			return action + " " + id, nil
-		},
-		MemoryForget:  func(id string) (string, error) { return "forgot " + id, nil },
-		MemoryPending: func() (string, error) { return "pending", nil },
-		MemoryApprove: func(id string) (string, error) { return "approved " + id, nil },
-		MemoryReject:  func(id string) (string, error) { return "rejected " + id, nil },
-		MemoryReview:  func(context.Context) (string, error) { return "review started", nil },
 		CheckpointCommand: func(_ context.Context, req CheckpointCommandRequest) (*bus.StructuredContent, error) {
 			var text string
 			switch req.Operation {
@@ -89,7 +110,7 @@ func TestMemoryAndCheckpointCommandsDispatchRuntimeControls(t *testing.T) {
 func TestMemoryRootCommand_DispatchesStructuredDashboard(t *testing.T) {
 	called := false
 	runtime := &Runtime{
-		MemoryCommand: func(ctx context.Context, req MemoryCommandRequest) (*bus.StructuredContent, error) {
+		MemoryCommand: func(_ context.Context, req MemoryCommandRequest) (*bus.StructuredContent, error) {
 			if req.Operation != "dashboard" {
 				t.Fatalf("unexpected operation: %s", req.Operation)
 			}
@@ -120,15 +141,24 @@ func TestMemoryRootCommand_DispatchesStructuredDashboard(t *testing.T) {
 	}
 }
 
+// TestClearAndResetUseSameHistorySemantics verifies /clear and /reset both
+// call ClearHistory, while /new uses session-new semantics (not clear).
 func TestClearAndResetUseSameHistorySemantics(t *testing.T) {
-	calls := 0
+	clearCalls := 0
 	executor := NewExecutor(NewRegistry(BuiltinDefinitions()), &Runtime{
 		ClearHistory: func() error {
-			calls++
+			clearCalls++
 			return nil
 		},
+		SessionCommand: func(_ context.Context, req SessionCommandRequest) (*bus.StructuredContent, error) {
+			if req.Operation != "new" {
+				t.Fatalf("unexpected session operation: %s", req.Operation)
+			}
+			return &bus.StructuredContent{Fallback: "new session"}, nil
+		},
 	})
-	for _, command := range []string{"/clear", "/reset", "/new"} {
+	// /clear and /reset should call ClearHistory
+	for _, command := range []string{"/clear", "/reset"} {
 		result := executor.Execute(context.Background(), Request{
 			Channel: "telegram", Text: command, Reply: func(string) error { return nil },
 		})
@@ -136,7 +166,19 @@ func TestClearAndResetUseSameHistorySemantics(t *testing.T) {
 			t.Fatalf("Execute(%q) outcome=%v err=%v", command, result.Outcome, result.Err)
 		}
 	}
-	if calls != 3 {
-		t.Fatalf("ClearHistory calls = %d, want 3", calls)
+	if clearCalls != 2 {
+		t.Fatalf("ClearHistory calls = %d, want 2", clearCalls)
+	}
+
+	// /new should NOT call ClearHistory
+	clearCalls = 0
+	result := executor.Execute(context.Background(), Request{
+		Channel: "telegram", Text: "/new", Reply: func(string) error { return nil },
+	})
+	if result.Outcome != OutcomeHandled || result.Err != nil {
+		t.Fatalf("Execute(/new) outcome=%v err=%v", result.Outcome, result.Err)
+	}
+	if clearCalls != 0 {
+		t.Fatalf("/new must not call ClearHistory, but it was called %d times", clearCalls)
 	}
 }

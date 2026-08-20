@@ -35,7 +35,8 @@ func switchCommand() Definition {
 						LegacySwitch: true,
 					})
 					if err != nil {
-						return req.Reply(UserFacingError(err, "Model service is temporarily unavailable. Please try again."))
+						return req.Reply(UserFacingError(err,
+							"Model service is temporarily unavailable. Please try again."))
 					}
 					if content == nil {
 						return req.Reply(unavailableMsg)
