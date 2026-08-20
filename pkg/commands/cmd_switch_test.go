@@ -163,7 +163,11 @@ func TestSwitchChannel_Redirect(t *testing.T) {
 
 func TestCheckChannel_Success(t *testing.T) {
 	rt := &Runtime{
-		SwitchChannel: func(value string) error {
+		CheckChannel: func(value string) (ChannelStatus, error) {
+			return ChannelStatus{Name: value, Enabled: true, Available: true}, nil
+		},
+		SwitchChannel: func(string) error {
+			t.Fatal("/check channel must not mutate channel state")
 			return nil
 		},
 	}
@@ -180,7 +184,7 @@ func TestCheckChannel_Success(t *testing.T) {
 	if res.Outcome != OutcomeHandled {
 		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	want := "Channel 'telegram' is available and enabled"
+	want := "Channel Status\nChannel: telegram\nEnabled: yes\nAvailable: yes"
 	if reply != want {
 		t.Fatalf("reply=%q, want=%q", reply, want)
 	}
@@ -188,8 +192,12 @@ func TestCheckChannel_Success(t *testing.T) {
 
 func TestCheckChannel_Error(t *testing.T) {
 	rt := &Runtime{
-		SwitchChannel: func(value string) error {
-			return fmt.Errorf("channel '%s' not found", value)
+		CheckChannel: func(string) (ChannelStatus, error) {
+			return ChannelStatus{}, fmt.Errorf("channel status backend unavailable")
+		},
+		SwitchChannel: func(string) error {
+			t.Fatal("/check channel must not mutate channel state")
+			return nil
 		},
 	}
 	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
@@ -205,8 +213,8 @@ func TestCheckChannel_Error(t *testing.T) {
 	if res.Outcome != OutcomeHandled {
 		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if reply != "channel 'unknown' not found" {
-		t.Fatalf("reply=%q, want error message", reply)
+	if reply != unavailableMsg {
+		t.Fatalf("reply=%q, want sanitized unavailable message", reply)
 	}
 }
 
@@ -231,8 +239,9 @@ func TestCheckChannel_NilDep(t *testing.T) {
 
 func TestCheckChannel_MissingValue(t *testing.T) {
 	rt := &Runtime{
-		SwitchChannel: func(value string) error {
-			return nil
+		CheckChannel: func(string) (ChannelStatus, error) {
+			t.Fatal("missing target must not invoke status lookup")
+			return ChannelStatus{}, nil
 		},
 	}
 	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
