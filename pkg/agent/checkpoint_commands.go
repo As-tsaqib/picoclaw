@@ -15,9 +15,13 @@ import (
 const checkpointInteractionPageSize = 5
 
 type checkpointStore interface {
-	List(memory.CallerScope, bool) ([]memory.TaskCheckpoint, error)
-	Get(memory.CallerScope, string) (memory.TaskCheckpoint, error)
-	Apply(memory.CallerScope, string, memory.CheckpointMutation) (memory.TaskCheckpoint, error)
+	List(caller memory.CallerScope, includeArchived bool) ([]memory.TaskCheckpoint, error)
+	Get(caller memory.CallerScope, id string) (memory.TaskCheckpoint, error)
+	Apply(
+		caller memory.CallerScope,
+		sessionKey string,
+		mutation memory.CheckpointMutation,
+	) (memory.TaskCheckpoint, error)
 }
 
 type checkpointCommandService struct {
@@ -235,7 +239,16 @@ func buildCheckpointDetail(
 	return &bus.StructuredContent{
 		Title: compactCheckpointText(checkpoint.Title, 180), Paragraphs: paragraphs,
 		Interaction: newBoundInteractionMenu(
-			"checkpoint", agent.ID, sessionKey, scope, inbound, page, maxInt(page+1, 1), "", checkpoint.ID, entries,
+			"checkpoint",
+			agent.ID,
+			sessionKey,
+			scope,
+			inbound,
+			page,
+			maxInt(page+1, 1),
+			"",
+			checkpoint.ID,
+			entries,
 		),
 	}
 }
@@ -255,7 +268,16 @@ func buildCheckpointArchiveConfirm(
 			"This hides the checkpoint from the active dashboard. Continue?",
 		},
 		Interaction: newBoundInteractionMenu(
-			"checkpoint", agent.ID, sessionKey, scope, inbound, page, maxInt(page+1, 1), "", checkpoint.ID, []bus.InteractionEntry{
+			"checkpoint",
+			agent.ID,
+			sessionKey,
+			scope,
+			inbound,
+			page,
+			maxInt(page+1, 1),
+			"",
+			checkpoint.ID,
+			[]bus.InteractionEntry{
 				{Label: "✅ Confirm Archive", Action: "archive_confirm", Value: checkpoint.ID},
 				{Label: "❌ Cancel", Action: "detail", Value: checkpoint.ID},
 			},
