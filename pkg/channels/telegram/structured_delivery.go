@@ -482,19 +482,19 @@ func (c *TelegramChannel) structuredReplyMarkup(
 	menu := *content.Interaction
 	menu.Entries = append([]bus.InteractionEntry(nil), content.Interaction.Entries...)
 	kind := strings.ToLower(strings.TrimSpace(menu.Kind))
-	if (kind != "session" && kind != "model" && kind != "memory" && kind != "skill" && kind != "checkpoint") ||
+	if (kind != "session" && kind != "model" && kind != "memory" && kind != "skill" && kind != "checkpoint" && kind != "discovery") ||
 		menu.OwnerID == "" || menu.AgentID == "" {
 		return nil, nil, fmt.Errorf("interactive menu metadata is incomplete")
 	}
-	if (kind == "session" || kind == "model" || kind == "skill" || kind == "checkpoint") && menu.Scope == "" {
+	if (kind == "session" || kind == "model" || kind == "skill" || kind == "checkpoint" || kind == "discovery") && menu.Scope == "" {
 		return nil, nil, fmt.Errorf("interactive menu metadata is incomplete")
 	}
-	if kind == "skill" || kind == "checkpoint" {
+	if kind == "skill" || kind == "checkpoint" || kind == "discovery" {
 		if strings.TrimSpace(menu.SessionKey) == "" {
 			return nil, nil, fmt.Errorf("interactive menu session binding is incomplete")
 		}
 	}
-	if kind == "memory" || kind == "skill" || kind == "checkpoint" {
+	if kind == "memory" || kind == "skill" || kind == "checkpoint" || kind == "discovery" {
 		sealMemoryInteractionAccount(&menu, c.Name())
 		if err := validateMemoryInteractionEnvelope(menu, chatID, threadID, c.Name()); err != nil {
 			return nil, nil, err
@@ -511,7 +511,7 @@ func (c *TelegramChannel) structuredReplyMarkup(
 	switch kind {
 	case "model":
 		keyboard = modelInteractionKeyboard(menu, callback)
-	case "memory", "skill", "checkpoint":
+	case "memory", "skill", "checkpoint", "discovery":
 		keyboard = entryInteractionKeyboard(menu, callback)
 	default:
 		keyboard = sessionInteractionKeyboard(menu, callback)
@@ -596,7 +596,7 @@ func entryInteractionKeyboard(menu bus.InteractionMenu, callback func(string) st
 		switch action {
 		case "close":
 			closeEntries = append(closeEntries, idx)
-		case "page", "browse_page", "search_page", "pending_page", "noop":
+		case "page", "browse_page", "search_page", "pending_page", "list_channels_page", "list_agents_page", "list_mcp_page", "show_agents_page", "show_mcp_page", "noop":
 			pages = append(pages, idx)
 		case "forget", "forget_confirm", "reject", "archive", "archive_confirm":
 			dangerActions = append(dangerActions, idx)
@@ -1429,7 +1429,7 @@ func (c *TelegramChannel) sessionCallbackEnvelopeValid(
 		return false
 	}
 	kind := strings.ToLower(strings.TrimSpace(menu.menu.Kind))
-	if kind == "memory" || kind == "skill" || kind == "checkpoint" {
+	if kind == "memory" || kind == "skill" || kind == "checkpoint" || kind == "discovery" {
 		if err := validateMemoryInteractionEnvelope(menu.menu, menu.chatID, menu.threadID, c.Name()); err != nil {
 			return false
 		}
@@ -1450,7 +1450,7 @@ func resolveSessionMenuAction(menu bus.InteractionMenu, code string) (action, va
 		return entry.Action, entry.Value, true
 	}
 	kind := strings.ToLower(strings.TrimSpace(menu.Kind))
-	if (kind == "memory" || kind == "skill" || kind == "checkpoint") && strings.HasPrefix(code, "e") {
+	if (kind == "memory" || kind == "skill" || kind == "checkpoint" || kind == "discovery") && strings.HasPrefix(code, "e") {
 		idx, err := strconv.Atoi(strings.TrimPrefix(code, "e"))
 		if err != nil || idx < 0 || idx >= len(menu.Entries) {
 			return "", "", false
