@@ -28,6 +28,8 @@ func (al *AgentLoop) handleInternalCallback(
 		return al.handleInternalSkillCallback(ctx, req)
 	case "checkpoint":
 		return al.handleInternalCheckpointCallback(ctx, req)
+	case "discovery":
+		return al.handleInternalDiscoveryCallback(ctx, req)
 	default:
 		return nil, fmt.Errorf("unsupported internal callback")
 	}

@@ -28,6 +28,10 @@ func (a *channelManagerAdapter) GetEnabledChannels() []string {
 	return a.inner.GetEnabledChannels()
 }
 
+func (a *channelManagerAdapter) GetStatus() map[string]any {
+	return a.inner.GetStatus()
+}
+
 func (a *channelManagerAdapter) InvokeTypingStop(channel, chatID string) {
 	a.inner.InvokeTypingStop(channel, chatID)
 }

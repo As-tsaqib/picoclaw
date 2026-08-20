@@ -22,6 +22,7 @@ func configureSessionCommandRuntime(rt *commands.Runtime, agent *AgentInstance, 
 		return al.executeSessionCommand(ctx, agent, opts, req)
 	}
 	configureModelCommandRuntime(rt, agent, opts, al)
+	configureDiscoveryCommandRuntime(rt, agent, opts, al)
 }
 
 func (al *AgentLoop) handleInternalSessionCallback(

@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -12,7 +13,14 @@ func agentsHandler() Handler {
 		if rt == nil || rt.ListAgentIDs == nil {
 			return req.Reply(unavailableMsg)
 		}
-		ids := rt.ListAgentIDs()
+		ids := append([]string(nil), rt.ListAgentIDs()...)
+		sort.SliceStable(ids, func(i, j int) bool {
+			left, right := strings.ToLower(ids[i]), strings.ToLower(ids[j])
+			if left == right {
+				return ids[i] < ids[j]
+			}
+			return left < right
+		})
 		if len(ids) == 0 {
 			return req.Reply("No agents registered")
 		}

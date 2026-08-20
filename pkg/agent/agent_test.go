@@ -3682,7 +3682,7 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 		ChatID:   "chat1",
 		Content:  "/show model",
 	})
-	if !strings.Contains(showResp, "Current Model: deepseek (Provider: openrouter)") {
+	if !strings.Contains(showResp, "Current Model: deepseek (Provider: Openrouter)") {
 		t.Fatalf("unexpected /show model reply after switch: %q", showResp)
 	}
 
@@ -3739,7 +3739,7 @@ func TestProcessMessage_SwitchModelRejectsUnknownAlias(t *testing.T) {
 		ChatID:   "chat1",
 		Content:  "/show model",
 	})
-	if !strings.Contains(showResp, "Current Model: local (Provider: openai)") {
+	if !strings.Contains(showResp, "Current Model: local (Provider: Openai)") {
 		t.Fatalf("unexpected /show model reply after rejected switch: %q", showResp)
 	}
 

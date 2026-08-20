@@ -36,6 +36,9 @@ type ChannelManager interface {
 	// GetEnabledChannels returns the list of enabled channel names.
 	GetEnabledChannels() []string
 
+	// GetStatus returns the manager-owned read-only channel status snapshot.
+	GetStatus() map[string]any
+
 	// InvokeTypingStop signals that typing has stopped.
 	InvokeTypingStop(channel, chatID string)
 

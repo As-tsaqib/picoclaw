@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -12,7 +13,14 @@ func listMCPServersHandler() Handler {
 			return req.Reply(unavailableMsg)
 		}
 
-		servers := rt.ListMCPServers(ctx)
+		servers := append([]MCPServerInfo(nil), rt.ListMCPServers(ctx)...)
+		sort.SliceStable(servers, func(i, j int) bool {
+			left, right := strings.ToLower(servers[i].Name), strings.ToLower(servers[j].Name)
+			if left == right {
+				return servers[i].Name < servers[j].Name
+			}
+			return left < right
+		})
 		if len(servers) == 0 {
 			return req.Reply("No MCP servers configured")
 		}

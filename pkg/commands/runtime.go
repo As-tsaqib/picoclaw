@@ -44,6 +44,30 @@ type CheckpointCommandRequest struct {
 
 type CheckpointCommandHandler func(context.Context, CheckpointCommandRequest) (*bus.StructuredContent, error)
 
+// DiscoveryCommandRequest is a narrow semantic request for read-only current-state,
+// inventory, and status flows. Domain and Operation are intentionally explicit so
+// callbacks never need to synthesize slash-command text.
+type DiscoveryCommandRequest struct {
+	Domain    string
+	Operation string
+	Argument  string
+	Page      int
+}
+
+type DiscoveryCommandHandler func(context.Context, DiscoveryCommandRequest) (*bus.StructuredContent, error)
+
+// ChannelStatus is a read-only snapshot. Available describes whether the
+// channel is currently usable/running; Enabled describes configuration/runtime
+// registration. Expected negative states are data, not mutation errors.
+type ChannelStatus struct {
+	Name      string
+	Enabled   bool
+	Available bool
+	Reason    string
+}
+
+type CheckChannelHandler func(name string) (ChannelStatus, error)
+
 type MCPServerInfo struct {
 	Name      string
 	Enabled   bool
@@ -121,6 +145,8 @@ type Runtime struct {
 	MemoryCommand      MemoryCommandHandler
 	SkillCommand       SkillCommandHandler
 	CheckpointCommand  CheckpointCommandHandler
+	DiscoveryCommand   DiscoveryCommandHandler
+	CheckChannel       CheckChannelHandler
 }
 
 type MemoryCommandRequest struct {
