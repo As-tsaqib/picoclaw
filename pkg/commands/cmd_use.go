@@ -3,7 +3,7 @@ package commands
 func useCommand() Definition {
 	return Definition{
 		Name:        "use",
-		Description: "Pick, arm, clear, or force an installed skill",
+		Description: "Open the skill picker or force an installed skill for a request; arm one for the next message or clear it",
 		Usage:       "/use [skill] [message]",
 		Category:    "Skills",
 		Examples: []string{
