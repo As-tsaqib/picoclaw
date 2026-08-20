@@ -406,6 +406,7 @@ func expectedMemoryMenuRoute(chatID int64, threadID int) (string, string) {
 	topic := ""
 	if threadID > 0 {
 		topic = strconv.Itoa(threadID)
+		chat += "/" + topic
 	}
 	return chat, topic
 }
@@ -423,6 +424,9 @@ func sealMemoryInteractionAccount(menu *bus.InteractionMenu, account string) {
 	case menuAccount == "" && inboundAccount != "":
 		menu.Account = inboundAccount
 	case menuAccount == "" && inboundAccount == "" && account != "":
+		// Seal legacy/adapter-local structured content to this channel account
+		// before it becomes callback state. Mismatched non-empty values are
+		// deliberately left untouched so validation still fails closed.
 		menu.Account = account
 		menu.Inbound.Account = account
 	}
