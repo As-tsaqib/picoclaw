@@ -14,11 +14,19 @@ import (
 
 const checkpointInteractionPageSize = 5
 
-func configureCheckpointCommandRuntime(rt *commands.Runtime, agent *AgentInstance, opts *processOptions, al *AgentLoop) {
+func configureCheckpointCommandRuntime(
+	rt *commands.Runtime,
+	agent *AgentInstance,
+	opts *processOptions,
+	al *AgentLoop,
+) {
 	if rt == nil || agent == nil || opts == nil || al == nil {
 		return
 	}
-	rt.CheckpointCommand = func(ctx context.Context, req commands.CheckpointCommandRequest) (*bus.StructuredContent, error) {
+	rt.CheckpointCommand = func(
+		ctx context.Context,
+		req commands.CheckpointCommandRequest,
+	) (*bus.StructuredContent, error) {
 		return al.executeCheckpointCommand(ctx, agent, opts, req)
 	}
 }
@@ -64,8 +72,10 @@ func (al *AgentLoop) executeCheckpointCommand(
 		inbound := opts.Dispatch.InboundContext
 		if inbound == nil || !memoryInteractionRouteIsPrivate(inbound) {
 			return &bus.StructuredContent{
-				Title:      "Task Checkpoints",
-				Paragraphs: []string{"Checkpoint details are private. Use a direct chat or a verified private/ephemeral command route."},
+				Title: "Task Checkpoints",
+				Paragraphs: []string{
+					"Checkpoint details are private. Use a direct chat or a verified private/ephemeral command route.",
+				},
 			}, nil
 		}
 		if opts.Dispatch.SessionScope == nil || strings.TrimSpace(opts.Dispatch.SessionKey) == "" {
@@ -126,7 +136,9 @@ func buildCheckpointPage(
 	entries = append(entries, bus.InteractionEntry{Label: "✖️ Close", Action: "close"})
 	return &bus.StructuredContent{
 		Title: "Task Checkpoints", Paragraphs: lines,
-		Interaction: newBoundInteractionMenu("checkpoint", agent.ID, sessionKey, scope, inbound, page, pages, "", "", entries),
+		Interaction: newBoundInteractionMenu(
+			"checkpoint", agent.ID, sessionKey, scope, inbound, page, pages, "", "", entries,
+		),
 	}, nil
 }
 
@@ -170,7 +182,9 @@ func buildCheckpointDetail(
 	)
 	return &bus.StructuredContent{
 		Title: compactCheckpointText(checkpoint.Title, 180), Paragraphs: paragraphs,
-		Interaction: newBoundInteractionMenu("checkpoint", agent.ID, sessionKey, scope, inbound, 0, 1, "", checkpoint.ID, entries),
+		Interaction: newBoundInteractionMenu(
+			"checkpoint", agent.ID, sessionKey, scope, inbound, 0, 1, "", checkpoint.ID, entries,
+		),
 	}
 }
 
@@ -182,12 +196,17 @@ func buildCheckpointArchiveConfirm(
 	inbound *bus.InboundContext,
 ) *bus.StructuredContent {
 	return &bus.StructuredContent{
-		Title:      "Archive Checkpoint?",
-		Paragraphs: []string{compactCheckpointText(checkpoint.Title, 180), "This hides the checkpoint from the active dashboard. Continue?"},
-		Interaction: newBoundInteractionMenu("checkpoint", agent.ID, sessionKey, scope, inbound, 0, 1, "", checkpoint.ID, []bus.InteractionEntry{
-			{Label: "✅ Confirm Archive", Action: "archive_confirm", Value: checkpoint.ID},
-			{Label: "❌ Cancel", Action: "detail", Value: checkpoint.ID},
-		}),
+		Title: "Archive Checkpoint?",
+		Paragraphs: []string{
+			compactCheckpointText(checkpoint.Title, 180),
+			"This hides the checkpoint from the active dashboard. Continue?",
+		},
+		Interaction: newBoundInteractionMenu(
+			"checkpoint", agent.ID, sessionKey, scope, inbound, 0, 1, "", checkpoint.ID, []bus.InteractionEntry{
+				{Label: "✅ Confirm Archive", Action: "archive_confirm", Value: checkpoint.ID},
+				{Label: "❌ Cancel", Action: "detail", Value: checkpoint.ID},
+			},
+		),
 	}
 }
 
@@ -213,14 +232,18 @@ func (al *AgentLoop) handleInternalCheckpointCallback(
 	case "noop":
 		return &bus.InternalCallbackResponse{Text: fmt.Sprintf("Page %d", req.Page+1)}, nil
 	case "dashboard", "back":
-		content, buildErr := buildCheckpointPage(bound.agent, caller, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0)
+		content, buildErr := buildCheckpointPage(
+			bound.agent, caller, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0,
+		)
 		return &bus.InternalCallbackResponse{Content: content}, buildErr
 	case "page":
 		page, parseErr := strconv.Atoi(strings.TrimSpace(req.Value))
 		if parseErr != nil || page < 0 {
 			return nil, fmt.Errorf("invalid checkpoint page")
 		}
-		content, buildErr := buildCheckpointPage(bound.agent, caller, req.SessionKey, &bound.allocation.Scope, &bound.inbound, page)
+		content, buildErr := buildCheckpointPage(
+			bound.agent, caller, req.SessionKey, &bound.allocation.Scope, &bound.inbound, page,
+		)
 		return &bus.InternalCallbackResponse{Content: content}, buildErr
 	case "detail":
 		checkpoint, getErr := bound.agent.Checkpoints.Get(caller, req.Value)
@@ -257,7 +280,9 @@ func (al *AgentLoop) handleInternalCheckpointCallback(
 		}); applyErr != nil {
 			return nil, applyErr
 		}
-		content, buildErr := buildCheckpointPage(bound.agent, caller, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0)
+		content, buildErr := buildCheckpointPage(
+			bound.agent, caller, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0,
+		)
 		if buildErr == nil {
 			content.Title = "Checkpoint Archived"
 		}
