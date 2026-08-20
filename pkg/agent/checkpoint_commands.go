@@ -250,7 +250,8 @@ func (al *AgentLoop) handleInternalCheckpointCallback(
 		if getErr != nil {
 			return nil, getErr
 		}
-		if checkpoint.Status == memory.CheckpointStatusArchived || checkpoint.Status == memory.CheckpointStatusCompleted {
+		if checkpoint.Status == memory.CheckpointStatusArchived ||
+			checkpoint.Status == memory.CheckpointStatusCompleted {
 			return nil, fmt.Errorf("checkpoint is not available in the active dashboard")
 		}
 		return &bus.InternalCallbackResponse{Content: buildCheckpointDetail(

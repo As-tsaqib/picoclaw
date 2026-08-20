@@ -1072,15 +1072,30 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(ctx context.Context, m
 		}
 	}
 	response, err := handler(ctx, bus.InternalCallbackRequest{
-		Kind: prompt.menu.menu.Kind, Action: prompt.action, Value: message.Text,
-		OwnerID: prompt.menu.menu.OwnerID, Channel: prompt.menu.menu.Channel, Account: prompt.menu.menu.Account,
-		ChatID: prompt.menu.menu.ChatID, TopicID: prompt.menu.menu.TopicID, MessageID: inbound.MessageID,
-		AgentID: prompt.menu.menu.AgentID, Scope: prompt.menu.menu.Scope, Inbound: inbound,
-		Page: prompt.menu.menu.Page, SessionKey: interactionMenuSessionState(prompt.menu.menu), Query: prompt.menu.menu.Query,
+		Kind:       prompt.menu.menu.Kind,
+		Action:     prompt.action,
+		Value:      message.Text,
+		OwnerID:    prompt.menu.menu.OwnerID,
+		Channel:    prompt.menu.menu.Channel,
+		Account:    prompt.menu.menu.Account,
+		ChatID:     prompt.menu.menu.ChatID,
+		TopicID:    prompt.menu.menu.TopicID,
+		MessageID:  inbound.MessageID,
+		AgentID:    prompt.menu.menu.AgentID,
+		Scope:      prompt.menu.menu.Scope,
+		Inbound:    inbound,
+		Page:       prompt.menu.menu.Page,
+		SessionKey: interactionMenuSessionState(prompt.menu.menu),
+		Query:      prompt.menu.menu.Query,
 	})
 	if err != nil {
 		logger.WarnCF("telegram", "Prompt reply was rejected", map[string]any{"reason": "scope_or_state_validation"})
-		return true, c.sendSessionRenameNotice(ctx, message, prompt, "Permintaan tidak dapat diproses. Jalankan command lagi.")
+		return true, c.sendSessionRenameNotice(
+			ctx,
+			message,
+			prompt,
+			"Permintaan tidak dapat diproses. Jalankan command lagi.",
+		)
 	}
 	if response == nil || response.Content == nil {
 		text := "Perubahan berhasil disimpan."

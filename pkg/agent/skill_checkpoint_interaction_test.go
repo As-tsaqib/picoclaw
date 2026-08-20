@@ -25,12 +25,12 @@ func TestFilterSkillNamesIsCaseInsensitiveAndBounded(t *testing.T) {
 
 func TestCheckpointInteractiveDetailKeepsRawIDAndImportantContextServerSide(t *testing.T) {
 	cp := memory.TaskCheckpoint{
-		ID:        "cp_secret_raw_id",
-		Title:     "Deploy release",
-		Objective: "Ship safely",
-		Status:    memory.CheckpointStatusSuspended,
-		CurrentStep: "verify CI",
-		NextStep:    "deploy",
+		ID:               "cp_secret_raw_id",
+		Title:            "Deploy release",
+		Objective:        "Ship safely",
+		Status:           memory.CheckpointStatusSuspended,
+		CurrentStep:      "verify CI",
+		NextStep:         "deploy",
 		ImportantContext: "private context that must not be rendered",
 		CompletedItems:   []string{"tests"},
 		UpdatedAt:        time.Now(),

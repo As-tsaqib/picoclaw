@@ -194,10 +194,21 @@ func newBoundInteractionMenu(
 		scopeSig = session.CanonicalScopeSignature(*scope)
 	}
 	return &bus.InteractionMenu{
-		Kind: kind, OwnerID: sessionMenuOwner(inbound), Channel: inboundChannel(inbound), Account: inboundAccount(inbound),
-		ChatID: inboundChatID(inbound), TopicID: inboundTopicID(inbound), AgentID: agentID, Scope: scopeSig,
-		Inbound: menuInbound, Page: page, Pages: pages, Entries: append([]bus.InteractionEntry(nil), entries...),
-		Current: current, SessionKey: strings.TrimSpace(sessionKey), Query: query,
+		Kind:       kind,
+		OwnerID:    sessionMenuOwner(inbound),
+		Channel:    inboundChannel(inbound),
+		Account:    inboundAccount(inbound),
+		ChatID:     inboundChatID(inbound),
+		TopicID:    inboundTopicID(inbound),
+		AgentID:    agentID,
+		Scope:      scopeSig,
+		Inbound:    menuInbound,
+		Page:       page,
+		Pages:      pages,
+		Entries:    append([]bus.InteractionEntry(nil), entries...),
+		Current:    current,
+		SessionKey: strings.TrimSpace(sessionKey),
+		Query:      query,
 	}
 }
 
