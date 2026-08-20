@@ -51,7 +51,9 @@ func switchCommand() Definition {
 				Deprecated:  true,
 				Replacement: "/check channel <name>",
 				Handler: func(_ context.Context, req Request, _ *Runtime) error {
-					return req.Reply("/switch channel is deprecated and does not change channel state. Use /check channel <name> for status.")
+					return req.Reply(
+						"/switch channel is deprecated and does not change channel state. Use /check channel <name> for status.",
+					)
 				},
 			},
 		},

@@ -137,7 +137,12 @@ func TestParseUseIntentOwnsAllSupportedForms(t *testing.T) {
 	}{
 		{text: "/use", kind: UseIntentPicker},
 		{text: "/use shell", kind: UseIntentArm, skill: "shell"},
-		{text: "/use shell inspect this repository", kind: UseIntentForcedTurn, skill: "shell", message: "inspect this repository"},
+		{
+			text:    "/use shell inspect this repository",
+			kind:    UseIntentForcedTurn,
+			skill:   "shell",
+			message: "inspect this repository",
+		},
 		{text: "/use clear", kind: UseIntentClear},
 		{text: "/use off", kind: UseIntentClear},
 	}

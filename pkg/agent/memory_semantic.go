@@ -141,7 +141,14 @@ func (al *AgentLoop) executeMemorySemanticCommand(
 			return nil, err
 		}
 		if req.Interactive {
-			return renderMemoryEntryPage("search", "Search Results", flattenMemoryEntries(set), req.Page, query, false), nil
+			return renderMemoryEntryPage(
+				"search",
+				"Search Results",
+				flattenMemoryEntries(set),
+				req.Page,
+				query,
+				false,
+			), nil
 		}
 		text := formatMemoryEntries(set.Workspace, set.User)
 		if !service.includeUser {

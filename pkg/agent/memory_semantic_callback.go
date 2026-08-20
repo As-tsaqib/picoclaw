@@ -134,7 +134,9 @@ func (al *AgentLoop) handleInternalMemorySemanticCallback(
 			}); semanticErr != nil {
 				return nil, semanticErr
 			}
-			return &bus.InternalCallbackResponse{Text: "Balas pesan ini dengan konten baru untuk entri memori ini:"}, nil
+			return &bus.InternalCallbackResponse{
+				Text: "Balas pesan ini dengan konten baru untuk entri memori ini:",
+			}, nil
 		}
 		if id == "" {
 			return nil, fmt.Errorf("memory edit target is unavailable")

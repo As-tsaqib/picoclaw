@@ -33,7 +33,9 @@ func listMCPServersHandler() Handler {
 			rows = append(rows, []string{server.Name, detail})
 			lines = append(lines, fmt.Sprintf("- %s — %s", server.Name, detail))
 		}
-		return req.replyStructured(tableContent("MCP Inventory", inventoryHeaderColumns(), rows, strings.Join(lines, "\n")))
+		return req.replyStructured(
+			tableContent("MCP Inventory", inventoryHeaderColumns(), rows, strings.Join(lines, "\n")),
+		)
 	}
 }
 

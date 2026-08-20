@@ -50,7 +50,11 @@ func TestShowListHandlers_ChannelPolicy(t *testing.T) {
 		Reply:   func(string) error { return nil },
 	})
 	if passthrough.Outcome != OutcomeHandled {
-		t.Fatalf("whatsapp /foo outcome=%v, want=%v (unknown slash commands are handled)", passthrough.Outcome, OutcomeHandled)
+		t.Fatalf(
+			"whatsapp /foo outcome=%v, want=%v (unknown slash commands are handled)",
+			passthrough.Outcome,
+			OutcomeHandled,
+		)
 	}
 }
 

@@ -129,7 +129,10 @@ func (al *AgentLoop) applyUseIntent(
 
 	skillName, found := agent.ContextBuilder.ResolveSkillName(intent.Skill)
 	if !found {
-		return true, true, fmt.Sprintf("Unknown skill: %s\nUse /list skills to see installed skills.", intent.Skill), nil
+		return true, true, fmt.Sprintf(
+			"Unknown skill: %s\nUse /list skills to see installed skills.",
+			intent.Skill,
+		), nil
 	}
 
 	switch intent.Kind {
