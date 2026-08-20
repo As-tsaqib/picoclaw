@@ -368,64 +368,9 @@ func configureMemoryCommandRuntime(
 		}
 	}
 
-	if agent.Checkpoints != nil {
-		rt.CheckpointList = func() (string, error) {
-			checkpoints, err := agent.Checkpoints.List(caller, false)
-			if err != nil {
-				return "", err
-			}
-			return formatCheckpointList(checkpoints), nil
-		}
-		rt.CheckpointResume = func(id string) (string, error) {
-			checkpoint, err := agent.Checkpoints.Apply(
-				caller,
-				"",
-				memory.CheckpointMutation{Action: memory.CheckpointActionResume, ID: id},
-			)
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("Resumed %s (%s). Next: %s", checkpoint.Title, checkpoint.ID, checkpoint.NextStep), nil
-		}
-		rt.CheckpointForget = func(id string) (string, error) {
-			checkpoint, err := agent.Checkpoints.Apply(
-				caller,
-				"",
-				memory.CheckpointMutation{Action: memory.CheckpointActionArchive, ID: id},
-			)
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("Archived checkpoint %s (%s).", checkpoint.Title, checkpoint.ID), nil
-		}
-	}
-
 	rt.MemoryCommand = func(ctx context.Context, req commands.MemoryCommandRequest) (*bus.StructuredContent, error) {
 		return al.executeMemoryCommand(ctx, agent, opts, req)
 	}
-}
-
-func memoryInteractionRouteIsPrivate(inbound *bus.InboundContext) bool {
-	if inbound == nil {
-		return false
-	}
-	if strings.EqualFold(strings.TrimSpace(inbound.ChatType), "direct") {
-		return true
-	}
-	return inbound.PrivateResponse && strings.TrimSpace(inbound.PrivateRouteToken) != ""
-}
-
-func memoryInteractionCallerScope(
-	caller memory.CallerScope,
-	inbound *bus.InboundContext,
-) memory.CallerScope {
-	if inbound != nil && inbound.PrivateResponse && strings.TrimSpace(inbound.PrivateRouteToken) != "" {
-		// A verified private route keeps the group location for Telegram routing,
-		// while memory reads/mutations are scoped to the receiver rather than the
-		// shared audience. The route token is process-local channel authority.
-		caller.GroupID = ""
-	}
-	return caller
 }
 
 func (al *AgentLoop) executeMemoryCommand(
@@ -455,6 +400,23 @@ func (al *AgentLoop) executeMemoryCommand(
 	}
 	caller := memoryInteractionCallerScope(callerScopeForTurn(agent.ID, al.cfg, *opts), inbound)
 	return buildMemoryDashboardContentE(agent, caller, inbound)
+}
+
+func memoryInteractionRouteIsPrivate(inbound *bus.InboundContext) bool {
+	if inbound == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(inbound.ChatType), "direct") {
+		return true
+	}
+	return inbound.PrivateResponse && strings.TrimSpace(inbound.PrivateRouteToken) != ""
+}
+
+func memoryInteractionCallerScope(caller memory.CallerScope, inbound *bus.InboundContext) memory.CallerScope {
+	if inbound != nil && inbound.PrivateResponse && strings.TrimSpace(inbound.PrivateRouteToken) != "" {
+		caller.GroupID = ""
+	}
+	return caller
 }
 
 func normalizedMemoryMenuInbound(inbound *bus.InboundContext) (bus.InboundContext, error) {

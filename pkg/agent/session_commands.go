@@ -24,20 +24,10 @@ func configureSessionCommandRuntime(rt *commands.Runtime, agent *AgentInstance, 
 	configureModelCommandRuntime(rt, agent, opts, al)
 }
 
-func (al *AgentLoop) handleInternalCallback(
-	ctx context.Context,
+func (al *AgentLoop) handleInternalSessionCallback(
+	_ context.Context,
 	req bus.InternalCallbackRequest,
 ) (*bus.InternalCallbackResponse, error) {
-	kind := strings.ToLower(strings.TrimSpace(req.Kind))
-	if kind == "model" {
-		return al.handleInternalModelCallback(ctx, req)
-	}
-	if kind == "memory" {
-		return al.handleInternalMemoryCallback(ctx, req)
-	}
-	if kind != "session" {
-		return nil, fmt.Errorf("unsupported internal callback")
-	}
 	inbound := bus.NormalizeInboundMessage(bus.InboundMessage{Context: req.Inbound}).Context
 	if strings.TrimSpace(req.OwnerID) == "" || inbound.SenderID != req.OwnerID ||
 		inbound.Channel != req.Channel || inbound.Account != req.Account ||
@@ -271,19 +261,20 @@ func buildSessionListContent(
 		menuInbound = *cloned
 	}
 	menu := &bus.InteractionMenu{
-		Kind:    "session",
-		OwnerID: sessionMenuOwner(inbound),
-		Channel: inboundChannel(inbound),
-		Account: inboundAccount(inbound),
-		ChatID:  inboundChatID(inbound),
-		TopicID: inboundTopicID(inbound),
-		AgentID: agentID,
-		Scope:   session.CanonicalScopeSignature(*scope),
-		Inbound: menuInbound,
-		Page:    page,
-		Pages:   pages,
-		Entries: entries,
-		Current: active,
+		Kind:       "session",
+		OwnerID:    sessionMenuOwner(inbound),
+		Channel:    inboundChannel(inbound),
+		Account:    inboundAccount(inbound),
+		ChatID:     inboundChatID(inbound),
+		TopicID:    inboundTopicID(inbound),
+		AgentID:    agentID,
+		Scope:      session.CanonicalScopeSignature(*scope),
+		Inbound:    menuInbound,
+		Page:       page,
+		Pages:      pages,
+		Entries:    entries,
+		Current:    active,
+		SessionKey: active,
 	}
 	return &bus.StructuredContent{
 		Kind: "session_list", Title: "Session", Tables: []bus.StructuredTable{{

@@ -8,52 +8,48 @@ import (
 func checkpointCommand() Definition {
 	return Definition{
 		Name:        "checkpoint",
-		Description: "List and resume task checkpoints",
+		Description: "List, resume, or archive durable task checkpoints",
+		Handler:     checkpointOperationHandler("dashboard", false),
 		SubCommands: []SubCommand{
-			{Name: "list", Description: "List active/suspended checkpoints", Handler: checkpointListHandler},
-			{Name: "resume", Description: "Resume a checkpoint", ArgsUsage: "<id>", Handler: checkpointResumeHandler},
-			{Name: "forget", Description: "Archive a checkpoint", ArgsUsage: "<id>", Handler: checkpointForgetHandler},
+			{Name: "list", Description: "List task checkpoints", Handler: checkpointOperationHandler("list", false)},
+			{
+				Name:        "resume",
+				Description: "Resume a checkpoint",
+				ArgsUsage:   "<id>",
+				Handler:     checkpointOperationHandler("resume", true),
+			},
+			{
+				Name:        "forget",
+				Description: "Archive a checkpoint",
+				ArgsUsage:   "<id>",
+				Handler:     checkpointOperationHandler("archive", true),
+			},
 		},
 	}
 }
 
-func checkpointListHandler(_ context.Context, req Request, rt *Runtime) error {
-	if rt == nil || rt.CheckpointList == nil {
-		return req.Reply(unavailableMsg)
+func checkpointOperationHandler(operation string, requiresID bool) Handler {
+	return func(ctx context.Context, req Request, rt *Runtime) error {
+		if rt == nil || rt.CheckpointCommand == nil {
+			return req.Reply(unavailableMsg)
+		}
+		id := ""
+		if requiresID {
+			id = strings.TrimSpace(nthToken(req.Text, 2))
+			if id == "" {
+				if operation == "resume" {
+					return req.Reply("Usage: /checkpoint resume <id>")
+				}
+				return req.Reply("Usage: /checkpoint forget <id>")
+			}
+		}
+		content, err := rt.CheckpointCommand(ctx, CheckpointCommandRequest{Operation: operation, ID: id})
+		if err != nil {
+			return req.Reply("Checkpoint command failed: " + err.Error())
+		}
+		if content == nil {
+			return req.Reply(unavailableMsg)
+		}
+		return req.replyStructured(*content)
 	}
-	response, err := rt.CheckpointList()
-	if err != nil {
-		return req.Reply("Failed to list checkpoints: " + err.Error())
-	}
-	return req.replyStructured(informationalLinesContent("Checkpoints", response))
-}
-
-func checkpointResumeHandler(_ context.Context, req Request, rt *Runtime) error {
-	if rt == nil || rt.CheckpointResume == nil {
-		return req.Reply(unavailableMsg)
-	}
-	id := strings.TrimSpace(nthToken(req.Text, 2))
-	if id == "" {
-		return req.Reply("Usage: /checkpoint resume <id>")
-	}
-	response, err := rt.CheckpointResume(id)
-	if err != nil {
-		return req.Reply("Failed to resume checkpoint: " + err.Error())
-	}
-	return req.Reply(response)
-}
-
-func checkpointForgetHandler(_ context.Context, req Request, rt *Runtime) error {
-	if rt == nil || rt.CheckpointForget == nil {
-		return req.Reply(unavailableMsg)
-	}
-	id := strings.TrimSpace(nthToken(req.Text, 2))
-	if id == "" {
-		return req.Reply("Usage: /checkpoint forget <id>")
-	}
-	response, err := rt.CheckpointForget(id)
-	if err != nil {
-		return req.Reply("Failed to forget checkpoint: " + err.Error())
-	}
-	return req.Reply(response)
 }

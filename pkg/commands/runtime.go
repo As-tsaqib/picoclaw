@@ -27,6 +27,23 @@ type ModelCommandRequest struct {
 
 type ModelCommandHandler func(context.Context, ModelCommandRequest) (*bus.StructuredContent, error)
 
+type SkillCommandRequest struct {
+	Operation string
+	Argument  string
+	Page      int
+	Query     string
+}
+
+type SkillCommandHandler func(context.Context, SkillCommandRequest) (*bus.StructuredContent, error)
+
+type CheckpointCommandRequest struct {
+	Operation string
+	ID        string
+	Page      int
+}
+
+type CheckpointCommandHandler func(context.Context, CheckpointCommandRequest) (*bus.StructuredContent, error)
+
 type MCPServerInfo struct {
 	Name      string
 	Enabled   bool
@@ -102,6 +119,8 @@ type Runtime struct {
 	SessionCommand     SessionCommandHandler
 	ModelCommand       ModelCommandHandler
 	MemoryCommand      MemoryCommandHandler
+	SkillCommand       SkillCommandHandler
+	CheckpointCommand  CheckpointCommandHandler
 }
 
 type MemoryCommandRequest struct {
