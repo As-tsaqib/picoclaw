@@ -194,7 +194,7 @@ func TestUserFacingErrorKeepsOnlyExplicitSafeErrors(t *testing.T) {
 func TestCompatibilityMetadataIsTruthful(t *testing.T) {
 	defs := BuiltinDefinitions()
 	switchDef := findDefinitionByName(t, defs, "switch")
-	if !switchDef.Deprecated || switchDef.Replacement != "/model use <alias|model>" {
+	if !switchDef.Deprecated || switchDef.Replacement != "/model use <model>" {
 		t.Fatalf("switch metadata=%+v", switchDef)
 	}
 	checkpoint := findDefinitionByName(t, defs, "checkpoint")
