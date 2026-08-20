@@ -22,6 +22,18 @@ func tableContent(title string, columns []string, rows [][]string, fallback stri
 	}
 }
 
+func detailHeaderColumns() []string {
+	return bus.CardHeaderColumns(bus.CardHeaderDetail, true)
+}
+
+func statusHeaderColumns() []string {
+	return bus.CardHeaderColumns(bus.CardHeaderStatus, true)
+}
+
+func inventoryHeaderColumns() []string {
+	return bus.CardHeaderColumns(bus.CardHeaderInventory, true)
+}
+
 func keyValueContent(title, text string) bus.StructuredContent {
 	rows := make([][]string, 0)
 	for _, line := range strings.Split(text, "\n") {
@@ -36,15 +48,15 @@ func keyValueContent(title, text string) bus.StructuredContent {
 		}
 		rows = append(rows, []string{strings.TrimSpace(key), strings.TrimSpace(value)})
 	}
-	return tableContent(title, []string{"Properti", "Nilai"}, rows, text)
+	return tableContent(title, detailHeaderColumns(), rows, text)
 }
 
 func numberedListContent(title, kind string, values []string, fallback string) bus.StructuredContent {
 	rows := make([][]string, 0, len(values))
 	for i, value := range values {
-		rows = append(rows, []string{strconv.Itoa(i + 1), kind, value, "Aktif"})
+		rows = append(rows, []string{strconv.Itoa(i + 1) + ". " + kind + " " + value, "🟢 ᴀᴄᴛɪᴠᴇ"})
 	}
-	return tableContent(title, []string{"No", "Jenis", "Nama", "Status"}, rows, fallback)
+	return tableContent(title, inventoryHeaderColumns(), rows, fallback)
 }
 
 func informationalLinesContent(title, text string) bus.StructuredContent {
@@ -57,5 +69,5 @@ func informationalLinesContent(title, text string) bus.StructuredContent {
 		line = strings.TrimSpace(strings.TrimPrefix(line, "-"))
 		rows = append(rows, []string{strconv.Itoa(len(rows) + 1), line})
 	}
-	return tableContent(title, []string{"No", "Informasi"}, rows, text)
+	return tableContent(title, inventoryHeaderColumns(), rows, text)
 }
