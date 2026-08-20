@@ -18,11 +18,19 @@ const (
 	skillSearchQueryMaxRunes  = 128
 )
 
-func configureSkillCommandRuntime(rt *commands.Runtime, agent *AgentInstance, opts *processOptions, al *AgentLoop) {
+func configureSkillCommandRuntime(
+	rt *commands.Runtime,
+	agent *AgentInstance,
+	opts *processOptions,
+	al *AgentLoop,
+) {
 	if rt == nil || agent == nil || opts == nil || al == nil {
 		return
 	}
-	rt.SkillCommand = func(ctx context.Context, req commands.SkillCommandRequest) (*bus.StructuredContent, error) {
+	rt.SkillCommand = func(
+		ctx context.Context,
+		req commands.SkillCommandRequest,
+	) (*bus.StructuredContent, error) {
 		return al.executeSkillCommand(ctx, agent, opts, req)
 	}
 }
@@ -138,8 +146,11 @@ func buildSkillPickerContent(
 	}
 	entries = append(entries, bus.InteractionEntry{Label: "✖️ Close", Action: "close"})
 	return &bus.StructuredContent{
-		Title: "Skill Picker", Paragraphs: lines,
-		Interaction: newBoundInteractionMenu("skill", agent.ID, sessionKey, scope, inbound, page, pages, query, "", entries),
+		Title:      "Skill Picker",
+		Paragraphs: lines,
+		Interaction: newBoundInteractionMenu(
+			"skill", agent.ID, sessionKey, scope, inbound, page, pages, query, "", entries,
+		),
 	}
 }
 
@@ -151,12 +162,18 @@ func buildSkillDetailContent(
 	skillName string,
 ) *bus.StructuredContent {
 	return &bus.StructuredContent{
-		Title: "Skill", Paragraphs: []string{skillName, "Arm this skill for the next normal message in this exact session."},
-		Interaction: newBoundInteractionMenu("skill", agent.ID, sessionKey, scope, inbound, 0, 1, "", skillName, []bus.InteractionEntry{
-			{Label: "✅ Arm for Next Message", Action: "arm", Value: skillName},
-			{Label: "↩️ Back", Action: "dashboard"},
-			{Label: "✖️ Close", Action: "close"},
-		}),
+		Title: "Skill",
+		Paragraphs: []string{
+			skillName,
+			"Arm this skill for the next normal message in this exact session.",
+		},
+		Interaction: newBoundInteractionMenu(
+			"skill", agent.ID, sessionKey, scope, inbound, 0, 1, "", skillName, []bus.InteractionEntry{
+				{Label: "✅ Arm for Next Message", Action: "arm", Value: skillName},
+				{Label: "↩️ Back", Action: "dashboard"},
+				{Label: "✖️ Close", Action: "close"},
+			},
+		),
 	}
 }
 
@@ -231,13 +248,20 @@ func (al *AgentLoop) handleInternalSkillCallback(
 			return nil, fmt.Errorf("skill is no longer installed")
 		}
 		al.setPendingSkills(req.SessionKey, []string{canonical})
-		content := buildSkillPickerContent(bound.agent, al, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0, "")
+		content := buildSkillPickerContent(
+			bound.agent, al, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0, "",
+		)
 		content.Title = "Skill Armed"
-		content.Paragraphs = append([]string{fmt.Sprintf("%s is armed for the next normal message in this session.", canonical)}, content.Paragraphs...)
+		content.Paragraphs = append(
+			[]string{fmt.Sprintf("%s is armed for the next normal message in this session.", canonical)},
+			content.Paragraphs...,
+		)
 		return &bus.InternalCallbackResponse{Content: content}, nil
 	case "clear":
 		al.clearPendingSkills(req.SessionKey)
-		content := buildSkillPickerContent(bound.agent, al, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0, "")
+		content := buildSkillPickerContent(
+			bound.agent, al, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0, "",
+		)
 		content.Title = "Pending Skill Cleared"
 		return &bus.InternalCallbackResponse{Content: content}, nil
 	case "search":
@@ -274,6 +298,7 @@ func minInt(a, b int) int {
 	}
 	return b
 }
+
 func maxInt(a, b int) int {
 	if a > b {
 		return a
