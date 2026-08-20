@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"fmt"
 	"strings"
 )
 
@@ -16,7 +15,7 @@ func discoveryDashboardHandler(domain string) Handler {
 			Operation: "dashboard",
 		})
 		if err != nil {
-			return req.Reply(fmt.Sprintf("%s command failed: %s", discoveryDomainLabel(domain), err.Error()))
+			return req.Reply(UserFacingError(err, discoveryDomainLabel(domain)+" service is temporarily unavailable. Please try again."))
 		}
 		if content == nil {
 			return req.Reply(unavailableMsg)
