@@ -163,7 +163,7 @@ func TestAppendContinuationFailureKeepsOldMenuActive(t *testing.T) {
 		old.token,
 		old,
 		&bus.InternalCallbackResponse{
-			Content: testSearchContinuationContent("model", "gpt", "si_v1_session-a"),
+			Content:    testSearchContinuationContent("model", "gpt", "si_v1_session-a"),
 			Transition: bus.InteractionAppendContinuation,
 		},
 	)
@@ -252,7 +252,7 @@ func TestModelSearchButtonUsesForceReplyAndBoundSession(t *testing.T) {
 			return &bus.InternalCallbackResponse{Text: "Reply to this prompt with a model name to search:"}, nil
 		}
 		return &bus.InternalCallbackResponse{
-			Content: testSearchContinuationContent("model", req.Value, sessionID),
+			Content:    testSearchContinuationContent("model", req.Value, sessionID),
 			Transition: bus.InteractionAppendContinuation,
 		}, nil
 	})
