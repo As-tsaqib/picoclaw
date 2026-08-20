@@ -11,10 +11,15 @@ import (
 
 func TestDiscoveryRootCommandsDelegateSemanticDomains(t *testing.T) {
 	var requests []DiscoveryCommandRequest
-	rt := &Runtime{DiscoveryCommand: func(_ context.Context, req DiscoveryCommandRequest) (*bus.StructuredContent, error) {
-		requests = append(requests, req)
-		return &bus.StructuredContent{Kind: req.Domain + "_dashboard", Fallback: req.Domain + " dashboard"}, nil
-	}}
+	rt := &Runtime{
+		DiscoveryCommand: func(
+			_ context.Context,
+			req DiscoveryCommandRequest,
+		) (*bus.StructuredContent, error) {
+			requests = append(requests, req)
+			return &bus.StructuredContent{Kind: req.Domain + "_dashboard", Fallback: req.Domain + " dashboard"}, nil
+		},
+	}
 	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 	for _, tc := range []struct {
 		text   string
