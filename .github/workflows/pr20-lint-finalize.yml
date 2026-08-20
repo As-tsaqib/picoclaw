@@ -1,3 +1,4 @@
+# Armed before this trigger commit so push execution is observable.
 name: PR20 exact lint finalizer
 
 on:
