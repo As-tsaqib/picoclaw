@@ -233,7 +233,7 @@ func buildCheckpointDetail(
 	}
 	entries = append(entries,
 		bus.InteractionEntry{Label: "🗄️ Archive", Action: "archive", Value: checkpoint.ID},
-		bus.InteractionEntry{Label: "↩️ Back", Action: "dashboard"},
+		bus.InteractionEntry{Label: "↩️ Back", Action: "back"},
 		bus.InteractionEntry{Label: "✖️ Close", Action: "close"},
 	)
 	return &bus.StructuredContent{
