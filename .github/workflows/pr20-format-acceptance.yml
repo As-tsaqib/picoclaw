@@ -2,7 +2,7 @@ name: PR20 acceptance formatter gate
 
 on:
   pull_request:
-    types: [synchronize]
+    types: [synchronize, reopened]
 
 permissions:
   contents: write
