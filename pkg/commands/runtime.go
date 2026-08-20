@@ -30,6 +30,7 @@ type ModelCommandHandler func(context.Context, ModelCommandRequest) (*bus.Struct
 type SkillCommandRequest struct {
 	Operation string
 	Argument  string
+	Message   string
 	Page      int
 	Query     string
 }
@@ -55,6 +56,21 @@ type DiscoveryCommandRequest struct {
 }
 
 type DiscoveryCommandHandler func(context.Context, DiscoveryCommandRequest) (*bus.StructuredContent, error)
+
+// MemoryCommandRequest is the single typed semantic request shared by textual
+// /memory handlers and interactive memory callbacks. Presentation/navigation
+// inputs are explicit and never encoded as slash-command text.
+type MemoryCommandRequest struct {
+	Operation   string
+	Argument    string
+	ID          string
+	Content     string
+	Page        int
+	Query       string
+	Interactive bool
+}
+
+type MemoryCommandHandler func(context.Context, MemoryCommandRequest) (*bus.StructuredContent, error)
 
 // ChannelStatus is a read-only snapshot. Available describes whether the
 // channel is currently usable/running; Enabled describes configuration/runtime
@@ -126,33 +142,29 @@ type Runtime struct {
 	ClearHistory       func() error
 	ReloadConfig       func() error
 	StopActiveTurn     func() (StopResult, error)
-	MemoryStatus       func() string
-	MemoryProfile      func() (string, error)
-	MemoryList         func() (string, error)
-	MemorySearch       func(query string) (string, error)
-	MemoryEdit         func(id, content string) (string, error)
-	MemoryEntryAction  func(action, id string) (string, error)
-	MemoryForget       func(id string) (string, error)
-	MemoryPending      func() (string, error)
-	MemoryApprove      func(id string) (string, error)
-	MemoryReject       func(id string) (string, error)
-	MemoryReview       func(ctx context.Context) (string, error)
-	CheckpointList     func() (string, error)
-	CheckpointResume   func(id string) (string, error)
-	CheckpointForget   func(id string) (string, error)
-	SessionCommand     SessionCommandHandler
-	ModelCommand       ModelCommandHandler
-	MemoryCommand      MemoryCommandHandler
-	SkillCommand       SkillCommandHandler
-	CheckpointCommand  CheckpointCommandHandler
-	DiscoveryCommand   DiscoveryCommandHandler
-	CheckChannel       CheckChannelHandler
-}
 
-type MemoryCommandRequest struct {
-	Operation string
-	Argument  string
-	Content   string
-}
+	// Legacy memory callbacks remain temporarily available to embedders, but
+	// built-in textual and interactive memory commands must use MemoryCommand.
+	MemoryStatus      func() string
+	MemoryProfile     func() (string, error)
+	MemoryList        func() (string, error)
+	MemorySearch      func(query string) (string, error)
+	MemoryEdit        func(id, content string) (string, error)
+	MemoryEntryAction func(action, id string) (string, error)
+	MemoryForget      func(id string) (string, error)
+	MemoryPending     func() (string, error)
+	MemoryApprove     func(id string) (string, error)
+	MemoryReject      func(id string) (string, error)
+	MemoryReview      func(ctx context.Context) (string, error)
 
-type MemoryCommandHandler func(context.Context, MemoryCommandRequest) (*bus.StructuredContent, error)
+	CheckpointList    func() (string, error)
+	CheckpointResume  func(id string) (string, error)
+	CheckpointForget  func(id string) (string, error)
+	SessionCommand    SessionCommandHandler
+	ModelCommand      ModelCommandHandler
+	MemoryCommand     MemoryCommandHandler
+	SkillCommand      SkillCommandHandler
+	CheckpointCommand CheckpointCommandHandler
+	DiscoveryCommand  DiscoveryCommandHandler
+	CheckChannel      CheckChannelHandler
+}
