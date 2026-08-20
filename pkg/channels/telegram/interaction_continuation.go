@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mymmrac/telego"
+
 	"github.com/As-tsaqib/picoclaw/pkg/bus"
 )
 
@@ -28,12 +30,15 @@ func (c *TelegramChannel) sendStructuredInteractionContinuation(
 
 	// Validate the interaction before transport so deterministic menu/keyboard
 	// failures cannot produce a visible but dead continuation card.
-	_, expected, err := c.structuredReplyMarkup(content, chatID, threadID)
+	markup, expected, err := c.structuredReplyMarkup(content, chatID, threadID)
 	if err != nil {
 		return nil, fmt.Errorf("prepare interaction continuation: %w", err)
 	}
 	if expected == nil {
 		return nil, fmt.Errorf("prepare interaction continuation: no menu candidate")
+	}
+	if !hasActionableInteractionMarkup(markup) {
+		return nil, fmt.Errorf("prepare interaction continuation: no actionable callback markup")
 	}
 
 	messageIDs, err := c.sendStructuredContent(ctx, msg, chatID, threadID, ephemeral)
@@ -55,6 +60,20 @@ func (c *TelegramChannel) sendStructuredInteractionContinuation(
 		return messageIDs, err
 	}
 	return messageIDs, nil
+}
+
+func hasActionableInteractionMarkup(markup *telego.InlineKeyboardMarkup) bool {
+	if markup == nil {
+		return false
+	}
+	for _, row := range markup.InlineKeyboard {
+		for _, button := range row {
+			if strings.TrimSpace(button.CallbackData) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *TelegramChannel) registeredContinuationForIdentity(
@@ -112,17 +131,46 @@ func continuationPlatformIdentity(
 }
 
 func continuationMenuStateMatches(actual, expected bus.InteractionMenu) bool {
-	return strings.EqualFold(strings.TrimSpace(actual.Kind), strings.TrimSpace(expected.Kind)) &&
-		strings.TrimSpace(actual.OwnerID) == strings.TrimSpace(expected.OwnerID) &&
-		strings.TrimSpace(actual.Channel) == strings.TrimSpace(expected.Channel) &&
+	if !strings.EqualFold(strings.TrimSpace(actual.Kind), strings.TrimSpace(expected.Kind)) ||
+		strings.TrimSpace(actual.OwnerID) != strings.TrimSpace(expected.OwnerID) ||
+		strings.TrimSpace(actual.Channel) != strings.TrimSpace(expected.Channel) ||
+		strings.TrimSpace(actual.Account) != strings.TrimSpace(expected.Account) ||
+		strings.TrimSpace(actual.ChatID) != strings.TrimSpace(expected.ChatID) ||
+		strings.TrimSpace(actual.TopicID) != strings.TrimSpace(expected.TopicID) ||
+		!strings.EqualFold(strings.TrimSpace(actual.AgentID), strings.TrimSpace(expected.AgentID)) ||
+		strings.TrimSpace(actual.Scope) != strings.TrimSpace(expected.Scope) ||
+		strings.TrimSpace(actual.SessionKey) != strings.TrimSpace(expected.SessionKey) ||
+		strings.TrimSpace(actual.Query) != strings.TrimSpace(expected.Query) ||
+		strings.TrimSpace(actual.Current) != strings.TrimSpace(expected.Current) ||
+		actual.Page != expected.Page || actual.Pages != expected.Pages ||
+		!continuationInboundStateMatches(actual.Inbound, expected.Inbound) ||
+		len(actual.Entries) != len(expected.Entries) {
+		return false
+	}
+	for i := range actual.Entries {
+		if actual.Entries[i] != expected.Entries[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func continuationInboundStateMatches(actual, expected bus.InboundContext) bool {
+	return strings.TrimSpace(actual.Channel) == strings.TrimSpace(expected.Channel) &&
 		strings.TrimSpace(actual.Account) == strings.TrimSpace(expected.Account) &&
 		strings.TrimSpace(actual.ChatID) == strings.TrimSpace(expected.ChatID) &&
+		strings.TrimSpace(actual.ChatType) == strings.TrimSpace(expected.ChatType) &&
 		strings.TrimSpace(actual.TopicID) == strings.TrimSpace(expected.TopicID) &&
-		strings.EqualFold(strings.TrimSpace(actual.AgentID), strings.TrimSpace(expected.AgentID)) &&
-		strings.TrimSpace(actual.Scope) == strings.TrimSpace(expected.Scope) &&
-		strings.TrimSpace(actual.SessionKey) == strings.TrimSpace(expected.SessionKey) &&
-		strings.TrimSpace(actual.Query) == strings.TrimSpace(expected.Query) &&
-		actual.Page == expected.Page && actual.Pages == expected.Pages
+		strings.TrimSpace(actual.SpaceID) == strings.TrimSpace(expected.SpaceID) &&
+		strings.TrimSpace(actual.SpaceType) == strings.TrimSpace(expected.SpaceType) &&
+		strings.TrimSpace(actual.SenderID) == strings.TrimSpace(expected.SenderID) &&
+		strings.TrimSpace(actual.MessageID) == strings.TrimSpace(expected.MessageID) &&
+		actual.Mentioned == expected.Mentioned &&
+		strings.TrimSpace(actual.ReplyToMessageID) == strings.TrimSpace(expected.ReplyToMessageID) &&
+		strings.TrimSpace(actual.ReplyToSenderID) == strings.TrimSpace(expected.ReplyToSenderID) &&
+		actual.PrivateResponse == expected.PrivateResponse &&
+		actual.PrivateSession == expected.PrivateSession &&
+		strings.TrimSpace(actual.PrivateRouteToken) == strings.TrimSpace(expected.PrivateRouteToken)
 }
 
 func validateContinuationRegistration(
