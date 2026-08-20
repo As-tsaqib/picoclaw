@@ -3,6 +3,9 @@ package commands
 import (
 	"context"
 	"fmt"
+	"strings"
+
+	"github.com/As-tsaqib/picoclaw/pkg/bus"
 )
 
 func showCommand() Definition {
@@ -56,6 +59,7 @@ func showModelHandler() Handler {
 				return req.Reply("Model command failed: " + err.Error())
 			}
 			if content != nil {
+				prependCurrentModelFallback(content)
 				return req.replyStructured(*content)
 			}
 		}
@@ -72,5 +76,37 @@ func showModelHandler() Handler {
 				fallback,
 			),
 		)
+	}
+}
+
+func prependCurrentModelFallback(content *bus.StructuredContent) {
+	if content == nil {
+		return
+	}
+	properties := make(map[string]string)
+	for _, table := range content.Tables {
+		for _, row := range table.Rows {
+			if len(row) < 2 {
+				continue
+			}
+			properties[strings.TrimSpace(row[0])] = strings.TrimSpace(row[1])
+		}
+	}
+	name := properties["Alias"]
+	if name == "" || name == "-" {
+		name = properties["Model"]
+	}
+	provider := properties["Provider"]
+	if name == "" || name == "-" || provider == "" || provider == "-" {
+		return
+	}
+	summary := fmt.Sprintf("Current Model: %s (Provider: %s)", name, provider)
+	fallback := strings.TrimSpace(content.Fallback)
+	if fallback == "" {
+		content.Fallback = summary
+		return
+	}
+	if !strings.Contains(fallback, summary) {
+		content.Fallback = summary + "\n" + fallback
 	}
 }
