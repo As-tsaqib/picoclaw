@@ -113,7 +113,7 @@ func (al *AgentLoop) applyUseIntent(
 		if content == nil {
 			return true, true, commandsUnavailableSkillMessage(), nil
 		}
-		return true, true, content.FallbackText(), content, nil
+		return true, true, content.FallbackText(), content
 
 	case commands.UseIntentClear:
 		if opts != nil {
