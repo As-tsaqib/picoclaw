@@ -1,3 +1,4 @@
+# Bounded PR-only validation helper; self-removes after success.
 name: PR20 exact lint finalizer
 
 on:
