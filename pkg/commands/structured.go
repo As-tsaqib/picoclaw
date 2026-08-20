@@ -54,7 +54,7 @@ func keyValueContent(title, text string) bus.StructuredContent {
 func numberedListContent(title, kind string, values []string, fallback string) bus.StructuredContent {
 	rows := make([][]string, 0, len(values))
 	for i, value := range values {
-		rows = append(rows, []string{strconv.Itoa(i + 1) + ". " + kind + " " + value, "🟢 ᴀᴄᴛɪᴠᴇ"})
+		rows = append(rows, []string{strconv.Itoa(i+1) + ". " + kind + " " + value, "🟢 ᴀᴄᴛɪᴠᴇ"})
 	}
 	return tableContent(title, inventoryHeaderColumns(), rows, fallback)
 }
