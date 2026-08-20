@@ -92,7 +92,9 @@ func showMCPToolsHandler() Handler {
 		if err != nil {
 			return req.Reply(UserFacingError(err, "MCP service is temporarily unavailable. Please try again."))
 		}
-		sort.SliceStable(tools, func(i, j int) bool { return strings.ToLower(tools[i].Name) < strings.ToLower(tools[j].Name) })
+		sort.SliceStable(tools, func(i, j int) bool {
+			return strings.ToLower(tools[i].Name) < strings.ToLower(tools[j].Name)
+		})
 		if hasStatus {
 			rows = append(rows, []string{"Active tools", fmt.Sprintf("%d", len(tools))})
 			lines = append(lines, fmt.Sprintf("Active tools: %d", len(tools)), "")
