@@ -434,7 +434,11 @@ func (al *AgentLoop) buildModelSearch(
 	}
 	active := effectiveSessionModel(mcx.Agent, store, cfg, mcx.SessionKey)
 	if len(filtered) == 0 {
-		content := modelInteractiveMessage(mcx, "Hasil Pencarian — "+query, "Tidak ada model yang cocok dengan pencarian ini.")
+		content := modelInteractiveMessage(
+			mcx,
+			"Hasil Pencarian — "+query,
+			"Tidak ada model yang cocok dengan pencarian ini.",
+		)
 		if content.Interaction != nil {
 			content.Interaction.Query = query
 			content.Interaction.Entries = append(
@@ -1076,14 +1080,6 @@ func modelInteractiveMessage(mcx modelCommandContext, title, text string) *bus.S
 		Fallback:    text,
 		Interaction: modelMenu(mcx, 0, 1, entries),
 	}
-}
-
-func buildModelSearchPrompt(mcx modelCommandContext) *bus.StructuredContent {
-	return modelInteractiveMessage(
-		mcx,
-		"Search Models",
-		"Ketik /model search <kata> untuk mencari configured dan cached available models.",
-	)
 }
 
 func mustModelState(state modelMenuState) string {

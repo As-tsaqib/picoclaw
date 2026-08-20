@@ -162,10 +162,18 @@ func TestModelSearchTextAndInteractivePathsShareSemanticSearchAndQueryState(t *t
 	assert.Contains(t, textual.Title, "gpt")
 
 	base := bus.InternalCallbackRequest{
-		Kind: "model", Action: "search", Value: "gpt",
-		OwnerID: msg.Context.SenderID, Channel: msg.Context.Channel, Account: msg.Context.Account,
-		ChatID: msg.Context.ChatID, TopicID: msg.Context.TopicID, AgentID: agent.ID,
-		SessionKey: allocation.SessionKey, Scope: session.CanonicalScopeSignature(allocation.Scope), Inbound: msg.Context,
+		Kind:       "model",
+		Action:     "search",
+		Value:      "gpt",
+		OwnerID:    msg.Context.SenderID,
+		Channel:    msg.Context.Channel,
+		Account:    msg.Context.Account,
+		ChatID:     msg.Context.ChatID,
+		TopicID:    msg.Context.TopicID,
+		AgentID:    agent.ID,
+		SessionKey: allocation.SessionKey,
+		Scope:      session.CanonicalScopeSignature(allocation.Scope),
+		Inbound:    msg.Context,
 	}
 	interactive, err := al.handleInternalCallback(context.Background(), base)
 	require.NoError(t, err)
@@ -203,7 +211,12 @@ func TestModelSearchTextAndInteractivePathsShareSemanticSearchAndQueryState(t *t
 	require.NotNil(t, paged.Content.Interaction)
 	assert.Equal(t, 1, paged.Content.Interaction.Page)
 	assert.Equal(t, "gpt", paged.Content.Interaction.Query)
-	assert.Equal(t, bus.InteractionTransition(""), paged.Transition, "callback-only pagination should default to replace")
+	assert.Equal(
+		t,
+		bus.InteractionTransition(""),
+		paged.Transition,
+		"callback-only pagination should default to replace",
+	)
 
 	tooLong := strings.Repeat("x", modelSearchQueryMaxRunes+1)
 	_, err = al.executeModelCommand(context.Background(), mcx, commands.ModelCommandRequest{

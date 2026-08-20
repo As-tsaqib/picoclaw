@@ -1116,10 +1116,15 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(ctx context.Context, m
 	}
 	if err := c.applyInteractionResponse(ctx, message, prompt.token, prompt.menu, response); err != nil {
 		logger.WarnCF(
-			"telegram", "Interaction response after prompt reply failed", map[string]any{"reason": "telegram_transition_failed"},
+			"telegram",
+			"Interaction response after prompt reply failed",
+			map[string]any{"reason": "telegram_transition_failed"},
 		)
 		return true, c.sendSessionRenameNotice(
-			ctx, message, prompt, "Permintaan berhasil diproses, tetapi tampilan interaktif gagal diperbarui. Jalankan command lagi.",
+			ctx,
+			message,
+			prompt,
+			"Permintaan berhasil diproses, tetapi tampilan interaktif gagal diperbarui. Jalankan command lagi.",
 		)
 	}
 	return true, nil

@@ -73,16 +73,18 @@ func TestSearchPromptReplyAppendsNewInteractionAndRetiresOldMenu(t *testing.T) {
 	)
 
 	requests := make([]bus.InternalCallbackRequest, 0, 2)
-	ch.SetInternalCallbackHandler(func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
-		requests = append(requests, req)
-		content := testSearchContinuationContent("skill", strings.TrimSpace(req.Value), sessionID)
-		if req.Action == "search" {
-			return &bus.InternalCallbackResponse{
-				Content: content, Transition: bus.InteractionAppendContinuation,
-			}, nil
-		}
-		return &bus.InternalCallbackResponse{Content: content}, nil
-	})
+	ch.SetInternalCallbackHandler(
+		func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
+			requests = append(requests, req)
+			content := testSearchContinuationContent("skill", strings.TrimSpace(req.Value), sessionID)
+			if req.Action == "search" {
+				return &bus.InternalCallbackResponse{
+					Content: content, Transition: bus.InteractionAppendContinuation,
+				}, nil
+			}
+			return &bus.InternalCallbackResponse{Content: content}, nil
+		},
+	)
 
 	reply := &telego.Message{
 		MessageID: 100, From: &telego.User{ID: 42}, Text: "web",
@@ -96,7 +98,12 @@ func TestSearchPromptReplyAppendsNewInteractionAndRetiresOldMenu(t *testing.T) {
 
 	require.Len(t, callOrder, 2)
 	assert.Contains(t, callOrder[0], "sendRichMessage", "result must be appended before the old card is retired")
-	assert.Contains(t, callOrder[1], "editMessageReplyMarkup", "old keyboard should be disabled only after append succeeds")
+	assert.Contains(
+		t,
+		callOrder[1],
+		"editMessageReplyMarkup",
+		"old keyboard should be disabled only after append succeeds",
+	)
 	for _, call := range callOrder {
 		assert.NotContains(t, call, "editMessageText", "prompt-driven search must not edit the old result card")
 	}
@@ -246,16 +253,18 @@ func TestModelSearchButtonUsesForceReplyAndBoundSession(t *testing.T) {
 	ch.storeSessionMenu(*pending)
 
 	requests := make([]bus.InternalCallbackRequest, 0, 2)
-	ch.SetInternalCallbackHandler(func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
-		requests = append(requests, req)
-		if strings.TrimSpace(req.Value) == "" {
-			return &bus.InternalCallbackResponse{Text: "Reply to this prompt with a model name to search:"}, nil
-		}
-		return &bus.InternalCallbackResponse{
-			Content:    testSearchContinuationContent("model", req.Value, sessionID),
-			Transition: bus.InteractionAppendContinuation,
-		}, nil
-	})
+	ch.SetInternalCallbackHandler(
+		func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
+			requests = append(requests, req)
+			if strings.TrimSpace(req.Value) == "" {
+				return &bus.InternalCallbackResponse{Text: "Reply to this prompt with a model name to search:"}, nil
+			}
+			return &bus.InternalCallbackResponse{
+				Content:    testSearchContinuationContent("model", req.Value, sessionID),
+				Transition: bus.InteractionAppendContinuation,
+			}, nil
+		},
+	)
 
 	search := findInlineButton(t, markup, "🔎 Search")
 	require.NoError(t, ch.handleCallbackQuery(context.Background(), &telego.CallbackQuery{
@@ -287,7 +296,11 @@ func TestModelSearchButtonUsesForceReplyAndBoundSession(t *testing.T) {
 	assert.Equal(t, "search", requests[1].Action)
 	assert.Equal(t, "gpt", requests[1].Value)
 	assert.Equal(t, sessionID, requests[1].SessionKey)
-	assert.False(t, strings.HasPrefix(requests[1].Value, "/model search"), "prompt path must carry semantic input, not slash text")
+	assert.False(
+		t,
+		strings.HasPrefix(requests[1].Value, "/model search"),
+		"prompt path must carry semantic input, not slash text",
+	)
 	require.Len(t, caller.calls, 4)
 	assert.Contains(t, caller.calls[2].URL, "sendRichMessage")
 	assert.Contains(t, caller.calls[3].URL, "editMessageReplyMarkup")
@@ -329,7 +342,12 @@ func TestModelSearchPromptRejectsCrossScopeExpiredAndReplay(t *testing.T) {
 			Kind: "model", OwnerID: "42", Channel: "telegram", Account: "telegram", ChatID: "12345/7",
 			TopicID: "7", AgentID: "main", Scope: "scope-a", SessionKey: "si_v1_bound",
 			Inbound: bus.InboundContext{
-				Channel: "telegram", Account: "telegram", ChatID: "12345/7", TopicID: "7", ChatType: "group", SenderID: "42",
+				Channel:  "telegram",
+				Account:  "telegram",
+				ChatID:   "12345/7",
+				TopicID:  "7",
+				ChatType: "group",
+				SenderID: "42",
 			},
 		},
 	}

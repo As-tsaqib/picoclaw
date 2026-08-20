@@ -75,22 +75,24 @@ func TestMemorySearchReplyAppendsPrivateContinuationAndRetiresOldMenu(t *testing
 	ch.sessionMenuMu.Unlock()
 	require.Len(t, oldToken, 12)
 
-	ch.SetInternalCallbackHandler(func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
-		if strings.TrimSpace(req.Value) == "" {
-			return &bus.InternalCallbackResponse{Text: "Reply to this prompt with a memory query to search:"}, nil
-		}
-		updated := testMemoryStructuredContent()
-		updated.Title = "Memory Search Results"
-		updated.Interaction.ChatID = strconvFormatChat(chatID, threadID)
-		updated.Interaction.TopicID = strconv.Itoa(threadID)
-		updated.Interaction.OwnerID = strconv.FormatInt(ownerID, 10)
-		updated.Interaction.Query = strings.TrimSpace(req.Value)
-		updated.Interaction.Inbound = privateOutboundContext(target)
-		updated.Interaction.Inbound.PrivateSession = true
-		return &bus.InternalCallbackResponse{
-			Content: updated, Transition: bus.InteractionAppendContinuation,
-		}, nil
-	})
+	ch.SetInternalCallbackHandler(
+		func(_ context.Context, req bus.InternalCallbackRequest) (*bus.InternalCallbackResponse, error) {
+			if strings.TrimSpace(req.Value) == "" {
+				return &bus.InternalCallbackResponse{Text: "Reply to this prompt with a memory query to search:"}, nil
+			}
+			updated := testMemoryStructuredContent()
+			updated.Title = "Memory Search Results"
+			updated.Interaction.ChatID = strconvFormatChat(chatID, threadID)
+			updated.Interaction.TopicID = strconv.Itoa(threadID)
+			updated.Interaction.OwnerID = strconv.FormatInt(ownerID, 10)
+			updated.Interaction.Query = strings.TrimSpace(req.Value)
+			updated.Interaction.Inbound = privateOutboundContext(target)
+			updated.Interaction.Inbound.PrivateSession = true
+			return &bus.InternalCallbackResponse{
+				Content: updated, Transition: bus.InteractionAppendContinuation,
+			}, nil
+		},
+	)
 
 	var dashboard struct {
 		ReplyMarkup telego.InlineKeyboardMarkup `json:"reply_markup"`
@@ -117,13 +119,23 @@ func TestMemorySearchReplyAppendsPrivateContinuationAndRetiresOldMenu(t *testing
 	assert.Equal(t, 3, sendMessageCalls)
 
 	for _, call := range caller.calls {
-		assert.NotContains(t, call.URL, "editEphemeralMessageText", "search result must append instead of editing the old card")
+		assert.NotContains(
+			t,
+			call.URL,
+			"editEphemeralMessageText",
+			"search result must append instead of editing the old card",
+		)
 	}
 	var resultSend struct {
 		ReceiverUserID int64 `json:"receiver_user_id"`
 	}
 	require.NoError(t, json.Unmarshal(caller.calls[3].Data.BodyRaw, &resultSend))
-	assert.Equal(t, ownerID, resultSend.ReceiverUserID, "continuation must preserve verified private receiver authority")
+	assert.Equal(
+		t,
+		ownerID,
+		resultSend.ReceiverUserID,
+		"continuation must preserve verified private receiver authority",
+	)
 
 	ch.sessionMenuMu.Lock()
 	_, oldStillActive := ch.sessionMenus[oldToken]
