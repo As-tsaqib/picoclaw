@@ -111,6 +111,13 @@ func TestCheckpointSemanticServiceAndNavigationPreserveOriginPage(t *testing.T) 
 	require.NotNil(t, confirm.Interaction)
 	assert.Equal(t, 3, detail.Interaction.Page)
 	assert.Equal(t, 3, confirm.Interaction.Page)
+	foundBack := false
+	for _, entry := range detail.Interaction.Entries {
+		if entry.Action == "back" {
+			foundBack = true
+		}
+	}
+	assert.True(t, foundBack, "detail back must route through the page-preserving callback action")
 	assert.Equal(t, 2, len(store.mutations), "rendering confirmation/cancel state must not mutate the checkpoint")
 	foundCancel := false
 	for _, entry := range confirm.Interaction.Entries {
