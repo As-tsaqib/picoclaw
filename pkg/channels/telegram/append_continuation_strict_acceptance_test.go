@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,73 @@ func TestAppendContinuationInteractionValidationFailureKeepsOldMenuActive(t *tes
 			strings.Contains(call.URL, "editMessageReplyMarkup"),
 			"old keyboard must not be retired when continuation establishment fails",
 		)
+	}
+}
+
+func TestAppendContinuationRegistrationEvictionKeepsOldMenuActive(t *testing.T) {
+	caller := &stubCaller{callFn: func(_ context.Context, url string, _ *ta.RequestData) (*ta.Response, error) {
+		if strings.Contains(url, "sendRichMessage") {
+			return successResponseWithMessageID(t, 101), nil
+		}
+		return nil, errors.New("unexpected Telegram call " + url)
+	}}
+	ch := newTestChannel(t, caller)
+
+	oldContent := testSearchContinuationContent("model", "", "si_v1_session-a")
+	future := time.Now().Add(time.Hour)
+	old := telegramSessionMenu{
+		token:     "old-menu",
+		menu:      *oldContent.Interaction,
+		chatID:    12345,
+		messageID: 91,
+		createdAt: future,
+	}
+	ch.storeSessionMenu(old)
+	for i := 0; i < sessionMenuMax-1; i++ {
+		ch.storeSessionMenu(telegramSessionMenu{
+			token:     fmt.Sprintf("filler-%03d", i),
+			menu:      bus.InteractionMenu{Kind: "session"},
+			chatID:    12345,
+			messageID: 1000 + i,
+			createdAt: future.Add(time.Duration(i+1) * time.Millisecond),
+		})
+	}
+
+	result := testSearchContinuationContent("model", "gpt", "si_v1_session-a")
+	err := ch.applyInteractionResponse(
+		context.Background(),
+		&telego.Message{MessageID: 100, Chat: telego.Chat{ID: 12345}},
+		old.token,
+		old,
+		&bus.InternalCallbackResponse{
+			Content:    result,
+			Transition: bus.InteractionAppendContinuation,
+		},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "interaction continuation registration failed")
+	require.Len(t, caller.calls, 1, "registration failure is detected after the successful transport send")
+	assert.Contains(t, caller.calls[0].URL, "sendRichMessage")
+
+	registeredOld, ok := ch.takeSessionMenu(old.token)
+	require.True(t, ok, "capacity eviction of the new menu must not retire the prior capability")
+	action, _, actionable := resolveSessionMenuAction(registeredOld.menu, "m0")
+	assert.True(t, actionable)
+	assert.Equal(t, "detail", action)
+
+	ch.sessionMenuMu.Lock()
+	activeCount := len(ch.sessionMenus)
+	newIdentityPresent := false
+	for _, menu := range ch.sessionMenus {
+		if menu.messageID == 101 {
+			newIdentityPresent = true
+		}
+	}
+	ch.sessionMenuMu.Unlock()
+	assert.Equal(t, sessionMenuMax, activeCount)
+	assert.False(t, newIdentityPresent, "failed registration must not leave a competing callback capability")
+	for _, call := range caller.calls {
+		assert.NotContains(t, call.URL, "editMessageReplyMarkup", "old keyboard must remain active")
 	}
 }
 
