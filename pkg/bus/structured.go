@@ -62,6 +62,11 @@ type InteractionMenu struct {
 	Pages   int
 	Entries []InteractionEntry
 	Current string
+	// SessionKey is trusted process-local binding for session-sensitive menus.
+	// It is never serialized into platform callback_data.
+	SessionKey string
+	// Query is optional server-side interaction state (for example search paging).
+	Query string
 }
 
 type InteractionEntry struct {
@@ -89,6 +94,7 @@ type InternalCallbackRequest struct {
 	Inbound    InboundContext
 	Page       int
 	SessionKey string
+	Query      string
 }
 
 type InternalCallbackResponse struct {

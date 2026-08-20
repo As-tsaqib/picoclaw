@@ -406,7 +406,6 @@ func expectedMemoryMenuRoute(chatID int64, threadID int) (string, string) {
 	topic := ""
 	if threadID > 0 {
 		topic = strconv.Itoa(threadID)
-		chat += "/" + topic
 	}
 	return chat, topic
 }
@@ -424,9 +423,6 @@ func sealMemoryInteractionAccount(menu *bus.InteractionMenu, account string) {
 	case menuAccount == "" && inboundAccount != "":
 		menu.Account = inboundAccount
 	case menuAccount == "" && inboundAccount == "" && account != "":
-		// Seal legacy/adapter-local structured content to this channel account
-		// before it becomes callback state. Mismatched non-empty values are
-		// deliberately left untouched so validation still fails closed.
 		menu.Account = account
 		menu.Inbound.Account = account
 	}
@@ -482,13 +478,19 @@ func (c *TelegramChannel) structuredReplyMarkup(
 	menu := *content.Interaction
 	menu.Entries = append([]bus.InteractionEntry(nil), content.Interaction.Entries...)
 	kind := strings.ToLower(strings.TrimSpace(menu.Kind))
-	if (kind != "session" && kind != "model" && kind != "memory") || menu.OwnerID == "" || menu.AgentID == "" {
+	if (kind != "session" && kind != "model" && kind != "memory" && kind != "skill" && kind != "checkpoint") ||
+		menu.OwnerID == "" || menu.AgentID == "" {
 		return nil, nil, fmt.Errorf("interactive menu metadata is incomplete")
 	}
-	if (kind == "session" || kind == "model") && menu.Scope == "" {
+	if (kind == "session" || kind == "model" || kind == "skill" || kind == "checkpoint") && menu.Scope == "" {
 		return nil, nil, fmt.Errorf("interactive menu metadata is incomplete")
 	}
-	if kind == "memory" {
+	if kind == "skill" || kind == "checkpoint" {
+		if strings.TrimSpace(menu.SessionKey) == "" {
+			return nil, nil, fmt.Errorf("interactive menu session binding is incomplete")
+		}
+	}
+	if kind == "memory" || kind == "skill" || kind == "checkpoint" {
 		sealMemoryInteractionAccount(&menu, c.Name())
 		if err := validateMemoryInteractionEnvelope(menu, chatID, threadID, c.Name()); err != nil {
 			return nil, nil, err
@@ -505,8 +507,8 @@ func (c *TelegramChannel) structuredReplyMarkup(
 	switch kind {
 	case "model":
 		keyboard = modelInteractionKeyboard(menu, callback)
-	case "memory":
-		keyboard = memoryInteractionKeyboard(menu, callback)
+	case "memory", "skill", "checkpoint":
+		keyboard = entryInteractionKeyboard(menu, callback)
 	default:
 		keyboard = sessionInteractionKeyboard(menu, callback)
 	}
@@ -578,7 +580,7 @@ func sessionInteractionKeyboard(
 	return keyboard
 }
 
-func memoryInteractionKeyboard(menu bus.InteractionMenu, callback func(string) string) [][]telego.InlineKeyboardButton {
+func entryInteractionKeyboard(menu bus.InteractionMenu, callback func(string) string) [][]telego.InlineKeyboardButton {
 	keyboard := make([][]telego.InlineKeyboardButton, 0, 6)
 	selects := make([]int, 0, 5)
 	pages := make([]int, 0, 3)
@@ -592,7 +594,7 @@ func memoryInteractionKeyboard(menu bus.InteractionMenu, callback func(string) s
 			closeEntries = append(closeEntries, idx)
 		case "page", "browse_page", "search_page", "pending_page", "noop":
 			pages = append(pages, idx)
-		case "forget", "forget_confirm", "reject":
+		case "forget", "forget_confirm", "reject", "archive", "archive_confirm":
 			dangerActions = append(dangerActions, idx)
 		default:
 			if len(entry.Label) <= 4 && action == "detail" {
@@ -612,7 +614,8 @@ func memoryInteractionKeyboard(menu bus.InteractionMenu, callback func(string) s
 			for _, idx := range indices[:n] {
 				entry := menu.Entries[idx]
 				style := defaultStyle
-				if entry.Action == "forget" || entry.Action == "reject" || entry.Action == "close" {
+				if entry.Action == "forget" || entry.Action == "reject" || entry.Action == "archive" ||
+					entry.Action == "archive_confirm" || entry.Action == "close" {
 					style = telego.ButtonStyleDanger
 				} else if entry.Action == "approve" || entry.Action == "restore" {
 					style = telego.ButtonStyleSuccess
@@ -747,13 +750,29 @@ func (c *TelegramChannel) consumeSessionMenu(token string) bool {
 	return true
 }
 
-func isMemoryMutationAction(action string) bool {
-	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "forget", "approve", "reject", "pin", "unpin", "archive", "restore":
-		return true
-	default:
-		return false
+func isInteractionMutationAction(kind, action string) bool {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	action = strings.ToLower(strings.TrimSpace(action))
+	switch kind {
+	case "memory":
+		switch action {
+		case "forget", "approve", "reject", "pin", "unpin", "archive", "restore":
+			return true
+		}
+	case "skill":
+		return action == "arm" || action == "clear"
+	case "checkpoint":
+		return action == "resume" || action == "archive_confirm"
 	}
+	return false
+}
+
+func isInteractionPromptAction(kind, action string) bool {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	action = strings.ToLower(strings.TrimSpace(action))
+	return (kind == "session" && action == "rename") ||
+		(kind == "memory" && (action == "search" || action == "edit")) ||
+		(kind == "skill" && action == "search")
 }
 
 func (c *TelegramChannel) claimSessionMenuMutation(token, code string) bool {
@@ -965,20 +984,28 @@ func (c *TelegramChannel) claimSessionRenamePrompt(
 		return prompt, sessionRenameClaimRejected
 	}
 	kind := strings.ToLower(strings.TrimSpace(prompt.menu.menu.Kind))
-	if (kind == "session" || kind == "model") && strings.TrimSpace(prompt.menu.menu.Scope) == "" {
+	if (kind == "session" || kind == "model" || kind == "skill" || kind == "checkpoint") &&
+		strings.TrimSpace(prompt.menu.menu.Scope) == "" {
 		return prompt, sessionRenameClaimRejected
 	}
 	if kind == "session" && prompt.action == "rename" && strings.TrimSpace(prompt.menu.menu.Current) == "" {
 		return prompt, sessionRenameClaimRejected
 	}
-	if kind == "memory" {
+	if kind == "memory" || kind == "skill" || kind == "checkpoint" {
 		if err := validateMemoryInteractionEnvelope(
 			prompt.menu.menu, prompt.menu.chatID, prompt.menu.threadID, c.Name(),
 		); err != nil {
 			return prompt, sessionRenameClaimRejected
 		}
+	}
+	if kind == "memory" {
 		if (prompt.action == "edit" && strings.TrimSpace(prompt.menu.menu.Current) == "") ||
 			(prompt.action != "edit" && prompt.action != "search") {
+			return prompt, sessionRenameClaimRejected
+		}
+	}
+	if kind == "skill" {
+		if prompt.action != "search" || strings.TrimSpace(prompt.menu.menu.SessionKey) == "" {
 			return prompt, sessionRenameClaimRejected
 		}
 	}
@@ -1010,6 +1037,8 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(ctx context.Context, m
 			noticeText = "Permintaan rename sudah kedaluwarsa. Jalankan /session lagi."
 		} else if prompt.menu.menu.Kind == "memory" {
 			noticeText = "Permintaan memory sudah kedaluwarsa. Jalankan /memory lagi."
+		} else if prompt.menu.menu.Kind == "skill" {
+			noticeText = "Skill search sudah kedaluwarsa. Jalankan /use lagi."
 		}
 		return true, c.sendSessionRenameNotice(ctx, message, prompt, noticeText)
 	case sessionRenameClaimInvalid:
@@ -1018,6 +1047,8 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(ctx context.Context, m
 			invalidText = "Nama session harus berupa teks yang tidak kosong."
 		} else if prompt.menu.menu.Kind == "memory" {
 			invalidText = "Input memory harus berupa teks yang tidak kosong."
+		} else if prompt.menu.menu.Kind == "skill" {
+			invalidText = "Skill search harus berupa teks yang tidak kosong."
 		}
 		return true, c.sendSessionRenameNotice(ctx, message, prompt, invalidText)
 	}
@@ -1041,14 +1072,11 @@ func (c *TelegramChannel) handlePendingSessionRenameReply(ctx context.Context, m
 		OwnerID: prompt.menu.menu.OwnerID, Channel: prompt.menu.menu.Channel, Account: prompt.menu.menu.Account,
 		ChatID: prompt.menu.menu.ChatID, TopicID: prompt.menu.menu.TopicID, MessageID: inbound.MessageID,
 		AgentID: prompt.menu.menu.AgentID, Scope: prompt.menu.menu.Scope, Inbound: inbound,
-		Page: prompt.menu.menu.Page, SessionKey: prompt.menu.menu.Current,
+		Page: prompt.menu.menu.Page, SessionKey: interactionMenuSessionState(prompt.menu.menu), Query: prompt.menu.menu.Query,
 	})
 	if err != nil {
 		logger.WarnCF("telegram", "Prompt reply was rejected", map[string]any{"reason": "scope_or_state_validation"})
-		return true, c.sendSessionRenameNotice(
-			ctx, message, prompt,
-			"Permintaan tidak dapat diproses. Jalankan command lagi.",
-		)
+		return true, c.sendSessionRenameNotice(ctx, message, prompt, "Permintaan tidak dapat diproses. Jalankan command lagi.")
 	}
 	if response == nil || response.Content == nil {
 		text := "Perubahan berhasil disimpan."
@@ -1141,6 +1169,16 @@ func parseInternalSessionCallback(data string) (token, code string, ok bool) {
 	return parts[0], parts[1], true
 }
 
+func interactionMenuSessionState(menu bus.InteractionMenu) string {
+	if bound := strings.TrimSpace(menu.SessionKey); bound != "" {
+		return bound
+	}
+	// Compatibility for pre-foundation session/model/memory menus, which used
+	// Current as private server-side state. New session-sensitive interactions
+	// always populate SessionKey explicitly.
+	return strings.TrimSpace(menu.Current)
+}
+
 func (c *TelegramChannel) handleInternalSessionCallback(ctx context.Context, query *telego.CallbackQuery) error {
 	if query == nil || strings.TrimSpace(query.ID) == "" {
 		return nil
@@ -1170,15 +1208,19 @@ func (c *TelegramChannel) handleInternalSessionCallback(ctx context.Context, que
 	if consume && !c.consumeSessionMenu(token) {
 		return c.answerSessionCallback(ctx, query.ID, "Tombol sudah diproses. Jalankan /session lagi.", true)
 	}
-	if kind == "memory" && isMemoryMutationAction(action) && !c.claimSessionMenuMutation(token, code) {
-		return c.answerSessionCallback(ctx, query.ID, "Tombol sudah diproses. Jalankan /memory lagi.", true)
+	if isInteractionMutationAction(kind, action) && !c.claimSessionMenuMutation(token, code) {
+		return c.answerSessionCallback(ctx, query.ID, "Tombol sudah diproses. Jalankan command lagi.", true)
 	}
 	answerText := ""
 	switch action {
 	case "rename":
 		answerText = "Balas prompt untuk mengganti nama session."
 	case "search":
-		answerText = "Balas prompt untuk mencari memory."
+		if kind == "skill" {
+			answerText = "Balas prompt untuk mencari skill."
+		} else {
+			answerText = "Balas prompt untuk mencari memory."
+		}
 	case "edit":
 		answerText = "Balas prompt untuk mengedit memory."
 	case "noop":
@@ -1196,7 +1238,7 @@ func (c *TelegramChannel) handleInternalSessionCallback(ctx context.Context, que
 		OwnerID: menu.menu.OwnerID, Channel: menu.menu.Channel, Account: menu.menu.Account,
 		ChatID: menu.menu.ChatID, TopicID: menu.menu.TopicID, MessageID: strconv.Itoa(message.MessageID),
 		AgentID: menu.menu.AgentID, Scope: menu.menu.Scope, Inbound: menu.menu.Inbound,
-		Page: menu.menu.Page, SessionKey: menu.menu.Current,
+		Page: menu.menu.Page, SessionKey: interactionMenuSessionState(menu.menu), Query: menu.menu.Query,
 	})
 	if handlerErr != nil {
 		logger.WarnCF(
@@ -1207,7 +1249,7 @@ func (c *TelegramChannel) handleInternalSessionCallback(ctx context.Context, que
 	if response == nil {
 		return nil
 	}
-	if (action == "rename" || action == "search" || action == "edit") && strings.TrimSpace(value) == "" {
+	if isInteractionPromptAction(kind, action) && strings.TrimSpace(value) == "" {
 		return c.beginSessionRenamePrompt(ctx, query, token, menu, response.Text, action)
 	}
 	if response.Close {
@@ -1279,7 +1321,8 @@ func (c *TelegramChannel) sessionCallbackEnvelopeValid(
 	}) {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(menu.menu.Kind), "memory") {
+	kind := strings.ToLower(strings.TrimSpace(menu.menu.Kind))
+	if kind == "memory" || kind == "skill" || kind == "checkpoint" {
 		if err := validateMemoryInteractionEnvelope(menu.menu, menu.chatID, menu.threadID, c.Name()); err != nil {
 			return false
 		}
@@ -1299,7 +1342,8 @@ func resolveSessionMenuAction(menu bus.InteractionMenu, code string) (action, va
 		}
 		return entry.Action, entry.Value, true
 	}
-	if strings.EqualFold(strings.TrimSpace(menu.Kind), "memory") && strings.HasPrefix(code, "e") {
+	kind := strings.ToLower(strings.TrimSpace(menu.Kind))
+	if (kind == "memory" || kind == "skill" || kind == "checkpoint") && strings.HasPrefix(code, "e") {
 		idx, err := strconv.Atoi(strings.TrimPrefix(code, "e"))
 		if err != nil || idx < 0 || idx >= len(menu.Entries) {
 			return "", "", false

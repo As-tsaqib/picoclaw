@@ -39,6 +39,21 @@ func (al *AgentLoop) handleCommandWithStructured(
 		return "", nil, false
 	}
 
+	if commandName, ok := commands.CommandName(msg.Content); ok && commandName == "use" &&
+		len(strings.Fields(strings.TrimSpace(msg.Content))) < 2 {
+		rt := al.buildCommandsRuntime(ctx, agent, opts)
+		if rt != nil && rt.SkillCommand != nil {
+			content, err := rt.SkillCommand(ctx, commands.SkillCommandRequest{Operation: "dashboard"})
+			if err != nil {
+				return "Failed to open skill picker: " + err.Error(), nil, true
+			}
+			if content != nil {
+				return content.FallbackText(), content, true
+			}
+		}
+		return commandsUnavailableSkillMessage(), nil, true
+	}
+
 	if matched, handled, reply := al.applyExplicitSkillCommand(msg.Content, agent, opts); matched {
 		return reply, nil, handled
 	}
@@ -100,7 +115,10 @@ func (al *AgentLoop) applyExplicitSkillCommand(
 
 	parts := strings.Fields(strings.TrimSpace(raw))
 	if len(parts) < 2 {
-		return true, true, buildUseCommandHelp(agent)
+		// No-argument /use is owned by the typed command handler so capable
+		// channels can render the interactive picker. Argument forms remain
+		// on this compatibility path unchanged.
+		return false, false, ""
 	}
 
 	arg := strings.TrimSpace(parts[1])
@@ -376,6 +394,8 @@ func (al *AgentLoop) buildCommandsRuntime(
 	}
 	configureMemoryCommandRuntime(rt, agent, opts, al)
 	configureSessionCommandRuntime(rt, agent, opts, al)
+	configureSkillCommandRuntime(rt, agent, opts, al)
+	configureCheckpointCommandRuntime(rt, agent, opts, al)
 	return rt
 }
 

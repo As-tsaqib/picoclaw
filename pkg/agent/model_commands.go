@@ -996,19 +996,20 @@ func modelMenu(mcx modelCommandContext, page, pages int, entries []bus.Interacti
 		scope = session.CanonicalScopeSignature(*mcx.Scope)
 	}
 	return &bus.InteractionMenu{
-		Kind:    "model",
-		OwnerID: sessionMenuOwner(mcx.Inbound),
-		Channel: inboundChannel(mcx.Inbound),
-		Account: inboundAccount(mcx.Inbound),
-		ChatID:  inboundChatID(mcx.Inbound),
-		TopicID: inboundTopicID(mcx.Inbound),
-		AgentID: mcx.Agent.ID,
-		Scope:   scope,
-		Inbound: inbound,
-		Page:    page,
-		Pages:   pages,
-		Entries: entries,
-		Current: mcx.SessionKey,
+		Kind:       "model",
+		OwnerID:    sessionMenuOwner(mcx.Inbound),
+		Channel:    inboundChannel(mcx.Inbound),
+		Account:    inboundAccount(mcx.Inbound),
+		ChatID:     inboundChatID(mcx.Inbound),
+		TopicID:    inboundTopicID(mcx.Inbound),
+		AgentID:    mcx.Agent.ID,
+		Scope:      scope,
+		Inbound:    inbound,
+		Page:       page,
+		Pages:      pages,
+		Entries:    entries,
+		Current:    mcx.SessionKey,
+		SessionKey: mcx.SessionKey,
 	}
 }
 

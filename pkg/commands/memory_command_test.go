@@ -19,14 +19,25 @@ func TestMemoryAndCheckpointCommandsDispatchRuntimeControls(t *testing.T) {
 		MemoryEntryAction: func(action, id string) (string, error) {
 			return action + " " + id, nil
 		},
-		MemoryForget:     func(id string) (string, error) { return "forgot " + id, nil },
-		MemoryPending:    func() (string, error) { return "pending", nil },
-		MemoryApprove:    func(id string) (string, error) { return "approved " + id, nil },
-		MemoryReject:     func(id string) (string, error) { return "rejected " + id, nil },
-		MemoryReview:     func(context.Context) (string, error) { return "review started", nil },
-		CheckpointList:   func() (string, error) { return "checkpoint list", nil },
-		CheckpointResume: func(id string) (string, error) { return "resumed " + id, nil },
-		CheckpointForget: func(id string) (string, error) { return "archived " + id, nil },
+		MemoryForget:  func(id string) (string, error) { return "forgot " + id, nil },
+		MemoryPending: func() (string, error) { return "pending", nil },
+		MemoryApprove: func(id string) (string, error) { return "approved " + id, nil },
+		MemoryReject:  func(id string) (string, error) { return "rejected " + id, nil },
+		MemoryReview:  func(context.Context) (string, error) { return "review started", nil },
+		CheckpointCommand: func(_ context.Context, req CheckpointCommandRequest) (*bus.StructuredContent, error) {
+			text := ""
+			switch req.Operation {
+			case "list":
+				text = "checkpoint list"
+			case "resume":
+				text = "resumed " + req.ID
+			case "archive":
+				text = "archived " + req.ID
+			default:
+				text = req.Operation
+			}
+			return &bus.StructuredContent{Fallback: text}, nil
+		},
 	}
 	executor := NewExecutor(NewRegistry(BuiltinDefinitions()), runtime)
 	tests := []struct {
