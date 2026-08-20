@@ -39,7 +39,7 @@ func checkChannelHandler() Handler {
 				Argument:  value,
 			})
 			if err != nil {
-				return req.Reply("Channel check failed: " + err.Error())
+				return req.Reply(unavailableMsg)
 			}
 			if content != nil {
 				return req.replyStructured(*content)
@@ -52,7 +52,7 @@ func checkChannelHandler() Handler {
 		}
 		status, err := rt.CheckChannel(value)
 		if err != nil {
-			return req.Reply("Channel check failed: " + err.Error())
+			return req.Reply(unavailableMsg)
 		}
 		return req.replyStructured(channelStatusContent(status))
 	}
