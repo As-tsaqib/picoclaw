@@ -55,7 +55,10 @@ func showMCPToolsHandler() Handler {
 		if rt.ListMCPServers != nil {
 			resolved, ok := findMCPServer(rt.ListMCPServers(ctx), requested)
 			if !ok {
-				return req.Reply(fmt.Sprintf("MCP server %q is not configured. Use /list mcp to see configured servers.", requested))
+				return req.Reply(fmt.Sprintf(
+					"MCP server %q is not configured. Use /list mcp to see configured servers.",
+					requested,
+				))
 			}
 			server = resolved
 			hasStatus = true

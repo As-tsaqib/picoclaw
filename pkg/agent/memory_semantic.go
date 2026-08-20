@@ -247,7 +247,10 @@ func (al *AgentLoop) executeMemorySemanticCommand(
 			return nil, err
 		}
 		if !started {
-			return memorySemanticText("Memory Review", "A memory review is already running, or there is nothing eligible to start."), nil
+			return memorySemanticText(
+				"Memory Review",
+				"A memory review is already running, or there is nothing eligible to start.",
+			), nil
 		}
 		return memorySemanticText("Memory Review", "Started a bounded memory review."), nil
 
