@@ -1,0 +1,68 @@
+name: PR19 lint normalize
+
+on:
+  push:
+    branches:
+      - feat/telegram-skill-checkpoint-interactions
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact staged head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - name: Verify staged parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "d779c2d338ac66d64210440500f5cdfaad48c2ed"
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Install exact lint toolchain
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.10.1
+          install-only: true
+      - name: Normalize exact lint findings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('pkg/commands/memory_command_test.go')
+          s = p.read_text()
+          old = '\t\t\ttext := ""'
+          new = '\t\t\tvar text string'
+          if s.count(old) != 1:
+              raise SystemExit('wastedassign baseline mismatch')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          bin="$(find "$HOME" -maxdepth 3 -type f -name golangci-lint -perm -111 | head -n 1)"
+          test -n "$bin"
+          "$bin" fmt
+          rm .github/workflows/pr19-lint-normalize.yml
+          git diff --check
+          allowed='pkg/agent/checkpoint_commands.go
+          pkg/agent/skill_checkpoint_interaction_test.go
+          pkg/agent/skill_commands.go
+          pkg/channels/telegram/interaction_foundation_test.go
+          pkg/channels/telegram/structured_delivery.go
+          pkg/commands/cmd_checkpoint.go
+          pkg/commands/memory_command_test.go'
+          unexpected="$(comm -23 <(git diff --name-only | sort) <(printf '%s\n' "$allowed" | sed 's/^ *//' | sort))"
+          test -z "$unexpected"
+          "$bin" run --build-tags=goolm,stdjson
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "style(telegram): satisfy interaction lint formatters"
+          git push origin HEAD:feat/telegram-skill-checkpoint-interactions
