@@ -35,12 +35,13 @@ jobs:
           python3 -m py_compile /tmp/apply.py
           python3 /tmp/apply.py
 
-      - name: Fix safe generated ordering and format
+      - name: Fix safe generated ordering and help acceptance
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path('pkg/agent/memory_commands.go')
           s = p.read_text()
           old = '''\t\tbound.Query = menu.Query\n\t\tbound.SessionKey = menu.SessionKey\n\t\tif bindErr != nil {\n'''
@@ -53,10 +54,19 @@ jobs:
                   raise SystemExit('memory interaction rebind marker missing')
               s = s.replace(marker, repl, 1)
               p.write_text(s)
+
+          p = Path('pkg/commands/builtin_test.go')
+          s = p.read_text()
+          old = '/use - Force a specific installed skill for one request'
+          new = '/use - Open the skill picker or force an installed skill for a request'
+          if s.count(old) != 1:
+              raise SystemExit(f'expected one old /use help assertion, found {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
           PY
           gofmt -w \
             pkg/bus/structured.go \
             pkg/commands/cmd_use.go \
+            pkg/commands/builtin_test.go \
             pkg/agent/skill_commands.go \
             pkg/agent/memory_commands.go \
             pkg/agent/checkpoint_commands.go \
