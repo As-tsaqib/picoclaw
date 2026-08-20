@@ -196,7 +196,16 @@ func buildSkillDetailContent(
 			"Arm this skill for the next normal message in this exact session.",
 		},
 		Interaction: newBoundInteractionMenu(
-			"skill", agent.ID, sessionKey, scope, inbound, page, maxInt(page+1, 1), query, skillName, []bus.InteractionEntry{
+			"skill",
+			agent.ID,
+			sessionKey,
+			scope,
+			inbound,
+			page,
+			maxInt(page+1, 1),
+			query,
+			skillName,
+			[]bus.InteractionEntry{
 				{Label: "✅ Arm for Next Message", Action: "arm", Value: skillName},
 				{Label: "↩️ Back", Action: "back"},
 				{Label: "✖️ Close", Action: "close"},
