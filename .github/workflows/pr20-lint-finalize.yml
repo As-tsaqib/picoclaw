@@ -27,24 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('pkg/agent/model_commands.go')
-          s = p.read_text()
-          old = '''func buildModelSearchPrompt(mcx modelCommandContext) *bus.StructuredContent {
-\treturn modelInteractiveMessage(
-\t\tmcx,
-\t\t"Search Models",
-\t\t"Ketik /model search <kata> untuk mencari configured dan cached available models.",
-\t)
-}
-
-'''
-          if old in s:
-              p.write_text(s.replace(old, '', 1))
-          elif 'func buildModelSearchPrompt(' in s:
-              raise SystemExit('legacy model search helper changed unexpectedly')
-          PY
+          python3 -c 'from pathlib import Path; p=Path("pkg/agent/model_commands.go"); s=p.read_text(); start=s.find("func buildModelSearchPrompt("); end=s.find("\n}\n", start); p.write_text(s if start < 0 else s[:start] + s[end + 3:])'
 
       - name: Run exact formatter and lint
         shell: bash
@@ -65,12 +48,11 @@ jobs:
           go test -tags goolm,stdjson ./pkg/agent ./pkg/channels/telegram
           go test -race -tags goolm,stdjson ./pkg/agent ./pkg/channels/telegram
 
-      - name: Commit validated tree and remove helpers
+      - name: Commit validated tree and remove helper
         shell: bash
         run: |
           set -euo pipefail
           rm -f .github/workflows/pr20-lint-finalize.yml
-          rm -f .github/workflows/pr20-format-acceptance.yml
           git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
