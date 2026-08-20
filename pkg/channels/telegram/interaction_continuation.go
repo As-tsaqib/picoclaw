@@ -36,65 +36,79 @@ func (c *TelegramChannel) sendStructuredInteractionContinuation(
 		return nil, fmt.Errorf("prepare interaction continuation: no menu candidate")
 	}
 
-	before := c.snapshotSessionMenuTokens()
 	messageIDs, err := c.sendStructuredContent(ctx, msg, chatID, threadID, ephemeral)
 	if err != nil {
 		return messageIDs, err
 	}
-
-	registered := c.newContinuationMenus(before, *expected)
-	if len(registered) != 1 {
-		c.deleteContinuationMenus(registered)
-		return messageIDs, fmt.Errorf("interaction continuation registration failed")
-	}
-	if err := validateContinuationRegistration(registered[0], *expected, ephemeral); err != nil {
-		c.deleteContinuationMenus(registered)
-		return messageIDs, err
-	}
 	if len(messageIDs) != 1 {
-		c.deleteContinuationMenus(registered)
+		c.deleteMenusForContinuationIdentity(messageIDs, ephemeral)
 		return messageIDs, fmt.Errorf("interaction continuation returned an unexpected message identity count")
 	}
-	if ephemeral == nil {
-		messageID, parseErr := strconv.Atoi(strings.TrimSpace(messageIDs[0]))
-		if parseErr != nil || messageID != registered[0].messageID {
-			c.deleteContinuationMenus(registered)
-			return messageIDs, fmt.Errorf("interaction continuation message binding mismatch")
-		}
+
+	registered, err := c.registeredContinuationForIdentity(messageIDs[0], *expected, ephemeral)
+	if err != nil {
+		c.deleteMenusForContinuationIdentity(messageIDs, ephemeral)
+		return messageIDs, err
+	}
+	if err := validateContinuationRegistration(registered, *expected, ephemeral); err != nil {
+		c.deleteMenusForContinuationIdentity(messageIDs, ephemeral)
+		return messageIDs, err
 	}
 	return messageIDs, nil
 }
 
-func (c *TelegramChannel) snapshotSessionMenuTokens() map[string]struct{} {
+func (c *TelegramChannel) registeredContinuationForIdentity(
+	messageID string,
+	expected telegramSessionMenu,
+	ephemeral *telegramEphemeralTarget,
+) (telegramSessionMenu, error) {
+	publicID, privateID, err := continuationPlatformIdentity(messageID, ephemeral)
+	if err != nil {
+		return telegramSessionMenu{}, err
+	}
+
 	c.sessionMenuMu.Lock()
 	defer c.sessionMenuMu.Unlock()
 	c.pruneSessionMenusLocked(time.Now())
-	tokens := make(map[string]struct{}, len(c.sessionMenus))
-	for token := range c.sessionMenus {
-		tokens[token] = struct{}{}
+	var matched telegramSessionMenu
+	matches := 0
+	for _, candidate := range c.sessionMenus {
+		if candidate.chatID != expected.chatID || candidate.threadID != expected.threadID {
+			continue
+		}
+		if ephemeral == nil {
+			if candidate.messageID != publicID || candidate.ephemeralID > 0 {
+				continue
+			}
+		} else if candidate.ephemeralID != privateID || candidate.messageID > 0 ||
+			candidate.receiverUserID != ephemeral.ReceiverUserID {
+			continue
+		}
+		matches++
+		matched = candidate
 	}
-	return tokens
+	if matches != 1 {
+		return telegramSessionMenu{}, fmt.Errorf("interaction continuation registration failed")
+	}
+	return matched, nil
 }
 
-func (c *TelegramChannel) newContinuationMenus(
-	before map[string]struct{},
-	expected telegramSessionMenu,
-) []telegramSessionMenu {
-	c.sessionMenuMu.Lock()
-	defer c.sessionMenuMu.Unlock()
-	c.pruneSessionMenusLocked(time.Now())
-	menus := make([]telegramSessionMenu, 0, 1)
-	for token, candidate := range c.sessionMenus {
-		if _, existed := before[token]; existed {
-			continue
+func continuationPlatformIdentity(
+	messageID string,
+	ephemeral *telegramEphemeralTarget,
+) (publicID int, privateID int, err error) {
+	if ephemeral == nil {
+		publicID, err = strconv.Atoi(strings.TrimSpace(messageID))
+		if err != nil || publicID <= 0 {
+			return 0, 0, fmt.Errorf("interaction continuation public message identity is invalid")
 		}
-		if candidate.chatID != expected.chatID || candidate.threadID != expected.threadID ||
-			!continuationMenuStateMatches(candidate.menu, expected.menu) {
-			continue
-		}
-		menus = append(menus, candidate)
+		return publicID, 0, nil
 	}
-	return menus
+	token, privateID, ok := parseEphemeralMessageID(strings.TrimSpace(messageID))
+	if !ok || token != ephemeral.Token || privateID <= 0 {
+		return 0, 0, fmt.Errorf("interaction continuation private message identity is invalid")
+	}
+	return 0, privateID, nil
 }
 
 func continuationMenuStateMatches(actual, expected bus.InteractionMenu) bool {
@@ -135,10 +149,28 @@ func validateContinuationRegistration(
 	return nil
 }
 
-func (c *TelegramChannel) deleteContinuationMenus(menus []telegramSessionMenu) {
-	for _, menu := range menus {
-		if strings.TrimSpace(menu.token) != "" {
-			c.deleteSessionMenu(menu.token)
+func (c *TelegramChannel) deleteMenusForContinuationIdentity(
+	messageIDs []string,
+	ephemeral *telegramEphemeralTarget,
+) {
+	if len(messageIDs) != 1 {
+		return
+	}
+	publicID, privateID, err := continuationPlatformIdentity(messageIDs[0], ephemeral)
+	if err != nil {
+		return
+	}
+	c.sessionMenuMu.Lock()
+	defer c.sessionMenuMu.Unlock()
+	for token, menu := range c.sessionMenus {
+		if ephemeral == nil {
+			if menu.messageID == publicID && menu.ephemeralID <= 0 {
+				delete(c.sessionMenus, token)
+			}
+			continue
+		}
+		if menu.ephemeralID == privateID && menu.messageID <= 0 && menu.receiverUserID == ephemeral.ReceiverUserID {
+			delete(c.sessionMenus, token)
 		}
 	}
 }
