@@ -1,14 +1,8 @@
 package agent
 
 // GetStatus keeps the recordingChannelManager test double aligned with the
-// production read-only ChannelManager status contract.
+// production read-only ChannelManager status contract. This double does not
+// model registered channels, so its truthful status snapshot is empty.
 func (m *recordingChannelManager) GetStatus() map[string]any {
-	status := make(map[string]any)
-	for name, channel := range m.channels {
-		status[name] = map[string]any{
-			"enabled": true,
-			"running": channel != nil && channel.IsRunning(),
-		}
-	}
-	return status
+	return map[string]any{}
 }
