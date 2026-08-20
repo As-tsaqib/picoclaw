@@ -320,6 +320,10 @@ func (h *Handler) TryAutoStartGateway() {
 	pidData := h.sanitizeGatewayPidData(ppid.ReadPidFileWithCheck(globalConfigDir()), nil)
 	if pidData != nil {
 		gateway.mu.Lock()
+		// Auto-start expresses an ongoing intent, not a one-shot attempt. Arm
+		// the watchdog before readiness validation so transient boot-time
+		// failures are retried once their prerequisites recover.
+		gateway.keepAlive = true
 		ready, reason, err := h.gatewayStartReady()
 		if err != nil {
 			logger.ErrorC("gateway", fmt.Sprintf("Skip auto-starting gateway: %v", err))
@@ -337,7 +341,6 @@ func (h *Handler) TryAutoStartGateway() {
 		if err != nil {
 			logger.ErrorC("gateway", fmt.Sprintf("Failed to attach to running gateway (PID: %d): %v", pid, err))
 		} else {
-			gateway.keepAlive = true
 			gateway.pidData = pidData
 			refreshPicoTokensLocked(h.configPath)
 			logger.InfoC("gateway", fmt.Sprintf("Attached to running gateway via PID file (PID: %d)", pid))
@@ -348,6 +351,7 @@ func (h *Handler) TryAutoStartGateway() {
 
 	gateway.mu.Lock()
 	defer gateway.mu.Unlock()
+	gateway.keepAlive = true
 
 	if gateway.cmd != nil && gateway.cmd.Process != nil {
 		gateway.cmd = nil
@@ -368,7 +372,6 @@ func (h *Handler) TryAutoStartGateway() {
 		logger.ErrorC("gateway", fmt.Sprintf("Failed to auto-start gateway: %v", err))
 		return
 	}
-	gateway.keepAlive = true
 	logger.InfoC("gateway", fmt.Sprintf("Gateway auto-started (PID: %d)", pid))
 }
 

@@ -359,6 +359,59 @@ func TestStartGatewayLocked_UsesReloadedConfigForBootSignature(t *testing.T) {
 	}
 }
 
+func TestGatewayAutoStartRetriesAfterReadinessRecovers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep command differs on Windows")
+	}
+
+	resetGatewayTestState(t)
+	gatewayWatchdogInterval = 20 * time.Millisecond
+	gatewayWatchdogRestartDelay = 10 * time.Millisecond
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.ModelName = ""
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	h := NewHandler(configPath)
+	h.SetServerOptions(18800, false, false, nil)
+	h.StartGatewayWatchdog()
+	t.Cleanup(h.Shutdown)
+
+	var starts atomic.Int32
+	gatewayExecCommand = func(_ string, _ ...string) *exec.Cmd {
+		starts.Add(1)
+		return exec.Command("sleep", "30")
+	}
+
+	h.TryAutoStartGateway()
+
+	gateway.mu.Lock()
+	keepAlive := gateway.keepAlive
+	gateway.mu.Unlock()
+	if !keepAlive {
+		t.Fatal("deferred auto-start did not arm gateway watchdog")
+	}
+	if got := starts.Load(); got != 0 {
+		t.Fatalf("gateway starts before readiness = %d, want 0", got)
+	}
+
+	cfg.Agents.Defaults.ModelName = cfg.ModelList[0].ModelName
+	cfg.ModelList[0].SetAPIKey("test-key")
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() after readiness recovery error = %v", err)
+	}
+
+	waitForGatewayTestCondition(t, 3*time.Second, func() bool {
+		gateway.mu.Lock()
+		defer gateway.mu.Unlock()
+		return starts.Load() >= 1 && gateway.cmd != nil &&
+			isCmdProcessAliveLocked(gateway.cmd)
+	})
+}
+
 func TestGatewayWatchdogRestartsUnexpectedExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("sleep command differs on Windows")
