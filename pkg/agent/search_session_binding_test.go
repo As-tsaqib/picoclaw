@@ -15,8 +15,6 @@ func TestModelSearchCallbackKeepsBoundSessionAfterActiveSessionChanges(t *testin
 	al, cfg, _, _, cleanup := newTestAgentLoop(t)
 	defer cleanup()
 	cfg.Session.Dimensions = []string{"chat", "sender"}
-	cfg.ModelList = configuredSearchModels()
-	cfg.Agents.Defaults.Provider = "openai"
 
 	msg := telegramSessionTestMessage("")
 	route, agent, err := al.resolveMessageRoute(msg)
