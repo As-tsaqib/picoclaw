@@ -25,7 +25,7 @@ func TestMemoryAndCheckpointCommandsDispatchRuntimeControls(t *testing.T) {
 		MemoryReject:  func(id string) (string, error) { return "rejected " + id, nil },
 		MemoryReview:  func(context.Context) (string, error) { return "review started", nil },
 		CheckpointCommand: func(_ context.Context, req CheckpointCommandRequest) (*bus.StructuredContent, error) {
-			text := ""
+			var text string
 			switch req.Operation {
 			case "list":
 				text = "checkpoint list"
