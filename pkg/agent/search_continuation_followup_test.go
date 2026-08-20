@@ -23,6 +23,7 @@ func TestSkillPickerFallbackIsCompleteAndDetailBackKeepsSearchState(t *testing.T
 	for _, name := range names {
 		assert.Contains(t, fallback, "- "+name)
 	}
+	assert.Contains(t, fallback, "Use /use to")
 	assert.Contains(t, fallback, "/use <skill>")
 	assert.Contains(t, fallback, "/use <skill> <message>")
 	assert.Contains(t, fallback, "/use clear")
