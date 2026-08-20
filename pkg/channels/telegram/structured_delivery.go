@@ -1223,7 +1223,7 @@ func (c *TelegramChannel) appendInteractionContinuation(
 	if after != nil && after.MessageID > 0 && after.EphemeralMessageID <= 0 {
 		replyTo = strconv.Itoa(after.MessageID)
 	}
-	_, err = c.sendStructuredContent(ctx, bus.OutboundMessage{
+	_, err = c.sendStructuredInteractionContinuation(ctx, bus.OutboundMessage{
 		Content: content.FallbackText(), Structured: content, ReplyToMessageID: replyTo,
 	}, menu.chatID, menu.threadID, ephemeral)
 	if err != nil {
