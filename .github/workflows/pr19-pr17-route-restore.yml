@@ -1,0 +1,48 @@
+name: PR19 restore PR17 route binding
+
+on:
+  push:
+    branches:
+      - feat/telegram-skill-checkpoint-interactions
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - name: Restore PR17 topic binding exactly
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "8a1eb5c12d9748cffa641bdf622e3779a2a75843"
+          test "$(git hash-object pkg/channels/telegram/structured_delivery.go)" = "5ebe702a12a5ed0e2473eed5054d0c0627430e25"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('pkg/channels/telegram/structured_delivery.go')
+          s = p.read_text()
+          old = '''\tif threadID > 0 {\n\t\ttopic = strconv.Itoa(threadID)\n\t}\n\treturn chat, topic\n'''
+          new = '''\tif threadID > 0 {\n\t\ttopic = strconv.Itoa(threadID)\n\t\tchat += "/" + topic\n\t}\n\treturn chat, topic\n'''
+          if s.count(old) != 1:
+              raise SystemExit('expectedMemoryMenuRoute baseline mismatch')
+          s = s.replace(old, new, 1)
+          old_comment = '''\tcase menuAccount == "" && inboundAccount == "" && account != "":\n\t\tmenu.Account = account\n'''
+          new_comment = '''\tcase menuAccount == "" && inboundAccount == "" && account != "":\n\t\t// Seal legacy/adapter-local structured content to this channel account\n\t\t// before it becomes callback state. Mismatched non-empty values are\n\t\t// deliberately left untouched so validation still fails closed.\n\t\tmenu.Account = account\n'''
+          if s.count(old_comment) != 1:
+              raise SystemExit('sealMemoryInteractionAccount baseline mismatch')
+          p.write_text(s.replace(old_comment, new_comment, 1))
+          PY
+          rm .github/workflows/pr19-pr17-route-restore.yml
+          gofmt -w pkg/channels/telegram/structured_delivery.go
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(telegram): preserve PR17 topic route binding"
+          git push origin HEAD:feat/telegram-skill-checkpoint-interactions
