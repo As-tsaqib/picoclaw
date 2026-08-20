@@ -23,7 +23,7 @@ func (al *AgentLoop) handleInternalCallback(
 	case "model":
 		return al.handleInternalModelCallback(ctx, req)
 	case "memory":
-		return al.handleInternalMemoryCallback(ctx, req)
+		return al.handleInternalMemorySemanticCallback(ctx, req)
 	case "skill":
 		return al.handleInternalSkillCallback(ctx, req)
 	case "checkpoint":
