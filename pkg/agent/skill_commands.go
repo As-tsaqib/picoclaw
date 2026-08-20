@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	skillInteractionPageSize   = 5
-	skillInteractiveSearchMax  = 50
-	skillSearchQueryMaxRunes   = 128
+	skillInteractionPageSize  = 5
+	skillInteractiveSearchMax = 50
+	skillSearchQueryMaxRunes  = 128
 )
 
 func configureSkillCommandRuntime(rt *commands.Runtime, agent *AgentInstance, opts *processOptions, al *AgentLoop) {
