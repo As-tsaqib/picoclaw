@@ -105,7 +105,9 @@ func showMCPToolsHandler() Handler {
 			if !hasStatus {
 				rows = append(rows, []string{"Server", server.Name}, []string{"Active tools", "0"})
 			}
-			return req.replyStructured(tableContent("MCP Server", statusHeaderColumns(), rows, strings.Join(lines, "\n")))
+			return req.replyStructured(
+				tableContent("MCP Server", statusHeaderColumns(), rows, strings.Join(lines, "\n")),
+			)
 		}
 
 		for _, tool := range tools {
