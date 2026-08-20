@@ -107,6 +107,7 @@ func buildSkillPickerFallback(names []string, query, pending string) string {
 		lines = append(lines, "Pending override: "+pending)
 	}
 	lines = append(lines,
+		"Use /use to discover installed skills.",
 		"Use /use <skill> to arm a skill for your next message.",
 		"Use /use <skill> <message> to force it for the current request.",
 		"Use /use clear or /use off to cancel a pending override.",
