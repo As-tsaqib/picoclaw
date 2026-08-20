@@ -59,7 +59,7 @@ func TestDiscoveryDelegatesModelAndSkillCatalogDomains(t *testing.T) {
 			modelCalled = true
 			require.Equal(t, "list", req.Operation)
 			return &bus.StructuredContent{
-				Fallback: "models",
+				Fallback:    "models",
 				Interaction: &bus.InteractionMenu{Kind: "model", SessionKey: "si_v1_bound"},
 			}, nil
 		},
@@ -67,7 +67,7 @@ func TestDiscoveryDelegatesModelAndSkillCatalogDomains(t *testing.T) {
 			skillCalled = true
 			require.Equal(t, "dashboard", req.Operation)
 			return &bus.StructuredContent{
-				Fallback: "skills",
+				Fallback:    "skills",
 				Interaction: &bus.InteractionMenu{Kind: "skill", SessionKey: "si_v1_bound"},
 			}, nil
 		},
