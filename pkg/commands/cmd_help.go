@@ -104,7 +104,7 @@ func formatHelpMessage(defs []Definition) string {
 		if detail == "" {
 			detail = "No description"
 		}
-		line := "/" + def.Name + " — " + detail
+		line := "/" + def.Name + " - " + detail
 		if len(def.Aliases) > 0 {
 			line += " (aliases: /" + strings.Join(def.Aliases, ", /") + ")"
 		}
