@@ -1,36 +1,26 @@
 package agent
 
-import (
-	"fmt"
-
-	"github.com/As-tsaqib/picoclaw/pkg/providers"
-)
+import "github.com/As-tsaqib/picoclaw/pkg/providers"
 
 func formatProcessingError(err error) string {
 	if err == nil {
 		return ""
 	}
-
 	if kind, ok := providers.ClassifyAuthError(err); ok {
-		return fmt.Sprintf(
-			"Error processing message: %s\n\nOriginal error:\n%s",
-			authErrorFriendlyMessage(kind),
-			err.Error(),
-		)
+		return "Error processing message: " + authErrorFriendlyMessage(kind)
 	}
-
-	return fmt.Sprintf("Error processing message: %v", err)
+	return "Error processing message: an internal service failed. Please try again."
 }
 
 func authErrorFriendlyMessage(kind providers.AuthErrorKind) string {
 	switch kind {
 	case providers.AuthErrorInvalidAPIKey:
-		return "Authentication failed: the API key appears to be invalid. Check the API key configured for this model or provider."
+		return "Authentication failed: the configured API key was rejected. Check the credentials for this model or provider."
 	case providers.AuthErrorMissingAPIKey:
-		return "Authentication failed: no API key is configured for this model or provider. Add an API key in the model settings or config."
+		return "Authentication failed: this model or provider has no usable API key configured."
 	case providers.AuthErrorExpiredToken:
 		return "Authentication failed: the saved login or token appears to be expired. Re-authenticate the provider."
 	default:
-		return "Authentication failed: check the API key, token, OAuth login, or provider permissions for this model."
+		return "Authentication failed: check the provider credentials or permissions for this model."
 	}
 }
