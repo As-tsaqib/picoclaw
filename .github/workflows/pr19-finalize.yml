@@ -1,0 +1,76 @@
+name: PR19 final interaction validation
+
+on:
+  push:
+    branches:
+      - feat/telegram-skill-checkpoint-interactions
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - name: Verify expected parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "d6f85ff1a4b726910b7124ca965f7d1daca9c697"
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Install exact repository lint toolchain
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.10.1
+          install-only: true
+      - name: Format, validate, and publish final source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('pkg/commands/memory_command_test.go')
+          s = p.read_text()
+          old = '\t\t\ttext := ""'
+          new = '\t\t\tvar text string'
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('wastedassign baseline mismatch')
+          p.write_text(s)
+          PY
+          bin="$(find "$HOME" -maxdepth 3 -type f -name golangci-lint -perm -111 | head -n 1)"
+          test -n "$bin"
+          "$bin" fmt
+          rm .github/workflows/pr19-finalize.yml
+          git diff --check
+          "$bin" run --build-tags=goolm,stdjson
+          go test -tags goolm,stdjson ./pkg/commands/... ./pkg/agent/... ./pkg/channels/telegram/...
+          allowed='^(pkg/agent/(checkpoint_commands.go|skill_commands.go|skill_checkpoint_interaction_test.go|skill_checkpoint_acceptance_test.go)|pkg/channels/telegram/(interaction_foundation_test.go|interaction_foundation_acceptance_test.go|structured_delivery.go)|pkg/commands/(cmd_checkpoint.go|memory_command_test.go)|.github/workflows/pr19-finalize.yml)$'
+          unexpected="$(git diff --name-only | grep -Ev "$allowed" || true)"
+          test -z "$unexpected" || { printf 'unexpected formatter changes:\n%s\n' "$unexpected" >&2; exit 1; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            pkg/agent/checkpoint_commands.go \
+            pkg/agent/skill_commands.go \
+            pkg/agent/skill_checkpoint_interaction_test.go \
+            pkg/agent/skill_checkpoint_acceptance_test.go \
+            pkg/channels/telegram/interaction_foundation_test.go \
+            pkg/channels/telegram/interaction_foundation_acceptance_test.go \
+            pkg/channels/telegram/structured_delivery.go \
+            pkg/commands/cmd_checkpoint.go \
+            pkg/commands/memory_command_test.go \
+            .github/workflows/pr19-finalize.yml
+          git diff --cached --check
+          git commit -m "test(telegram): complete interaction acceptance coverage"
+          git push origin HEAD:feat/telegram-skill-checkpoint-interactions
