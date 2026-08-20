@@ -94,8 +94,15 @@ func TestSkillSearchPromptIsOwnerBoundAndSingleUse(t *testing.T) {
 	ch.storeSessionRenamePrompt(key, telegramSessionRenamePrompt{
 		token: "skill-search", menu: menu, action: "search", createdAt: time.Now(),
 	})
-	wrong := &telego.Message{MessageID: 100, From: &telego.User{ID: 99}, Text: "secret",
-		Chat: telego.Chat{ID: 12345}, ReplyToMessage: &telego.Message{MessageID: 92}}
+	wrong := &telego.Message{
+		MessageID: 100,
+		From:      &telego.User{ID: 99},
+		Text:      "secret",
+		Chat:      telego.Chat{ID: 12345},
+		ReplyToMessage: &telego.Message{
+			MessageID: 92,
+		},
+	}
 	_, status := ch.claimSessionRenamePrompt(wrong)
 	assert.Equal(t, sessionRenameClaimRejected, status)
 
