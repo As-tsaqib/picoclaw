@@ -213,7 +213,12 @@ func TestCheckChannelUsesReadOnlyStatusPrimitiveAndNeverSwitches(t *testing.T) {
 
 func TestCheckChannelExpectedUnknownStatusIsStructuredData(t *testing.T) {
 	rt := &Runtime{CheckChannel: func(name string) (ChannelStatus, error) {
-		return ChannelStatus{Name: name, Enabled: false, Available: false, Reason: "channel is not enabled or registered"}, nil
+		return ChannelStatus{
+			Name:      name,
+			Enabled:   false,
+			Available: false,
+			Reason:    "channel is not enabled or registered",
+		}, nil
 	}}
 	var reply string
 	NewExecutor(NewRegistry(BuiltinDefinitions()), rt).Execute(context.Background(), Request{
