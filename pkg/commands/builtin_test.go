@@ -45,7 +45,7 @@ func TestBuiltinHelpHandler_ReturnsFormattedMessage(t *testing.T) {
 	if !strings.Contains(reply, "/stop - Stop the current task") {
 		t.Fatalf("/help reply missing /stop usage, got %q", reply)
 	}
-	if !strings.Contains(reply, "/use - Force a specific installed skill for one request") {
+	if !strings.Contains(reply, "/use - Open the skill picker or force an installed skill for a request") {
 		t.Fatalf("/help reply missing /use usage, got %q", reply)
 	}
 }

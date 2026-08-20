@@ -90,6 +90,30 @@ func filterSkillNames(names []string, query string) []string {
 	return result
 }
 
+func buildSkillPickerFallback(names []string, query, pending string) string {
+	lines := []string{"Skill Picker"}
+	if query = strings.TrimSpace(query); query != "" {
+		lines = append(lines, fmt.Sprintf("Search: %q", query))
+	}
+	if len(names) == 0 {
+		lines = append(lines, "No installed skills match this view.")
+	} else {
+		lines = append(lines, "Available skills:")
+		for _, name := range names {
+			lines = append(lines, "- "+name)
+		}
+	}
+	if pending = strings.TrimSpace(pending); pending != "" {
+		lines = append(lines, "Pending override: "+pending)
+	}
+	lines = append(lines,
+		"Use /use <skill> to arm a skill for your next message.",
+		"Use /use <skill> <message> to force it for the current request.",
+		"Use /use clear or /use off to cancel a pending override.",
+	)
+	return strings.Join(lines, "\n")
+}
+
 func buildSkillPickerContent(
 	agent *AgentInstance,
 	al *AgentLoop,
@@ -140,7 +164,8 @@ func buildSkillPickerContent(
 		entries = append(entries, bus.InteractionEntry{Label: "▶️", Action: pageAction, Value: strconv.Itoa(page + 1)})
 	}
 	entries = append(entries, bus.InteractionEntry{Label: "🔎 Search", Action: "search"})
-	if pending := al.pendingSkillForSession(sessionKey); pending != "" {
+	pending := al.pendingSkillForSession(sessionKey)
+	if pending != "" {
 		lines = append(lines, "Pending override: "+pending)
 		entries = append(entries, bus.InteractionEntry{Label: "🧹 Clear Pending", Action: "clear"})
 	}
@@ -148,6 +173,7 @@ func buildSkillPickerContent(
 	return &bus.StructuredContent{
 		Title:      "Skill Picker",
 		Paragraphs: lines,
+		Fallback:   buildSkillPickerFallback(names, query, pending),
 		Interaction: newBoundInteractionMenu(
 			"skill", agent.ID, sessionKey, scope, inbound, page, pages, query, "", entries,
 		),
@@ -160,6 +186,8 @@ func buildSkillDetailContent(
 	scope *session.SessionScope,
 	inbound *bus.InboundContext,
 	skillName string,
+	page int,
+	query string,
 ) *bus.StructuredContent {
 	return &bus.StructuredContent{
 		Title: "Skill",
@@ -168,9 +196,9 @@ func buildSkillDetailContent(
 			"Arm this skill for the next normal message in this exact session.",
 		},
 		Interaction: newBoundInteractionMenu(
-			"skill", agent.ID, sessionKey, scope, inbound, 0, 1, "", skillName, []bus.InteractionEntry{
+			"skill", agent.ID, sessionKey, scope, inbound, page, maxInt(page+1, 1), query, skillName, []bus.InteractionEntry{
 				{Label: "✅ Arm for Next Message", Action: "arm", Value: skillName},
-				{Label: "↩️ Back", Action: "dashboard"},
+				{Label: "↩️ Back", Action: "back"},
 				{Label: "✖️ Close", Action: "close"},
 			},
 		),
@@ -229,9 +257,13 @@ func (al *AgentLoop) handleInternalSkillCallback(
 		return &bus.InternalCallbackResponse{Close: true}, nil
 	case "noop":
 		return &bus.InternalCallbackResponse{Text: fmt.Sprintf("Page %d/%d", req.Page+1, maxInt(req.Page+1, 1))}, nil
-	case "dashboard", "back":
+	case "dashboard":
 		return &bus.InternalCallbackResponse{Content: buildSkillPickerContent(
 			bound.agent, al, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0, "",
+		)}, nil
+	case "back":
+		return &bus.InternalCallbackResponse{Content: buildSkillPickerContent(
+			bound.agent, al, req.SessionKey, &bound.allocation.Scope, &bound.inbound, req.Page, req.Query,
 		)}, nil
 	case "page", "search_page":
 		page, parseErr := strconv.Atoi(strings.TrimSpace(req.Value))
@@ -251,7 +283,7 @@ func (al *AgentLoop) handleInternalSkillCallback(
 			return nil, fmt.Errorf("skill is no longer installed")
 		}
 		return &bus.InternalCallbackResponse{Content: buildSkillDetailContent(
-			bound.agent, req.SessionKey, &bound.allocation.Scope, &bound.inbound, canonical,
+			bound.agent, req.SessionKey, &bound.allocation.Scope, &bound.inbound, canonical, req.Page, req.Query,
 		)}, nil
 	case "arm":
 		canonical, ok := bound.agent.ContextBuilder.ResolveSkillName(req.Value)
@@ -260,7 +292,7 @@ func (al *AgentLoop) handleInternalSkillCallback(
 		}
 		al.setPendingSkills(req.SessionKey, []string{canonical})
 		content := buildSkillPickerContent(
-			bound.agent, al, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0, "",
+			bound.agent, al, req.SessionKey, &bound.allocation.Scope, &bound.inbound, req.Page, req.Query,
 		)
 		content.Title = "Skill Armed"
 		content.Paragraphs = append(
@@ -271,7 +303,7 @@ func (al *AgentLoop) handleInternalSkillCallback(
 	case "clear":
 		al.clearPendingSkills(req.SessionKey)
 		content := buildSkillPickerContent(
-			bound.agent, al, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0, "",
+			bound.agent, al, req.SessionKey, &bound.allocation.Scope, &bound.inbound, req.Page, req.Query,
 		)
 		content.Title = "Pending Skill Cleared"
 		return &bus.InternalCallbackResponse{Content: content}, nil
@@ -283,9 +315,12 @@ func (al *AgentLoop) handleInternalSkillCallback(
 		if len([]rune(query)) > skillSearchQueryMaxRunes {
 			return nil, fmt.Errorf("skill search query is too long")
 		}
-		return &bus.InternalCallbackResponse{Content: buildSkillPickerContent(
-			bound.agent, al, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0, query,
-		)}, nil
+		return &bus.InternalCallbackResponse{
+			Content: buildSkillPickerContent(
+				bound.agent, al, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0, query,
+			),
+			Transition: bus.InteractionAppendContinuation,
+		}, nil
 	default:
 		return nil, fmt.Errorf("invalid skill callback action")
 	}

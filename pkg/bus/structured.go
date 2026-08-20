@@ -97,10 +97,18 @@ type InternalCallbackRequest struct {
 	Query      string
 }
 
+type InteractionTransition string
+
+const (
+	InteractionReplaceCurrent     InteractionTransition = "replace_current"
+	InteractionAppendContinuation InteractionTransition = "append_continuation"
+)
+
 type InternalCallbackResponse struct {
-	Content *StructuredContent
-	Text    string
-	Close   bool
+	Content    *StructuredContent
+	Text       string
+	Close      bool
+	Transition InteractionTransition
 }
 
 // InternalCallbackHandler is implemented by the agent loop and installed on

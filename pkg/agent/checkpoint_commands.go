@@ -14,6 +14,60 @@ import (
 
 const checkpointInteractionPageSize = 5
 
+type checkpointStore interface {
+	List(memory.CallerScope, bool) ([]memory.TaskCheckpoint, error)
+	Get(memory.CallerScope, string) (memory.TaskCheckpoint, error)
+	Apply(memory.CallerScope, string, memory.CheckpointMutation) (memory.TaskCheckpoint, error)
+}
+
+type checkpointCommandService struct {
+	store  checkpointStore
+	caller memory.CallerScope
+}
+
+func newCheckpointCommandService(store checkpointStore, caller memory.CallerScope) checkpointCommandService {
+	return checkpointCommandService{store: store, caller: caller}
+}
+
+func (s checkpointCommandService) list() ([]memory.TaskCheckpoint, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("checkpoints are unavailable")
+	}
+	return s.store.List(s.caller, false)
+}
+
+func (s checkpointCommandService) detail(id string) (memory.TaskCheckpoint, error) {
+	if s.store == nil {
+		return memory.TaskCheckpoint{}, fmt.Errorf("checkpoints are unavailable")
+	}
+	checkpoint, err := s.store.Get(s.caller, strings.TrimSpace(id))
+	if err != nil {
+		return memory.TaskCheckpoint{}, err
+	}
+	if checkpoint.Status == memory.CheckpointStatusArchived || checkpoint.Status == memory.CheckpointStatusCompleted {
+		return memory.TaskCheckpoint{}, fmt.Errorf("checkpoint is not available in the active dashboard")
+	}
+	return checkpoint, nil
+}
+
+func (s checkpointCommandService) resume(id string) (memory.TaskCheckpoint, error) {
+	if s.store == nil {
+		return memory.TaskCheckpoint{}, fmt.Errorf("checkpoints are unavailable")
+	}
+	return s.store.Apply(s.caller, "", memory.CheckpointMutation{
+		Action: memory.CheckpointActionResume, ID: strings.TrimSpace(id),
+	})
+}
+
+func (s checkpointCommandService) archive(id string) (memory.TaskCheckpoint, error) {
+	if s.store == nil {
+		return memory.TaskCheckpoint{}, fmt.Errorf("checkpoints are unavailable")
+	}
+	return s.store.Apply(s.caller, "", memory.CheckpointMutation{
+		Action: memory.CheckpointActionArchive, ID: strings.TrimSpace(id),
+	})
+}
+
 func configureCheckpointCommandRuntime(
 	rt *commands.Runtime,
 	agent *AgentInstance,
@@ -41,28 +95,25 @@ func (al *AgentLoop) executeCheckpointCommand(
 		return nil, fmt.Errorf("checkpoints are unavailable")
 	}
 	caller := callerScopeForTurn(agent.ID, al.cfg, *opts)
+	service := newCheckpointCommandService(agent.Checkpoints, caller)
 	op := strings.ToLower(strings.TrimSpace(req.Operation))
 	switch op {
 	case "list":
-		checkpoints, err := agent.Checkpoints.List(caller, false)
+		checkpoints, err := service.list()
 		if err != nil {
 			return nil, err
 		}
 		text := formatCheckpointList(checkpoints)
 		return &bus.StructuredContent{Title: "Task Checkpoints", Paragraphs: []string{text}, Fallback: text}, nil
 	case "resume":
-		checkpoint, err := agent.Checkpoints.Apply(caller, "", memory.CheckpointMutation{
-			Action: memory.CheckpointActionResume, ID: strings.TrimSpace(req.ID),
-		})
+		checkpoint, err := service.resume(req.ID)
 		if err != nil {
 			return nil, err
 		}
 		text := fmt.Sprintf("Resumed %s (%s). Next: %s", checkpoint.Title, checkpoint.ID, checkpoint.NextStep)
 		return paragraphContent(text), nil
 	case "archive":
-		checkpoint, err := agent.Checkpoints.Apply(caller, "", memory.CheckpointMutation{
-			Action: memory.CheckpointActionArchive, ID: strings.TrimSpace(req.ID),
-		})
+		checkpoint, err := service.archive(req.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -96,7 +147,7 @@ func buildCheckpointPage(
 	inbound *bus.InboundContext,
 	page int,
 ) (*bus.StructuredContent, error) {
-	checkpoints, err := agent.Checkpoints.List(caller, false)
+	checkpoints, err := newCheckpointCommandService(agent.Checkpoints, caller).list()
 	if err != nil {
 		return nil, err
 	}
@@ -148,6 +199,7 @@ func buildCheckpointDetail(
 	sessionKey string,
 	scope *session.SessionScope,
 	inbound *bus.InboundContext,
+	page int,
 ) *bus.StructuredContent {
 	paragraphs := []string{
 		"Status: " + checkpoint.Status,
@@ -183,7 +235,7 @@ func buildCheckpointDetail(
 	return &bus.StructuredContent{
 		Title: compactCheckpointText(checkpoint.Title, 180), Paragraphs: paragraphs,
 		Interaction: newBoundInteractionMenu(
-			"checkpoint", agent.ID, sessionKey, scope, inbound, 0, 1, "", checkpoint.ID, entries,
+			"checkpoint", agent.ID, sessionKey, scope, inbound, page, maxInt(page+1, 1), "", checkpoint.ID, entries,
 		),
 	}
 }
@@ -194,6 +246,7 @@ func buildCheckpointArchiveConfirm(
 	sessionKey string,
 	scope *session.SessionScope,
 	inbound *bus.InboundContext,
+	page int,
 ) *bus.StructuredContent {
 	return &bus.StructuredContent{
 		Title: "Archive Checkpoint?",
@@ -202,7 +255,7 @@ func buildCheckpointArchiveConfirm(
 			"This hides the checkpoint from the active dashboard. Continue?",
 		},
 		Interaction: newBoundInteractionMenu(
-			"checkpoint", agent.ID, sessionKey, scope, inbound, 0, 1, "", checkpoint.ID, []bus.InteractionEntry{
+			"checkpoint", agent.ID, sessionKey, scope, inbound, page, maxInt(page+1, 1), "", checkpoint.ID, []bus.InteractionEntry{
 				{Label: "✅ Confirm Archive", Action: "archive_confirm", Value: checkpoint.ID},
 				{Label: "❌ Cancel", Action: "detail", Value: checkpoint.ID},
 			},
@@ -225,15 +278,21 @@ func (al *AgentLoop) handleInternalCheckpointCallback(
 		return nil, fmt.Errorf("checkpoint callback requires a private route")
 	}
 	caller := callerScopeFromInbound(bound.agent.ID, req.SessionKey, &bound.inbound, &bound.allocation.Scope, al.cfg)
+	service := newCheckpointCommandService(bound.agent.Checkpoints, caller)
 	action := strings.ToLower(strings.TrimSpace(req.Action))
 	switch action {
 	case "close":
 		return &bus.InternalCallbackResponse{Close: true}, nil
 	case "noop":
 		return &bus.InternalCallbackResponse{Text: fmt.Sprintf("Page %d", req.Page+1)}, nil
-	case "dashboard", "back":
+	case "dashboard":
 		content, buildErr := buildCheckpointPage(
 			bound.agent, caller, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0,
+		)
+		return &bus.InternalCallbackResponse{Content: content}, buildErr
+	case "back":
+		content, buildErr := buildCheckpointPage(
+			bound.agent, caller, req.SessionKey, &bound.allocation.Scope, &bound.inbound, req.Page,
 		)
 		return &bus.InternalCallbackResponse{Content: content}, buildErr
 	case "page":
@@ -246,43 +305,35 @@ func (al *AgentLoop) handleInternalCheckpointCallback(
 		)
 		return &bus.InternalCallbackResponse{Content: content}, buildErr
 	case "detail":
-		checkpoint, getErr := bound.agent.Checkpoints.Get(caller, req.Value)
+		checkpoint, getErr := service.detail(req.Value)
 		if getErr != nil {
 			return nil, getErr
 		}
-		if checkpoint.Status == memory.CheckpointStatusArchived ||
-			checkpoint.Status == memory.CheckpointStatusCompleted {
-			return nil, fmt.Errorf("checkpoint is not available in the active dashboard")
-		}
 		return &bus.InternalCallbackResponse{Content: buildCheckpointDetail(
-			bound.agent, checkpoint, req.SessionKey, &bound.allocation.Scope, &bound.inbound,
+			bound.agent, checkpoint, req.SessionKey, &bound.allocation.Scope, &bound.inbound, req.Page,
 		)}, nil
 	case "resume":
-		checkpoint, applyErr := bound.agent.Checkpoints.Apply(caller, "", memory.CheckpointMutation{
-			Action: memory.CheckpointActionResume, ID: req.Value,
-		})
+		checkpoint, applyErr := service.resume(req.Value)
 		if applyErr != nil {
 			return nil, applyErr
 		}
 		return &bus.InternalCallbackResponse{Content: buildCheckpointDetail(
-			bound.agent, checkpoint, req.SessionKey, &bound.allocation.Scope, &bound.inbound,
+			bound.agent, checkpoint, req.SessionKey, &bound.allocation.Scope, &bound.inbound, req.Page,
 		)}, nil
 	case "archive":
-		checkpoint, getErr := bound.agent.Checkpoints.Get(caller, req.Value)
+		checkpoint, getErr := service.detail(req.Value)
 		if getErr != nil {
 			return nil, getErr
 		}
 		return &bus.InternalCallbackResponse{Content: buildCheckpointArchiveConfirm(
-			bound.agent, checkpoint, req.SessionKey, &bound.allocation.Scope, &bound.inbound,
+			bound.agent, checkpoint, req.SessionKey, &bound.allocation.Scope, &bound.inbound, req.Page,
 		)}, nil
 	case "archive_confirm":
-		if _, applyErr := bound.agent.Checkpoints.Apply(caller, "", memory.CheckpointMutation{
-			Action: memory.CheckpointActionArchive, ID: req.Value,
-		}); applyErr != nil {
+		if _, applyErr := service.archive(req.Value); applyErr != nil {
 			return nil, applyErr
 		}
 		content, buildErr := buildCheckpointPage(
-			bound.agent, caller, req.SessionKey, &bound.allocation.Scope, &bound.inbound, 0,
+			bound.agent, caller, req.SessionKey, &bound.allocation.Scope, &bound.inbound, req.Page,
 		)
 		if buildErr == nil {
 			content.Title = "Checkpoint Archived"

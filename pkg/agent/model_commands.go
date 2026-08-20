@@ -24,6 +24,7 @@ const (
 	modelDiscoveryTTL             = 5 * time.Minute
 	modelDiscoveryTimeout         = 12 * time.Second
 	modelDiscoveryMaxCacheEntries = 256
+	modelSearchQueryMaxRunes      = 128
 )
 
 type discoveredModel struct {
@@ -148,7 +149,7 @@ func (al *AgentLoop) executeModelCommand(
 		}
 		return al.buildModelDefaultResult(mcx, store, cfg), nil
 	case "search":
-		return al.buildModelSearch(mcx, store, cfg, strings.TrimSpace(req.Argument), 0), nil
+		return al.buildModelSearch(mcx, store, cfg, req.Argument, 0)
 	default:
 		return nil, fmt.Errorf("unknown model subcommand")
 	}
@@ -224,7 +225,17 @@ func (al *AgentLoop) handleInternalModelCallback(
 	case "dashboard", "back":
 		return &bus.InternalCallbackResponse{Content: al.buildModelDashboard(mcx, store, cfg)}, nil
 	case "search":
-		return &bus.InternalCallbackResponse{Content: buildModelSearchPrompt(mcx)}, nil
+		query := strings.TrimSpace(req.Value)
+		if query == "" {
+			return &bus.InternalCallbackResponse{Text: "Reply to this prompt with a model name to search:"}, nil
+		}
+		content, searchErr := al.buildModelSearch(mcx, store, cfg, query, 0)
+		if searchErr != nil {
+			return nil, searchErr
+		}
+		return &bus.InternalCallbackResponse{
+			Content: content, Transition: bus.InteractionAppendContinuation,
+		}, nil
 	case "configured":
 		return &bus.InternalCallbackResponse{Content: al.buildConfiguredModels(mcx, store, cfg, state.Page)}, nil
 	case "available", "provider", "page", "refresh":
@@ -237,9 +248,11 @@ func (al *AgentLoop) handleInternalModelCallback(
 			return &bus.InternalCallbackResponse{Content: al.buildConfiguredModels(mcx, store, cfg, state.Page)}, nil
 		}
 		if state.View == "search" {
-			return &bus.InternalCallbackResponse{
-				Content: al.buildModelSearch(mcx, store, cfg, state.Query, state.Page),
-			}, nil
+			content, searchErr := al.buildModelSearch(mcx, store, cfg, state.Query, state.Page)
+			if searchErr != nil {
+				return nil, searchErr
+			}
+			return &bus.InternalCallbackResponse{Content: content}, nil
 		}
 		force := strings.EqualFold(req.Action, "refresh")
 		content := al.buildAvailableModels(
@@ -400,10 +413,13 @@ func (al *AgentLoop) buildModelSearch(
 	cfg *config.Config,
 	query string,
 	page int,
-) *bus.StructuredContent {
+) (*bus.StructuredContent, error) {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {
-		return modelParagraph("Gunakan /model search <kata> untuk mencari model.")
+		return nil, fmt.Errorf("model search query is empty")
+	}
+	if len([]rune(query)) > modelSearchQueryMaxRunes {
+		return nil, fmt.Errorf("model search query is too long")
 	}
 	all := configuredSelections(cfg)
 	for _, cached := range cachedDiscoveredSelectionsForConfig(cfg) {
@@ -417,8 +433,20 @@ func (al *AgentLoop) buildModelSearch(
 		}
 	}
 	active := effectiveSessionModel(mcx.Agent, store, cfg, mcx.SessionKey)
+	if len(filtered) == 0 {
+		content := modelInteractiveMessage(mcx, "Hasil Pencarian — "+query, "Tidak ada model yang cocok dengan pencarian ini.")
+		if content.Interaction != nil {
+			content.Interaction.Query = query
+			content.Interaction.Entries = append(
+				[]bus.InteractionEntry{{Label: "🔎 Search", Action: "search"}},
+				content.Interaction.Entries...,
+			)
+		}
+		return content, nil
+	}
 	content := buildModelListContent(mcx, "Hasil Pencarian — "+query, "search", filtered, active, page, cfg, nil)
 	if content.Interaction != nil {
+		content.Interaction.Query = query
 		for i := range content.Interaction.Entries {
 			entry := &content.Interaction.Entries[i]
 			if entry.Action == "page" {
@@ -429,7 +457,7 @@ func (al *AgentLoop) buildModelSearch(
 			}
 		}
 	}
-	return content
+	return content, nil
 }
 
 func (al *AgentLoop) buildModelDetail(
@@ -901,6 +929,9 @@ func buildModelListContent(
 				}),
 			},
 		)
+	}
+	if view == "search" {
+		entries = append(entries, bus.InteractionEntry{Label: "🔎 Search", Action: "search"})
 	}
 	if view == "available" {
 		seenSources := make(map[string]bool)
