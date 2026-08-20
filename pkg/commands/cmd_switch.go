@@ -2,59 +2,55 @@ package commands
 
 import (
 	"context"
-	"fmt"
 	"strings"
 )
 
 func switchCommand() Definition {
 	return Definition{
 		Name:        "switch",
-		Description: "Switch model",
+		Description: "Deprecated compatibility syntax for model selection",
+		Category:    "Models",
+		Deprecated:  true,
+		Replacement: "/model use <model>",
+		Examples:    []string{"/switch model to gpt-5"},
 		SubCommands: []SubCommand{
 			{
 				Name:        "model",
-				Description: "Switch to a different model",
-				ArgsUsage:   "to <name>",
+				Description: "Compatibility form for /model use <model>",
+				ArgsUsage:   "to <model>",
+				Deprecated:  true,
+				Replacement: "/model use <model>",
+				Examples:    []string{"/switch model to gpt-5"},
 				Handler: func(ctx context.Context, req Request, rt *Runtime) error {
 					value := afterNthToken(req.Text, 3)
-					if nthToken(req.Text, 2) != "to" || strings.TrimSpace(value) == "" {
-						return req.Reply("Usage: /switch model to <name>")
+					if !strings.EqualFold(nthToken(req.Text, 2), "to") || strings.TrimSpace(value) == "" {
+						return req.Reply("Usage: /switch model to <model>\nDeprecated: use /model use <model> instead.")
 					}
-					if rt != nil && rt.ModelCommand != nil {
-						content, err := rt.ModelCommand(
-							ctx,
-							ModelCommandRequest{
-								Operation:    "use",
-								Argument:     value,
-								LegacySwitch: true,
-							},
-						)
-						if err != nil {
-							if strings.Contains(err.Error(), "tidak ditemukan") {
-								return req.Reply(fmt.Sprintf("model %q not found in model_list or providers", value))
-							}
-							return req.Reply(err.Error())
-						}
-						if content == nil {
-							return req.Reply(unavailableMsg)
-						}
-						return req.replyStructured(*content)
-					}
-					if rt == nil || rt.SwitchModel == nil {
+					if rt == nil || rt.ModelCommand == nil {
 						return req.Reply(unavailableMsg)
 					}
-					oldModel, err := rt.SwitchModel(value)
+					content, err := rt.ModelCommand(ctx, ModelCommandRequest{
+						Operation:    "use",
+						Argument:     strings.TrimSpace(value),
+						LegacySwitch: true,
+					})
 					if err != nil {
-						return req.Reply(err.Error())
+						return req.Reply(UserFacingError(err, "Model service is temporarily unavailable. Please try again."))
 					}
-					return req.Reply(fmt.Sprintf("Switched model from %s to %s", oldModel, value))
+					if content == nil {
+						return req.Reply(unavailableMsg)
+					}
+					return req.replyStructured(*content)
 				},
 			},
 			{
 				Name:        "channel",
-				Description: "Moved to /check channel",
+				Description: "Deprecated read-only compatibility guidance",
+				ArgsUsage:   "[name]",
+				Deprecated:  true,
+				Replacement: "/check channel <name>",
 				Handler: func(_ context.Context, req Request, _ *Runtime) error {
-					return req.Reply("This command has moved. Please use: /check channel <name>")
+					return req.Reply("/switch channel is deprecated and does not change channel state. Use /check channel <name> for status.")
 				},
 			},
 		},
