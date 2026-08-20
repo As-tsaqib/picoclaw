@@ -1,3 +1,4 @@
+# Trigger commit: parent contains this actionlint-valid push workflow.
 name: PR20 exact lint finalizer
 
 on:
