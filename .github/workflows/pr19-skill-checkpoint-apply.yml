@@ -1,0 +1,60 @@
+name: PR19 exact skill/checkpoint patch
+
+on:
+  push:
+    branches:
+      - feat/telegram-skill-checkpoint-interactions
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - name: Apply bounded exact patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "b099278e41ab3a4913841e39c6a7f560f11ed96f"
+          test "$(git hash-object pkg/agent/agent_command.go)" = "e59f54054b44a6dce890e92028bb2cc3c83ca785"
+          test "$(git hash-object pkg/agent/memory_commands.go)" = "4e12d4f04459cb5ab33d86de0a5100cc128ab15f"
+          test "$(git hash-object pkg/agent/model_commands.go)" = "cba77f17bf27e4a7dfabd3490fab48304ff19df0"
+          test "$(git hash-object pkg/agent/session_commands.go)" = "689fd2cc8909c1e1c1bde0868a9991a2898bdfae"
+          test "$(git hash-object pkg/bus/structured.go)" = "a903a9b2883a34b9b30a768aa40ad5031fc0156c"
+          test "$(git hash-object pkg/channels/telegram/structured_delivery.go)" = "c8926b443a485cc3dda54b3a7f3c726c98b741c4"
+          test "$(git hash-object pkg/commands/cmd_checkpoint.go)" = "4e0f8bc6c69e98c6ba4c681e79c798ab14af7e49"
+          test "$(git hash-object pkg/commands/memory_command_test.go)" = "d7aeaadf5efacfb4267598240329b38b0dc2251d"
+          test "$(git hash-object pkg/commands/runtime.go)" = "498770d192a890cefc81135f2b10cee742282e7c"
+          for f in pkg/agent/checkpoint_commands.go pkg/agent/interaction_callbacks.go pkg/agent/skill_commands.go pkg/agent/skill_checkpoint_interaction_test.go pkg/channels/telegram/interaction_foundation_test.go; do test ! -e "$f"; done
+          base64 -d .github/pr19-skill-checkpoint.patch.gz.b64 | gzip -d > /tmp/pr19.patch
+          echo "af12c8932f454729d9fc7a55542242fc1103e7cdeb83d5fa868f53dd1a581a4c  /tmp/pr19.patch" | sha256sum -c -
+          git apply --check /tmp/pr19.patch
+          git apply /tmp/pr19.patch
+          rm .github/pr19-skill-checkpoint.patch.gz.b64 .github/workflows/pr19-skill-checkpoint-apply.yml
+          gofmt -w \
+            pkg/agent/agent_command.go \
+            pkg/agent/checkpoint_commands.go \
+            pkg/agent/interaction_callbacks.go \
+            pkg/agent/memory_commands.go \
+            pkg/agent/model_commands.go \
+            pkg/agent/session_commands.go \
+            pkg/agent/skill_commands.go \
+            pkg/agent/skill_checkpoint_interaction_test.go \
+            pkg/bus/structured.go \
+            pkg/channels/telegram/structured_delivery.go \
+            pkg/channels/telegram/interaction_foundation_test.go \
+            pkg/commands/cmd_checkpoint.go \
+            pkg/commands/memory_command_test.go \
+            pkg/commands/runtime.go
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(telegram): add skill and checkpoint interactions"
+          git push origin HEAD:feat/telegram-skill-checkpoint-interactions
