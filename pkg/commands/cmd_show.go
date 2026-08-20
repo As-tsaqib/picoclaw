@@ -12,6 +12,8 @@ func showCommand() Definition {
 	return Definition{
 		Name:        "show",
 		Description: "Show current configuration",
+		Category:    "Discovery",
+		Examples:    []string{"/show", "/show mcp filesystem"},
 		Handler:     discoveryDashboardHandler("show"),
 		SubCommands: []SubCommand{
 			{
@@ -27,7 +29,7 @@ func showCommand() Definition {
 					return req.replyStructured(
 						tableContent(
 							"Channel",
-							[]string{"Properti", "Nilai"},
+							detailHeaderColumns(),
 							[][]string{{"Current Channel", req.Channel}},
 							fallback,
 						),
@@ -41,8 +43,9 @@ func showCommand() Definition {
 			},
 			{
 				Name:        "mcp",
-				Description: "Show active tools for an MCP server",
+				Description: "Show status and current tools for one MCP server",
 				ArgsUsage:   "<server>",
+				Examples:    []string{"/show mcp filesystem"},
 				Handler:     showMCPToolsHandler(),
 			},
 		},
@@ -56,7 +59,7 @@ func showModelHandler() Handler {
 		if rt != nil && rt.ModelCommand != nil {
 			content, err := rt.ModelCommand(ctx, ModelCommandRequest{Operation: "current"})
 			if err != nil {
-				return req.Reply("Model command failed: " + err.Error())
+				return req.Reply(UserFacingError(err, "Model service is temporarily unavailable. Please try again."))
 			}
 			if content != nil {
 				prependCurrentModelFallback(content)
@@ -71,7 +74,7 @@ func showModelHandler() Handler {
 		return req.replyStructured(
 			tableContent(
 				"Model",
-				[]string{"Properti", "Nilai"},
+				detailHeaderColumns(),
 				[][]string{{"Current Model", name}, {"Provider", provider}},
 				fallback,
 			),
