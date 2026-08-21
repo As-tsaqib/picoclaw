@@ -204,7 +204,11 @@ func buildNativeRichMessage(content *bus.StructuredContent) (telego.InputRichMes
 }
 
 func nativeTableCell(value string, header bool) telego.RichBlockTableCell {
-	return telego.RichBlockTableCell{Text: tu.RichTextPlain(value), IsHeader: header, Align: "left", Valign: "middle"}
+	align := "left"
+	if header {
+		align = "center"
+	}
+	return telego.RichBlockTableCell{Text: tu.RichTextPlain(value), IsHeader: header, Align: align, Valign: "middle"}
 }
 
 func telegramFallbackRepresentations(raw string, useMarkdownV2 bool) (formatted, plain string) {
