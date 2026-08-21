@@ -4,12 +4,17 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/As-tsaqib/picoclaw/pkg/bus"
 )
 
 func TestSwitchModel_Success(t *testing.T) {
 	rt := &Runtime{
-		SwitchModel: func(value string) (string, error) {
-			return "old-model", nil
+		ModelCommand: func(_ context.Context, req ModelCommandRequest) (*bus.StructuredContent, error) {
+			if req.Operation != "use" || req.Argument != "gpt-4" || !req.LegacySwitch {
+				t.Fatalf("unexpected request: %+v", req)
+			}
+			return &bus.StructuredContent{Fallback: "Switched model from old-model to gpt-4"}, nil
 		},
 	}
 	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
@@ -33,9 +38,9 @@ func TestSwitchModel_Success(t *testing.T) {
 
 func TestSwitchModel_PreservesSpacedAlias(t *testing.T) {
 	var selected string
-	rt := &Runtime{SwitchModel: func(value string) (string, error) {
-		selected = value
-		return "old-model", nil
+	rt := &Runtime{ModelCommand: func(_ context.Context, req ModelCommandRequest) (*bus.StructuredContent, error) {
+		selected = req.Argument
+		return &bus.StructuredContent{Fallback: "ok"}, nil
 	}}
 	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 	result := ex.Execute(context.Background(), Request{
@@ -52,8 +57,9 @@ func TestSwitchModel_PreservesSpacedAlias(t *testing.T) {
 
 func TestSwitchModel_MissingToKeyword(t *testing.T) {
 	rt := &Runtime{
-		SwitchModel: func(value string) (string, error) {
-			return "old", nil
+		ModelCommand: func(context.Context, ModelCommandRequest) (*bus.StructuredContent, error) {
+			t.Fatal("ModelCommand should not be called for missing 'to' keyword")
+			return nil, nil
 		},
 	}
 	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
@@ -69,15 +75,16 @@ func TestSwitchModel_MissingToKeyword(t *testing.T) {
 	if res.Outcome != OutcomeHandled {
 		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if reply != "Usage: /switch model to <name>" {
+	if reply != "Usage: /switch model to <model>\nDeprecated: use /model use <model> instead." {
 		t.Fatalf("reply=%q, want usage message", reply)
 	}
 }
 
 func TestSwitchModel_MissingValue(t *testing.T) {
 	rt := &Runtime{
-		SwitchModel: func(value string) (string, error) {
-			return "old", nil
+		ModelCommand: func(context.Context, ModelCommandRequest) (*bus.StructuredContent, error) {
+			t.Fatal("ModelCommand should not be called for missing value")
+			return nil, nil
 		},
 	}
 	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
@@ -93,15 +100,15 @@ func TestSwitchModel_MissingValue(t *testing.T) {
 	if res.Outcome != OutcomeHandled {
 		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if reply != "Usage: /switch model to <name>" {
+	if reply != "Usage: /switch model to <model>\nDeprecated: use /model use <model> instead." {
 		t.Fatalf("reply=%q, want usage message", reply)
 	}
 }
 
 func TestSwitchModel_Error(t *testing.T) {
 	rt := &Runtime{
-		SwitchModel: func(value string) (string, error) {
-			return "", fmt.Errorf("model not found")
+		ModelCommand: func(_ context.Context, req ModelCommandRequest) (*bus.StructuredContent, error) {
+			return nil, fmt.Errorf("model not found")
 		},
 	}
 	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
@@ -117,7 +124,7 @@ func TestSwitchModel_Error(t *testing.T) {
 	if res.Outcome != OutcomeHandled {
 		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if reply != "model not found" {
+	if reply != "Model service is temporarily unavailable. Please try again." {
 		t.Fatalf("reply=%q, want error message", reply)
 	}
 }
@@ -155,7 +162,7 @@ func TestSwitchChannel_Redirect(t *testing.T) {
 	if res.Outcome != OutcomeHandled {
 		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	want := "This command has moved. Please use: /check channel <name>"
+	want := "/switch channel is deprecated and does not change channel state. Use /check channel <name> for status."
 	if reply != want {
 		t.Fatalf("reply=%q, want=%q", reply, want)
 	}
@@ -204,7 +211,7 @@ func TestCheckChannel_Error(t *testing.T) {
 
 	var reply string
 	res := ex.Execute(context.Background(), Request{
-		Text: "/check channel unknown",
+		Text: "/check channel telegram",
 		Reply: func(text string) error {
 			reply = text
 			return nil
@@ -213,8 +220,8 @@ func TestCheckChannel_Error(t *testing.T) {
 	if res.Outcome != OutcomeHandled {
 		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if reply != unavailableMsg {
-		t.Fatalf("reply=%q, want sanitized unavailable message", reply)
+	if reply != "Command unavailable in current context." {
+		t.Fatalf("reply=%q, want unavailable message", reply)
 	}
 }
 
@@ -240,7 +247,7 @@ func TestCheckChannel_NilDep(t *testing.T) {
 func TestCheckChannel_MissingValue(t *testing.T) {
 	rt := &Runtime{
 		CheckChannel: func(string) (ChannelStatus, error) {
-			t.Fatal("missing target must not invoke status lookup")
+			t.Fatal("should not call CheckChannel without a value")
 			return ChannelStatus{}, nil
 		},
 	}
@@ -264,8 +271,8 @@ func TestCheckChannel_MissingValue(t *testing.T) {
 
 func TestSwitch_BangPrefix(t *testing.T) {
 	rt := &Runtime{
-		SwitchModel: func(value string) (string, error) {
-			return "old", nil
+		ModelCommand: func(_ context.Context, req ModelCommandRequest) (*bus.StructuredContent, error) {
+			return &bus.StructuredContent{Fallback: "Switched model from old to gpt-4"}, nil
 		},
 	}
 	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
@@ -300,8 +307,7 @@ func TestSwitch_NoSubCommand(t *testing.T) {
 	if res.Outcome != OutcomeHandled {
 		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	// Should get usage message from executor's sub-command routing
 	if reply == "" {
-		t.Fatal("expected usage reply for bare /switch")
+		t.Fatal("expected a reply for /switch without subcommand")
 	}
 }

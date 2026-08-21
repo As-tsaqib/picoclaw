@@ -69,11 +69,13 @@ func TestInformationalCommandProducesStructuredTableAndPlainFallback(t *testing.
 	})
 	require.Equal(t, OutcomeHandled, result.Outcome)
 	require.NoError(t, result.Err)
-	require.Len(t, content.Tables, 1)
-	assert.Equal(t, []string{"Command", "Deskripsi"}, content.Tables[0].Columns)
-	assert.True(t, content.Tables[0].Border)
-	assert.True(t, content.Tables[0].Striped)
-	assert.True(t, content.Tables[0].Header)
+	require.NotEmpty(t, content.Tables)
+	for _, table := range content.Tables {
+		assert.Equal(t, bus.CardHeaderColumns(bus.CardHeaderInventory, true), table.Columns)
+		assert.True(t, table.Border)
+		assert.True(t, table.Striped)
+		assert.True(t, table.Header)
+	}
 	assert.Contains(t, content.FallbackText(), "/session")
 
 	var fallback string

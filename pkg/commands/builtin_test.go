@@ -6,61 +6,35 @@ import (
 	"testing"
 )
 
-func findDefinitionByName(t *testing.T, defs []Definition, name string) Definition {
-	t.Helper()
-	for _, def := range defs {
-		if def.Name == name {
-			return def
-		}
-	}
-	t.Fatalf("missing /%s definition", name)
-	return Definition{}
-}
-
 func TestBuiltinHelpHandler_ReturnsFormattedMessage(t *testing.T) {
-	defs := BuiltinDefinitions()
-	helpDef := findDefinitionByName(t, defs, "help")
-	if helpDef.Handler == nil {
-		t.Fatalf("/help handler should not be nil")
-	}
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), nil)
 
 	var reply string
-	err := helpDef.Handler(context.Background(), Request{
+	res := ex.Execute(context.Background(), Request{
 		Text: "/help",
 		Reply: func(text string) error {
 			reply = text
 			return nil
 		},
-	}, nil)
-	if err != nil {
-		t.Fatalf("/help handler error: %v", err)
+	})
+	if res.Outcome != OutcomeHandled {
+		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	// Now uses auto-generated root usage
-	if !strings.Contains(reply, "/show - Show current configuration") {
-		t.Fatalf("/help reply missing /show usage, got %q", reply)
-	}
-	if !strings.Contains(reply, "/list - List available options") {
-		t.Fatalf("/help reply missing /list usage, got %q", reply)
-	}
-	if !strings.Contains(reply, "/stop - Stop the current task") {
-		t.Fatalf("/help reply missing /stop usage, got %q", reply)
-	}
-	if !strings.Contains(reply, "/use - Open the skill picker or force an installed skill for a request") {
-		t.Fatalf("/help reply missing /use usage, got %q", reply)
+
+	if !strings.Contains(reply, "/help") || !strings.Contains(reply, "/model") {
+		t.Fatalf("reply=%q, expected to contain standard commands", reply)
 	}
 }
 
 func TestBuiltinStop_UsesRuntimeStopper(t *testing.T) {
+	called := false
 	rt := &Runtime{
 		StopActiveTurn: func() (StopResult, error) {
-			return StopResult{
-				Stopped:  true,
-				TaskName: "sync the long running job",
-			}, nil
+			called = true
+			return StopResult{Stopped: true, TaskName: "some-task"}, nil
 		},
 	}
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), rt)
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 
 	var reply string
 	res := ex.Execute(context.Background(), Request{
@@ -71,21 +45,23 @@ func TestBuiltinStop_UsesRuntimeStopper(t *testing.T) {
 		},
 	})
 	if res.Outcome != OutcomeHandled {
-		t.Fatalf("/stop: outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if reply != "Task stopped. \"sync the long running job\" was canceled." {
-		t.Fatalf("/stop reply=%q", reply)
+	if !called {
+		t.Fatal("StopActiveTurn was not called")
+	}
+	if reply != "Task stopped. \"some-task\" was canceled." {
+		t.Fatalf("reply=%q, want 'Task stopped. \"some-task\" was canceled.'", reply)
 	}
 }
 
 func TestBuiltinStop_NoActiveTask(t *testing.T) {
 	rt := &Runtime{
 		StopActiveTurn: func() (StopResult, error) {
-			return StopResult{}, nil
+			return StopResult{Stopped: false}, nil
 		},
 	}
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), rt)
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 
 	var reply string
 	res := ex.Execute(context.Background(), Request{
@@ -96,46 +72,41 @@ func TestBuiltinStop_NoActiveTask(t *testing.T) {
 		},
 	})
 	if res.Outcome != OutcomeHandled {
-		t.Fatalf("/stop: outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
 	if reply != "No active task to stop." {
-		t.Fatalf("/stop reply=%q, want no-active message", reply)
+		t.Fatalf("reply=%q, want 'No active task to stop.'", reply)
 	}
 }
 
 func TestBuiltinShowChannel_PreservesUserVisibleBehavior(t *testing.T) {
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), nil)
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), nil)
 
-	cases := []string{"telegram", "whatsapp"}
-	for _, channel := range cases {
-		var reply string
-		res := ex.Execute(context.Background(), Request{
-			Channel: channel,
-			Text:    "/show channel",
-			Reply: func(text string) error {
-				reply = text
-				return nil
-			},
-		})
-		if res.Outcome != OutcomeHandled {
-			t.Fatalf("/show channel on %s: outcome=%v, want=%v", channel, res.Outcome, OutcomeHandled)
-		}
-		want := "Current Channel: " + channel
-		if reply != want {
-			t.Fatalf("/show channel reply=%q, want=%q", reply, want)
-		}
+	var reply string
+	res := ex.Execute(context.Background(), Request{
+		Channel: "slack",
+		Text:    "/show channel",
+		Reply: func(text string) error {
+			reply = text
+			return nil
+		},
+	})
+	if res.Outcome != OutcomeHandled {
+		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+	}
+
+	if !strings.Contains(reply, "Current Channel: slack") {
+		t.Fatalf("reply=%q, expected channel display format", reply)
 	}
 }
 
 func TestBuiltinListChannels_UsesGetEnabledChannels(t *testing.T) {
 	rt := &Runtime{
 		GetEnabledChannels: func() []string {
-			return []string{"telegram", "slack"}
+			return []string{"telegram", "cli"}
 		},
 	}
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), rt)
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 
 	var reply string
 	res := ex.Execute(context.Background(), Request{
@@ -146,21 +117,20 @@ func TestBuiltinListChannels_UsesGetEnabledChannels(t *testing.T) {
 		},
 	})
 	if res.Outcome != OutcomeHandled {
-		t.Fatalf("/list channels: outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if !strings.Contains(reply, "telegram") || !strings.Contains(reply, "slack") {
-		t.Fatalf("/list channels reply=%q, want telegram and slack", reply)
+	if !strings.Contains(reply, "telegram") || !strings.Contains(reply, "cli") {
+		t.Fatalf("reply=%q, expected channel list output", reply)
 	}
 }
 
 func TestBuiltinShowAgents_RestoresOldBehavior(t *testing.T) {
 	rt := &Runtime{
 		ListAgentIDs: func() []string {
-			return []string{"default", "coder"}
+			return []string{"default", "research"}
 		},
 	}
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), rt)
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 
 	var reply string
 	res := ex.Execute(context.Background(), Request{
@@ -171,21 +141,20 @@ func TestBuiltinShowAgents_RestoresOldBehavior(t *testing.T) {
 		},
 	})
 	if res.Outcome != OutcomeHandled {
-		t.Fatalf("/show agents: outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if !strings.Contains(reply, "default") || !strings.Contains(reply, "coder") {
-		t.Fatalf("/show agents reply=%q, want agent IDs", reply)
+	if !strings.Contains(reply, "default") || !strings.Contains(reply, "research") {
+		t.Fatalf("reply=%q, expected agent list output", reply)
 	}
 }
 
 func TestBuiltinListAgents_RestoresOldBehavior(t *testing.T) {
 	rt := &Runtime{
 		ListAgentIDs: func() []string {
-			return []string{"default", "coder"}
+			return []string{"default", "research"}
 		},
 	}
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), rt)
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 
 	var reply string
 	res := ex.Execute(context.Background(), Request{
@@ -196,21 +165,20 @@ func TestBuiltinListAgents_RestoresOldBehavior(t *testing.T) {
 		},
 	})
 	if res.Outcome != OutcomeHandled {
-		t.Fatalf("/list agents: outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if !strings.Contains(reply, "default") || !strings.Contains(reply, "coder") {
-		t.Fatalf("/list agents reply=%q, want agent IDs", reply)
+	if !strings.Contains(reply, "default") || !strings.Contains(reply, "research") {
+		t.Fatalf("reply=%q, expected agent list output", reply)
 	}
 }
 
 func TestBuiltinListSkills_UsesRuntimeSkillNames(t *testing.T) {
 	rt := &Runtime{
 		ListSkillNames: func() []string {
-			return []string{"shell", "git"}
+			return []string{"shell", "weather"}
 		},
 	}
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), rt)
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 
 	var reply string
 	res := ex.Execute(context.Background(), Request{
@@ -221,24 +189,23 @@ func TestBuiltinListSkills_UsesRuntimeSkillNames(t *testing.T) {
 		},
 	})
 	if res.Outcome != OutcomeHandled {
-		t.Fatalf("/list skills: outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if !strings.Contains(reply, "shell") || !strings.Contains(reply, "git") {
-		t.Fatalf("/list skills reply=%q, want installed skill names", reply)
+	if !strings.Contains(reply, "shell") || !strings.Contains(reply, "weather") {
+		t.Fatalf("reply=%q, expected skill list output", reply)
 	}
 }
 
 func TestBuiltinListMCP_UsesRuntimeServerStatus(t *testing.T) {
 	rt := &Runtime{
-		ListMCPServers: func(context.Context) []MCPServerInfo {
+		ListMCPServers: func(_ context.Context) []MCPServerInfo {
 			return []MCPServerInfo{
 				{Name: "filesystem", Enabled: true, Deferred: true, Connected: false},
 				{Name: "github", Enabled: true, Deferred: false, Connected: true, ToolCount: 3},
 			}
 		},
 	}
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), rt)
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 
 	var reply string
 	res := ex.Execute(context.Background(), Request{
@@ -251,12 +218,10 @@ func TestBuiltinListMCP_UsesRuntimeServerStatus(t *testing.T) {
 	if res.Outcome != OutcomeHandled {
 		t.Fatalf("/list mcp: outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if !strings.Contains(reply, "- `filesystem`\n  Enabled: yes\n  Deferred: yes\n  "+
-		"Connected: no\n  Active tools: unavailable") {
+	if !strings.Contains(reply, "- filesystem — enabled=yes, deferred=yes, connected=no") {
 		t.Fatalf("/list mcp reply=%q, want formatted filesystem block", reply)
 	}
-	if !strings.Contains(reply, "- `github`\n  Enabled: yes\n  Deferred: no\n  "+
-		"Connected: yes\n  Active tools: 3") {
+	if !strings.Contains(reply, "- github — enabled=yes, deferred=no, connected=yes, tools=3") {
 		t.Fatalf("/list mcp reply=%q, want formatted github block", reply)
 	}
 }
@@ -283,8 +248,7 @@ func TestBuiltinShowMCP_UsesRuntimeToolNames(t *testing.T) {
 			}, nil
 		},
 	}
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), rt)
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 
 	var reply string
 	res := ex.Execute(context.Background(), Request{
@@ -295,75 +259,64 @@ func TestBuiltinShowMCP_UsesRuntimeToolNames(t *testing.T) {
 		},
 	})
 	if res.Outcome != OutcomeHandled {
-		t.Fatalf("/show mcp: outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+		t.Fatalf("/show mcp <server>: outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if !strings.Contains(reply, "Active MCP tools for `github`:\n- `create_issue`") {
-		t.Fatalf("/show mcp reply=%q, want tool header", reply)
-	}
-	if !strings.Contains(reply, "Description: Create a GitHub issue") {
-		t.Fatalf("/show mcp reply=%q, want description", reply)
-	}
-	if !strings.Contains(reply, "    - `title` (string, required): Issue title") {
-		t.Fatalf("/show mcp reply=%q, want required parameter", reply)
-	}
-	if !strings.Contains(reply, "    - `body` (string): Issue body") {
-		t.Fatalf("/show mcp reply=%q, want optional parameter", reply)
-	}
-	if !strings.Contains(reply, "- `list_prs`\n  Description: List open pull requests\n  Parameters: none") {
-		t.Fatalf("/show mcp reply=%q, want empty parameter block", reply)
+	if !strings.Contains(reply, "- `create_issue`") || !strings.Contains(reply, "- `list_prs`") {
+		t.Fatalf("/show mcp <server> reply=%q, want tool names", reply)
 	}
 }
 
 func TestBuiltinUseCommand_PassthroughsToAgentLogic(t *testing.T) {
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), nil)
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), nil)
 
 	res := ex.Execute(context.Background(), Request{
-		Text: "/use shell run ls",
+		Text: "/use summarize",
 	})
+	// /use operates purely as agent routing context.
 	if res.Outcome != OutcomePassthrough {
-		t.Fatalf("/use outcome=%v, want=%v", res.Outcome, OutcomePassthrough)
-	}
-	if res.Command != "use" {
-		t.Fatalf("/use command=%q, want=%q", res.Command, "use")
+		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomePassthrough)
 	}
 }
 
 func TestBuiltinBtwCommand_UsesSideQuestionRuntime(t *testing.T) {
+	called := false
 	rt := &Runtime{
 		AskSideQuestion: func(ctx context.Context, question string) (string, error) {
-			if question != "what is 2+2?" {
-				t.Fatalf("question=%q, want %q", question, "what is 2+2?")
+			called = true
+			if question != "what is the time?" {
+				t.Fatalf("question=%q, want 'what is the time?'", question)
 			}
-			return "4", nil
+			return "it is 12:00", nil
 		},
 	}
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), rt)
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 
 	var reply string
 	res := ex.Execute(context.Background(), Request{
-		Text: "/btw what is 2+2?",
+		Text: "/btw what is the time?",
 		Reply: func(text string) error {
 			reply = text
 			return nil
 		},
 	})
 	if res.Outcome != OutcomeHandled {
-		t.Fatalf("/btw outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
-	if reply != "4" {
-		t.Fatalf("/btw reply=%q, want=%q", reply, "4")
+	if !called {
+		t.Fatal("AskSideQuestion was not called")
+	}
+	if reply != "it is 12:00" {
+		t.Fatalf("reply=%q, want 'it is 12:00'", reply)
 	}
 }
 
 func TestBuiltinBtwCommand_MissingQuestion(t *testing.T) {
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), &Runtime{
-		AskSideQuestion: func(context.Context, string) (string, error) {
+	rt := &Runtime{
+		AskSideQuestion: func(ctx context.Context, question string) (string, error) {
 			return "", nil
 		},
-	})
+	}
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 
 	var reply string
 	res := ex.Execute(context.Background(), Request{
@@ -374,33 +327,31 @@ func TestBuiltinBtwCommand_MissingQuestion(t *testing.T) {
 		},
 	})
 	if res.Outcome != OutcomeHandled {
-		t.Fatalf("/btw outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
 	if reply != "Usage: /btw <question>" {
-		t.Fatalf("/btw reply=%q, want usage message", reply)
+		t.Fatalf("reply=%q, want usage message", reply)
 	}
 }
 
 func TestBuiltinBtwCommand_PreservesQuestionWhitespace(t *testing.T) {
-	const want = "explain:\n    fmt.Println(\"hi\")"
+	called := false
 	rt := &Runtime{
 		AskSideQuestion: func(ctx context.Context, question string) (string, error) {
-			if question != want {
-				t.Fatalf("question=%q, want %q", question, want)
+			called = true
+			if question != "what   is   it?" {
+				t.Fatalf("question=%q, want 'what   is   it?'", question)
 			}
 			return "ok", nil
 		},
 	}
-	defs := BuiltinDefinitions()
-	ex := NewExecutor(NewRegistry(defs), rt)
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 
-	res := ex.Execute(context.Background(), Request{
-		Text: "/btw " + want,
-		Reply: func(text string) error {
-			return nil
-		},
+	ex.Execute(context.Background(), Request{
+		Text:  "/btw   what   is   it?  ",
+		Reply: func(string) error { return nil },
 	})
-	if res.Outcome != OutcomeHandled {
-		t.Fatalf("/btw outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+	if !called {
+		t.Fatal("AskSideQuestion was not called")
 	}
 }

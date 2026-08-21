@@ -33,27 +33,33 @@ func NewExecutor(reg *Registry, rt *Runtime) *Executor {
 
 // Execute implements a two-state command decision:
 // 1) handled: execute command immediately;
-// 2) passthrough: not a command or intentionally deferred to agent logic.
+// 2) passthrough: normal non-command text or a registered command intentionally
+// deferred to agent logic.
+//
+// Any syntactically valid slash/bang-prefixed command that is not registered is
+// handled here and therefore cannot fall through into the normal LLM pipeline.
 func (e *Executor) Execute(ctx context.Context, req Request) ExecuteResult {
 	cmdName, ok := parseCommandName(req.Text)
 	if !ok {
 		return ExecuteResult{Outcome: OutcomePassthrough}
 	}
+	req = ensureReply(req)
 
 	if e == nil || e.reg == nil {
-		return ExecuteResult{Outcome: OutcomePassthrough, Command: cmdName}
+		err := req.Reply("Command routing is unavailable. Use /help to see available commands.")
+		return ExecuteResult{Outcome: OutcomeHandled, Command: cmdName, Err: err}
 	}
 
 	def, found := e.reg.Lookup(cmdName)
 	if !found {
-		return ExecuteResult{Outcome: OutcomePassthrough, Command: cmdName}
+		err := req.Reply(fmt.Sprintf("Unknown command: /%s. Use /help to see available commands.", cmdName))
+		return ExecuteResult{Outcome: OutcomeHandled, Command: cmdName, Err: err}
 	}
 
 	return e.executeDefinition(ctx, req, def)
 }
 
-func (e *Executor) executeDefinition(ctx context.Context, req Request, def Definition) ExecuteResult {
-	// Ensure Reply is always non-nil so handlers don't need to check.
+func ensureReply(req Request) Request {
 	if req.Reply == nil {
 		req.Reply = func(string) error { return nil }
 	}
@@ -62,6 +68,11 @@ func (e *Executor) executeDefinition(ctx context.Context, req Request, def Defin
 			return req.Reply(content.FallbackText())
 		}
 	}
+	return req
+}
+
+func (e *Executor) executeDefinition(ctx context.Context, req Request, def Definition) ExecuteResult {
+	req = ensureReply(req)
 
 	// Simple command — no sub-commands
 	if len(def.SubCommands) == 0 {
@@ -83,9 +94,8 @@ func (e *Executor) executeDefinition(ctx context.Context, req Request, def Defin
 		return ExecuteResult{Outcome: OutcomeHandled, Command: def.Name, Err: err}
 	}
 
-	normalized := normalizeCommandName(subName)
 	for _, sc := range def.SubCommands {
-		if normalizeCommandName(sc.Name) == normalized {
+		if sc.matches(subName) {
 			if sc.Handler == nil {
 				return ExecuteResult{Outcome: OutcomePassthrough, Command: def.Name}
 			}
@@ -94,7 +104,7 @@ func (e *Executor) executeDefinition(ctx context.Context, req Request, def Defin
 		}
 	}
 
-	// Unknown sub-command
-	err := req.Reply(fmt.Sprintf("Unknown option: %s. Usage: %s", subName, def.EffectiveUsage()))
+	// Unknown sub-command is also terminal and never becomes prompt text.
+	err := req.Reply(fmt.Sprintf("Unknown option: %s. Use /help %s for valid options.", subName, def.Name))
 	return ExecuteResult{Outcome: OutcomeHandled, Command: def.Name, Err: err}
 }

@@ -17,22 +17,37 @@ func (al *AgentLoop) handleInternalCallback(
 	ctx context.Context,
 	req bus.InternalCallbackRequest,
 ) (*bus.InternalCallbackResponse, error) {
+	var (
+		response *bus.InternalCallbackResponse
+		err      error
+	)
 	switch strings.ToLower(strings.TrimSpace(req.Kind)) {
 	case "session":
-		return al.handleInternalSessionCallback(ctx, req)
+		response, err = al.handleInternalSessionCallback(ctx, req)
 	case "model":
-		return al.handleInternalModelCallback(ctx, req)
+		response, err = al.handleInternalModelCallback(ctx, req)
 	case "memory":
-		return al.handleInternalMemoryCallback(ctx, req)
+		response, err = al.handleInternalMemorySemanticCallback(ctx, req)
 	case "skill":
-		return al.handleInternalSkillCallback(ctx, req)
+		response, err = al.handleInternalSkillCallback(ctx, req)
 	case "checkpoint":
-		return al.handleInternalCheckpointCallback(ctx, req)
+		response, err = al.handleInternalCheckpointCallback(ctx, req)
 	case "discovery":
-		return al.handleInternalDiscoveryCallback(ctx, req)
+		response, err = al.handleInternalDiscoveryCallback(ctx, req)
 	default:
 		return nil, fmt.Errorf("unsupported internal callback")
 	}
+	if err != nil {
+		return response, err
+	}
+	return normalizeInternalCallbackPresentation(response), nil
+}
+
+func normalizeInternalCallbackPresentation(response *bus.InternalCallbackResponse) *bus.InternalCallbackResponse {
+	if response != nil && response.Content != nil {
+		bus.NormalizeCardTypography(response.Content)
+	}
+	return response
 }
 
 type boundInteractionContext struct {

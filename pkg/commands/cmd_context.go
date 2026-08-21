@@ -32,7 +32,7 @@ func contextCommand() Definition {
 				{"Compression progress", fmt.Sprintf("%d%%", stats.UsedPercent)},
 				{"Remaining", fmt.Sprintf("~%d tokens", remaining)},
 			}
-			return req.replyStructured(tableContent("Context usage", []string{"Metrik", "Nilai"}, rows, fallback))
+			return req.replyStructured(tableContent("Context usage", statusHeaderColumns(), rows, fallback))
 		},
 	}
 }

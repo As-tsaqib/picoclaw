@@ -39,23 +39,8 @@ func (al *AgentLoop) handleCommandWithStructured(
 		return "", nil, false
 	}
 
-	if commandName, ok := commands.CommandName(msg.Content); ok && commandName == "use" &&
-		len(strings.Fields(strings.TrimSpace(msg.Content))) < 2 {
-		rt := al.buildCommandsRuntime(ctx, agent, opts)
-		if rt != nil && rt.SkillCommand != nil {
-			content, err := rt.SkillCommand(ctx, commands.SkillCommandRequest{Operation: "dashboard"})
-			if err != nil {
-				return "Failed to open skill picker: " + err.Error(), nil, true
-			}
-			if content != nil {
-				return content.FallbackText(), content, true
-			}
-		}
-		return commandsUnavailableSkillMessage(), nil, true
-	}
-
-	if matched, handled, reply := al.applyExplicitSkillCommand(msg.Content, agent, opts); matched {
-		return reply, nil, handled
+	if matched, handled, reply, structured := al.applyUseIntent(ctx, msg.Content, agent, opts); matched {
+		return reply, structured, handled
 	}
 
 	if al.cmdRegistry == nil {
@@ -97,66 +82,82 @@ func (al *AgentLoop) handleCommandWithStructured(
 	}
 }
 
-func (al *AgentLoop) applyExplicitSkillCommand(
+// applyUseIntent is the single runtime interpretation point for all /use forms.
+// Parsing is owned by commands.ParseUseIntent; skill resolution stays in the
+// agent domain because it depends on the current skill catalog. A forced-turn
+// intentionally returns handled=false after rewriting this exact turn so normal
+// agent/LLM processing continues without literal /use text entering context.
+func (al *AgentLoop) applyUseIntent(
+	ctx context.Context,
 	raw string,
 	agent *AgentInstance,
 	opts *processOptions,
-) (matched bool, handled bool, reply string) {
+) (matched bool, handled bool, reply string, structured *bus.StructuredContent) {
 	normalizeProcessOptionsInPlace(opts)
 
-	cmdName, ok := commands.CommandName(raw)
-	if !ok || cmdName != "use" {
-		return false, false, ""
+	intent, ok := commands.ParseUseIntent(raw)
+	if !ok {
+		return false, false, "", nil
 	}
 
-	if agent == nil || agent.ContextBuilder == nil {
-		return true, true, commandsUnavailableSkillMessage()
-	}
+	switch intent.Kind {
+	case commands.UseIntentPicker:
+		rt := al.buildCommandsRuntime(ctx, agent, opts)
+		if rt == nil || rt.SkillCommand == nil {
+			return true, true, commandsUnavailableSkillMessage(), nil
+		}
+		content, err := rt.SkillCommand(ctx, commands.SkillCommandRequest{Operation: "dashboard"})
+		if err != nil {
+			return true, true, commands.UserFacingError(err,
+				"Skill picker is temporarily unavailable. Please try again."), nil
+		}
+		if content == nil {
+			return true, true, commandsUnavailableSkillMessage(), nil
+		}
+		return true, true, content.FallbackText(), content
 
-	parts := strings.Fields(strings.TrimSpace(raw))
-	if len(parts) < 2 {
-		// No-argument /use is owned by the typed command handler so capable
-		// channels can render the interactive picker. Argument forms remain
-		// on this compatibility path unchanged.
-		return false, false, ""
-	}
-
-	arg := strings.TrimSpace(parts[1])
-	if strings.EqualFold(arg, "clear") || strings.EqualFold(arg, "off") {
+	case commands.UseIntentClear:
 		if opts != nil {
 			al.clearPendingSkills(opts.Dispatch.SessionKey)
 		}
-		return true, true, "Cleared pending skill override."
+		return true, true, "Cleared pending skill override.", nil
 	}
 
-	skillName, ok := agent.ContextBuilder.ResolveSkillName(arg)
-	if !ok {
-		return true, true, fmt.Sprintf("Unknown skill: %s\nUse /list skills to see installed skills.", arg)
+	if agent == nil || agent.ContextBuilder == nil {
+		return true, true, commandsUnavailableSkillMessage(), nil
 	}
 
-	if len(parts) < 3 {
+	skillName, found := agent.ContextBuilder.ResolveSkillName(intent.Skill)
+	if !found {
+		return true, true, fmt.Sprintf(
+			"Unknown skill: %s\nUse /list skills to see installed skills.",
+			intent.Skill,
+		), nil
+	}
+
+	switch intent.Kind {
+	case commands.UseIntentArm:
 		if opts == nil || strings.TrimSpace(opts.Dispatch.SessionKey) == "" {
-			return true, true, commandsUnavailableSkillMessage()
+			return true, true, commandsUnavailableSkillMessage(), nil
 		}
 		al.setPendingSkills(opts.Dispatch.SessionKey, []string{skillName})
 		return true, true, fmt.Sprintf(
 			"Skill %q is armed for your next message. Send your next prompt normally, or use /use clear to cancel.",
 			skillName,
-		)
-	}
+		), nil
 
-	message := strings.TrimSpace(strings.Join(parts[2:], " "))
-	if message == "" {
-		return true, true, buildUseCommandHelp(agent)
-	}
-
-	if opts != nil {
+	case commands.UseIntentForcedTurn:
+		if opts == nil {
+			return true, true, commandsUnavailableSkillMessage(), nil
+		}
 		opts.ForcedSkills = append(opts.ForcedSkills, skillName)
-		opts.Dispatch.UserMessage = message
-		opts.UserMessage = message
-	}
+		opts.Dispatch.UserMessage = intent.Message
+		opts.UserMessage = intent.Message
+		return true, false, "", nil
 
-	return true, false, ""
+	default:
+		return true, true, "Invalid /use request. Use /help use for supported forms.", nil
+	}
 }
 
 func (al *AgentLoop) buildCommandsRuntime(
@@ -393,6 +394,9 @@ func (al *AgentLoop) buildCommandsRuntime(
 		}
 	}
 	configureMemoryCommandRuntime(rt, agent, opts, al)
+	rt.MemoryCommand = func(ctx context.Context, req commands.MemoryCommandRequest) (*bus.StructuredContent, error) {
+		return al.executeMemorySemanticCommand(ctx, agent, opts, req)
+	}
 	configureSessionCommandRuntime(rt, agent, opts, al)
 	configureSkillCommandRuntime(rt, agent, opts, al)
 	configureCheckpointCommandRuntime(rt, agent, opts, al)
@@ -418,9 +422,9 @@ func (al *AgentLoop) clearHistoryWithMemoryFlush(
 		return fmt.Errorf("context manager not initialized")
 	}
 
-	// /clear, /reset, and /new can arrive before any turn has persisted
-	// session scope metadata (runAgentLoop records it per turn), so record it
-	// here to let the ContextManager resolve which agent owns the session.
+	// Clear-history commands can arrive before any turn has persisted session
+	// scope metadata (runAgentLoop records it per turn), so record it here to
+	// let the ContextManager resolve which agent owns the current session.
 	ensureSessionMetadata(
 		agent.Sessions,
 		opts.Dispatch.SessionKey,

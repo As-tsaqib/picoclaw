@@ -19,6 +19,7 @@ type Request struct {
 }
 
 func (r Request) replyStructured(content bus.StructuredContent) error {
+	bus.NormalizeCardTypography(&content)
 	if strings.TrimSpace(content.Fallback) == "" {
 		content.Fallback = content.FallbackText()
 	}

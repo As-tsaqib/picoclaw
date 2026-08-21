@@ -9,6 +9,8 @@ func modelCommand() Definition {
 	return Definition{
 		Name:        "model",
 		Description: "View and switch the model for this session",
+		Category:    "Models",
+		Examples:    []string{"/model", "/model use gpt-5", "/model search coding"},
 		Handler:     modelOperationHandler("dashboard", 1),
 		SubCommands: []SubCommand{
 			{
@@ -21,6 +23,7 @@ func modelCommand() Definition {
 				Name:        "use",
 				Description: "Use a configured or discovered model in this session",
 				ArgsUsage:   "<alias|model>",
+				Examples:    []string{"/model use gpt-5"},
 				Handler:     modelOperationHandler("use", 2),
 			},
 			{
@@ -54,7 +57,7 @@ func modelOperationHandler(operation string, argumentToken int) Handler {
 		}
 		content, err := rt.ModelCommand(ctx, ModelCommandRequest{Operation: operation, Argument: argument})
 		if err != nil {
-			return req.Reply("Model command failed: " + err.Error())
+			return req.Reply(UserFacingError(err, "Model service is temporarily unavailable. Please try again."))
 		}
 		if content == nil {
 			return req.Reply(unavailableMsg)

@@ -10,43 +10,46 @@ import (
 
 func TestFormatProcessingError_InvalidAPIKey(t *testing.T) {
 	err := errors.New(
-		`LLM call failed after retries: API request failed: Status: 401 Body: {"error":{"message":"Incorrect API key provided"}}`,
+		`LLM call failed after retries: API request failed: Status: 401 Body: {"error":{"message":"Incorrect API key provided: sk-secret"}}`,
 	)
 
 	got := formatProcessingError(err)
-	if !strings.Contains(got, "API key appears to be invalid") {
+	if !strings.Contains(got, "Authentication failed: the configured API key was rejected") {
 		t.Fatalf("formatted error missing friendly API key hint: %q", got)
 	}
-	if !strings.Contains(got, "Original error:") {
-		t.Fatalf("formatted error missing original error label: %q", got)
-	}
-	if !strings.Contains(got, err.Error()) {
-		t.Fatalf("formatted error missing original error: %q", got)
+	if strings.Contains(got, "Original error:") || strings.Contains(got, "sk-secret") ||
+		strings.Contains(got, err.Error()) {
+		t.Fatalf("formatted auth error leaked raw provider details: %q", got)
 	}
 }
 
 func TestFormatProcessingError_GenericAuthHTTPError(t *testing.T) {
 	err := &common.HTTPError{
 		StatusCode:  401,
-		BodyPreview: `{"error":"unauthorized"}`,
+		BodyPreview: `{"error":"unauthorized","token":"private-token"}`,
 		ContentType: "application/json",
-		APIBase:     "https://api.example.com",
+		APIBase:     "https://user:secret@api.example.com/private?token=abc",
 	}
 
 	got := formatProcessingError(err)
-	if !strings.Contains(got, "check the API key, token, OAuth login, or provider permissions") {
+	if !strings.Contains(got, "Authentication failed: check the provider credentials or permissions for this model.") {
 		t.Fatalf("formatted error missing generic auth hint: %q", got)
 	}
-	if !strings.Contains(got, "Original error:") {
-		t.Fatalf("formatted error missing original error: %q", got)
+	for _, secret := range []string{"Original error:", "private-token", "user:secret", "token=abc"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("formatted auth error leaked %q: %q", secret, got)
+		}
 	}
 }
 
-func TestFormatProcessingError_NonAuth(t *testing.T) {
-	err := errors.New("connection reset by peer")
+func TestFormatProcessingError_NonAuthIsSanitized(t *testing.T) {
+	err := errors.New("dial /home/private/.config/picoclaw/token.sock: connection reset by peer")
 	got := formatProcessingError(err)
-	want := "Error processing message: connection reset by peer"
+	want := "Error processing message: an internal service failed. Please try again."
 	if got != want {
 		t.Fatalf("formatted error = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "/home/private") || strings.Contains(got, err.Error()) {
+		t.Fatalf("formatted error leaked infrastructure details: %q", got)
 	}
 }

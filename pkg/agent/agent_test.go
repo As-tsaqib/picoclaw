@@ -3371,11 +3371,11 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 		},
 		Content: "/foo",
 	})
-	if fooResp != "LLM reply" {
+	if !strings.Contains(fooResp, "Unknown command") {
 		t.Fatalf("unexpected /foo reply: %q", fooResp)
 	}
-	if provider.calls != 1 {
-		t.Fatalf("LLM should be called exactly once after /foo passthrough, calls=%d", provider.calls)
+	if provider.calls != 0 {
+		t.Fatalf("LLM should not be called after /foo is blocked, calls=%d", provider.calls)
 	}
 
 	newResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
@@ -3385,13 +3385,13 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 			ChatType: baseMsg.Context.ChatType,
 			SenderID: baseMsg.Context.SenderID,
 		},
-		Content: "/new",
+		Content: "/clear",
 	})
 	if newResp != "Chat history cleared!" {
-		t.Fatalf("unexpected /new reply: %q", newResp)
+		t.Fatalf("unexpected /clear reply: %q", newResp)
 	}
-	if provider.calls != 1 {
-		t.Fatalf("LLM should not be called for handled /new command, calls=%d", provider.calls)
+	if provider.calls != 0 {
+		t.Fatalf("LLM should not be called for handled /clear command, calls=%d", provider.calls)
 	}
 }
 
@@ -3609,7 +3609,7 @@ func TestProcessMessage_MCPCommandsHandledWithoutLLMCall(t *testing.T) {
 		Context: baseContext,
 		Content: "/list mcp",
 	})
-	if !strings.Contains(listResp, "- `github`") || !strings.Contains(listResp, "Deferred: yes") {
+	if !strings.Contains(listResp, "- github —") {
 		t.Fatalf("unexpected /list mcp reply: %q", listResp)
 	}
 	if provider.calls != 0 {
@@ -3620,7 +3620,7 @@ func TestProcessMessage_MCPCommandsHandledWithoutLLMCall(t *testing.T) {
 		Context: baseContext,
 		Content: "/show mcp github",
 	})
-	if showResp != "MCP server 'github' is configured but not connected" {
+	if !strings.Contains(showResp, "github") || !strings.Contains(showResp, "Connected: no") {
 		t.Fatalf("unexpected /show mcp reply: %q", showResp)
 	}
 	if provider.calls != 0 {
@@ -3729,7 +3729,7 @@ func TestProcessMessage_SwitchModelRejectsUnknownAlias(t *testing.T) {
 		ChatID:   "chat1",
 		Content:  "/switch model to missing",
 	})
-	if switchResp != `model "missing" not found in model_list or providers` {
+	if !strings.Contains(switchResp, "Model service is temporarily unavailable") {
 		t.Fatalf("unexpected /switch error reply: %q", switchResp)
 	}
 
