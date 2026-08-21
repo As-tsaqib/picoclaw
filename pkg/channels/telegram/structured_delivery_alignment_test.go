@@ -40,10 +40,10 @@ func TestBuildNativeRichMessagePreservesContextualTablePresentation(t *testing.T
 			content := &bus.StructuredContent{Tables: []bus.StructuredTable{{
 				Caption: "Category caption",
 				Columns: columns,
-				Rows: [][]string{{"row-key", "row-value"}},
-				Border: true,
+				Rows:    [][]string{{"row-key", "row-value"}},
+				Border:  true,
 				Striped: true,
-				Header: true,
+				Header:  true,
 			}}}
 
 			rich, ok := buildNativeRichMessage(content)
