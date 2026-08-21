@@ -18,7 +18,7 @@ func stopCommand() Definition {
 
 			result, err := rt.StopActiveTurn()
 			if err != nil {
-				return req.Reply("Failed to stop task: " + err.Error())
+				return req.Reply(UserFacingError(err, "Task could not be stopped. Please try again."))
 			}
 
 			return req.Reply(FormatStopReply(result))

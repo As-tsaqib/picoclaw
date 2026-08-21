@@ -51,3 +51,63 @@ func CardHeaderColumns(kind CardHeaderKind, styled bool) []string {
 	}
 	return parts
 }
+
+// NormalizeCardTypography upgrades legacy generic two-column display headers at
+// the presentation boundary. It deliberately changes display vocabulary only:
+// row values, IDs, callback state, lookup keys, routes, paths, and tokens are
+// never rewritten. New builders should still choose CardHeaderColumns directly;
+// this compatibility normalizer keeps older structured producers consistent
+// while they pass through the shared command/callback presentation boundary.
+func NormalizeCardTypography(content *StructuredContent) {
+	if content == nil {
+		return
+	}
+	kind := cardHeaderKindForContent(content.Kind)
+	for i := range content.Tables {
+		normalizeStructuredTableHeader(&content.Tables[i], kind)
+	}
+	normalizeStructuredBlockHeaders(content.Blocks, kind, 0)
+}
+
+func normalizeStructuredBlockHeaders(blocks []StructuredBlock, kind CardHeaderKind, depth int) {
+	if depth >= structuredBlockMaxDepth {
+		return
+	}
+	for i := range blocks {
+		if blocks[i].Table != nil {
+			normalizeStructuredTableHeader(blocks[i].Table, kind)
+		}
+		normalizeStructuredBlockHeaders(blocks[i].Blocks, kind, depth+1)
+	}
+}
+
+func normalizeStructuredTableHeader(table *StructuredTable, kind CardHeaderKind) {
+	if table == nil || !legacyGenericCardHeader(table.Columns) {
+		return
+	}
+	table.Columns = CardHeaderColumns(kind, true)
+}
+
+func legacyGenericCardHeader(columns []string) bool {
+	if len(columns) != 2 {
+		return false
+	}
+	left := strings.ToLower(strings.TrimSpace(columns[0]))
+	right := strings.ToLower(strings.TrimSpace(columns[1]))
+	if right != "nilai" {
+		return false
+	}
+	return left == "properti" || left == "metrik"
+}
+
+func cardHeaderKindForContent(kind string) CardHeaderKind {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	switch {
+	case strings.Contains(kind, "status"), strings.Contains(kind, "health"), strings.Contains(kind, "check"):
+		return CardHeaderStatus
+	case strings.Contains(kind, "list"), strings.Contains(kind, "inventory"), strings.Contains(kind, "catalog"):
+		return CardHeaderInventory
+	default:
+		return CardHeaderDetail
+	}
+}

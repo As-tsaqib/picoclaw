@@ -76,5 +76,5 @@ func channelStatusContent(status ChannelStatus) bus.StructuredContent {
 	if reason := strings.TrimSpace(status.Reason); reason != "" {
 		fallback += "\nReason: " + reason
 	}
-	return tableContent("Channel Status", []string{"Properti", "Nilai"}, rows, fallback)
+	return tableContent("Channel Status", statusHeaderColumns(), rows, fallback)
 }

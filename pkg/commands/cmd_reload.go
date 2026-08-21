@@ -12,7 +12,7 @@ func reloadCommand() Definition {
 				return req.Reply(unavailableMsg)
 			}
 			if err := rt.ReloadConfig(); err != nil {
-				return req.Reply("Failed to reload configuration: " + err.Error())
+				return req.Reply(UserFacingError(err, "Configuration could not be reloaded. Please try again."))
 			}
 			return req.Reply("Config reload triggered!")
 		},

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/As-tsaqib/picoclaw/pkg/bus"
 )
 
 func helpCommand() Definition {
@@ -26,20 +28,51 @@ func helpCommand() Definition {
 			}
 
 			fallback := formatHelpMessage(defs)
-			rows := make([][]string, 0, len(defs))
-			for _, def := range sortedHelpDefinitions(defs) {
-				detail := strings.TrimSpace(def.Description)
-				if detail == "" {
-					detail = "No description"
-				}
-				if def.Deprecated && strings.TrimSpace(def.Replacement) != "" {
-					detail += " (deprecated; use " + def.Replacement + ")"
-				}
-				rows = append(rows, []string{"/" + def.Name, detail})
-			}
-			return req.replyStructured(tableContent("Commands", inventoryHeaderColumns(), rows, fallback))
+			return req.replyStructured(groupedHelpContent(defs, fallback))
 		},
 	}
+}
+
+func groupedHelpContent(defs []Definition, fallback string) bus.StructuredContent {
+	content := bus.StructuredContent{
+		Kind:     "help",
+		Title:    "Commands",
+		Fallback: fallback,
+	}
+	currentCategory := ""
+	rows := make([][]string, 0)
+	flush := func() {
+		if currentCategory == "" || len(rows) == 0 {
+			return
+		}
+		content.Tables = append(content.Tables, bus.StructuredTable{
+			Caption: currentCategory,
+			Columns: inventoryHeaderColumns(),
+			Rows:    rows,
+			Border:  true,
+			Striped: true,
+			Header:  true,
+		})
+		rows = nil
+	}
+
+	for _, def := range sortedHelpDefinitions(defs) {
+		category := helpCategory(def)
+		if category != currentCategory {
+			flush()
+			currentCategory = category
+		}
+		detail := strings.TrimSpace(def.Description)
+		if detail == "" {
+			detail = "No description"
+		}
+		if def.Deprecated && strings.TrimSpace(def.Replacement) != "" {
+			detail += " (deprecated; use " + def.Replacement + ")"
+		}
+		rows = append(rows, []string{"/" + def.Name, detail})
+	}
+	flush()
+	return content
 }
 
 func commandDefinitions(rt *Runtime) []Definition {
