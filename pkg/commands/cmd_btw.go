@@ -24,7 +24,9 @@ func btwCommand() Definition {
 
 			answer, err := rt.AskSideQuestion(ctx, question)
 			if err != nil {
-				return req.Reply(UserFacingError(err, "Side-question service is temporarily unavailable. Please try again."))
+				return req.Reply(
+					UserFacingError(err, "Side-question service is temporarily unavailable. Please try again."),
+				)
 			}
 			if strings.TrimSpace(answer) == "" {
 				return req.Reply(emptyAnswerMsg)

@@ -40,7 +40,7 @@ func groupedHelpContent(defs []Definition, fallback string) bus.StructuredConten
 		Fallback: fallback,
 	}
 	currentCategory := ""
-	rows := make([][]string, 0)
+	rows := make([][]string, 0, len(defs))
 	flush := func() {
 		if currentCategory == "" || len(rows) == 0 {
 			return
